@@ -37,7 +37,7 @@ program
   .description('Run sanity checks and launch the Ralph loop in a detached tmux session')
   .action(async () => {
     try {
-      await startCommand()
+      await startCommand({ currentVersion: pkg.version })
     } catch (e) {
       if (e instanceof StartAbort) {
         process.exit(e.exitCode ?? 1)

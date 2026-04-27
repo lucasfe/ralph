@@ -164,6 +164,96 @@ describe('startCommand', () => {
     expect(deps.exec.calls.some((c) => c.includes('--remove-label'))).toBe(false)
   })
 
+  it('prints update warning and persists last_seen_release when newer version is available', async () => {
+    const deps = baseDeps()
+    const cwd = '/repo'
+    const writes = []
+    deps.currentVersion = '0.1.0'
+    deps.readSt = () => ({ last_seen_release: '', detected_stack: 'npm' })
+    deps.writeSt = (root, obj) => writes.push({ root, obj })
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '1', stderr: '' },
+      'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    })
+    await startCommand({ ...deps, cwd })
+    expect(deps.stdout.output()).toContain('New version available: 0.2.0')
+    expect(writes).toHaveLength(1)
+    expect(writes[0]).toEqual({
+      root: cwd,
+      obj: { last_seen_release: '0.2.0', detected_stack: 'npm' },
+    })
+  })
+
+  it('skips update check entirely when state.json is missing', async () => {
+    const deps = baseDeps()
+    const cwd = '/repo'
+    const writes = []
+    deps.currentVersion = '0.1.0'
+    deps.readSt = () => null
+    deps.writeSt = (root, obj) => writes.push({ root, obj })
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '1', stderr: '' },
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    })
+    await startCommand({ ...deps, cwd })
+    expect(writes).toHaveLength(0)
+    expect(deps.exec.calls.some((c) => c.startsWith('npm view'))).toBe(false)
+  })
+
+  it('does not print warning or write state when remote version is not newer', async () => {
+    const deps = baseDeps()
+    const cwd = '/repo'
+    const writes = []
+    deps.currentVersion = '0.2.0'
+    deps.readSt = () => ({ last_seen_release: '' })
+    deps.writeSt = (root, obj) => writes.push({ root, obj })
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '1', stderr: '' },
+      'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.1.0\n', stderr: '' },
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    })
+    await startCommand({ ...deps, cwd })
+    expect(deps.stdout.output()).not.toContain('New version available')
+    expect(writes).toHaveLength(0)
+  })
+
   it('removes orphan labels when user answers yes', async () => {
     const deps = baseDeps()
     deps.ask = async () => true
