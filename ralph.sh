@@ -18,7 +18,7 @@ START=$(date +%s)
 successes=()
 failures=()
 
-label_filter=(--label '-claude-working' --label '-claude-failed')
+label_filter=(--label '-claude-working' --label '-claude-failed' --label '-do-not-ralph')
 
 while :; do
   count=$(gh issue list --state open "${label_filter[@]}" --json number -q '. | length')
