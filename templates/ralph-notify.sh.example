@@ -1,0 +1,31 @@
+#!/bin/bash
+# Optional notification hook. Copy this file to `ralph-notify.sh`,
+# `chmod +x` it, and Ralph will invoke it at the end of each run.
+#
+# Args:
+#   $1 — message string (already includes ok/fail summary)
+#   $2 — status ("ok" or "fail")
+#   $3 — successes count
+#   $4 — failures count
+#   $5 — duration in minutes
+
+msg="$1"
+status="$2"
+ok="$3"
+fail="$4"
+mins="$5"
+
+# Slack example:
+# curl -s -X POST -H 'Content-type: application/json' \
+#   --data "{\"text\":\"$msg\"}" \
+#   "$SLACK_WEBHOOK_URL"
+
+# macOS native notification:
+# osascript -e "display notification \"$msg\" with title \"Ralph\""
+
+# Discord example:
+# curl -s -H 'Content-Type: application/json' \
+#   -d "{\"content\":\"$msg\"}" \
+#   "$DISCORD_WEBHOOK_URL"
+
+echo "ralph-notify: $msg"

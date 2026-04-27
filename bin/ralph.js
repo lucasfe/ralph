@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { Command } from 'commander'
 import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
+import { initCommand, InitAbort } from '../lib/commands/init.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8'))
@@ -15,6 +16,20 @@ program
   .name('ralph')
   .description('Autonomous GitHub issue resolution loop')
   .version(pkg.version, '-v, --version', 'output the current version')
+
+program
+  .command('init')
+  .description('Initialize Ralph in the current project (config + templates + slash command)')
+  .action(async () => {
+    try {
+      await initCommand()
+    } catch (e) {
+      if (e instanceof InitAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
 
 program
   .command('start')
