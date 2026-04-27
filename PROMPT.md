@@ -51,7 +51,7 @@ Você é um agente autônomo num loop de resolução de issues. Cada execução 
 - NUNCA tocar em: `.env*`, `.git/`, `node_modules/`, `dist/`, `logs/`, `ralph.sh`, `start-ralph.sh`, `PROMPT.md`, `.claude/`.
 - NUNCA `rm -rf` em path absoluto. Use `rm` em arquivo específico.
 - NUNCA mergear PRs (`gh pr merge` sem `--auto`). O `--auto` cuida.
-- NUNCA fechar issues manualmente (`gh issue close`). O `Closes #N` cuida.
+- Você DEVE fechar a issue explicitamente no passo 9 após o merge — `Closes #N` não funciona porque o PR vai pra `dev`, não pra `main`.
 - NUNCA editar, criar ou deletar arquivos fora de `/Users/lucasfe/repos/agenthub`.
 - NUNCA rodar comandos Bash que toquem arquivos fora de `/Users/lucasfe/repos/agenthub` (ex: `rm`, `mv`, `curl > path`).
 - Se `npm test` ou `npm run lint` quebrar 3 vezes seguidas, declare CLAUDE_GIVE_UP e vá para "Falhou".
