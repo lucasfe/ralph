@@ -1,0 +1,32 @@
+{
+  "name": "@lucasfe/ralph",
+  "version": "0.1.0-alpha.0",
+  "description": "Ralph — autonomous GitHub issue resolution loop, packaged as a CLI.",
+  "type": "module",
+  "bin": {
+    "ralph": "./bin/ralph.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "execa": "^9.5.1",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "memfs": "^4.15.0",
+    "vitest": "^2.1.9"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
