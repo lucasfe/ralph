@@ -30,7 +30,17 @@ while :; do
   num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
   echo "==> Iteração para issue #$num ($count restantes)"
 
-  cat PROMPT.md | claude -p --dangerously-skip-permissions 2>&1 | tee "logs/ralph-issue-$num.log"
+  cat PROMPT.md | claude -p --dangerously-skip-permissions \
+    --output-format stream-json --verbose --include-partial-messages 2>&1 \
+    | jq -r --unbuffered '
+        if .type == "assistant" then
+          (.message.content[]? | select(.type=="text").text // empty)
+        elif .type == "user" then
+          (.message.content[]? | select(.type=="tool_result") | "  ↳ tool_result")
+        elif .type == "result" then
+          "==> result: " + (.subtype // "ok")
+        else empty end' \
+    | tee "logs/ralph-issue-$num.log"
 
   labels=$(gh issue view "$num" --json labels -q '[.labels[].name] | join(",")')
   state=$(gh issue view "$num" --json state -q '.state')
