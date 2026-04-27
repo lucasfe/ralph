@@ -1,6 +1,6 @@
 {
   "name": "@lucasfe/ralph",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-rc.1",
   "description": "Ralph — autonomous GitHub issue resolution loop, packaged as a CLI.",
   "type": "module",
   "bin": {
@@ -9,7 +9,13 @@
   "files": [
     "bin",
     "lib",
-    "README.md"
+    "templates",
+    "README.md",
+    "CHANGELOG.md",
+    "!**/*.test.js",
+    "!**/__tests__",
+    "!**/__fixtures__",
+    "!**/fixtures"
   ],
   "engines": {
     "node": ">=18"

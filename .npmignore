@@ -1,0 +1,27 @@
+# Tests — excluded from the published tarball.
+*.test.js
+test/
+**/*.test.js
+**/__tests__/
+
+# Test fixtures and snapshots.
+**/__fixtures__/
+**/fixtures/
+**/__snapshots__/
+
+# Dev tooling.
+vitest.config.js
+vitest.config.ts
+.eslintrc*
+eslint.config.*
+
+# Editor/OS noise.
+.DS_Store
+.vscode/
+.idea/
+
+# CI / local artefacts.
+coverage/
+node_modules/
+.npmrc
+*.tgz
