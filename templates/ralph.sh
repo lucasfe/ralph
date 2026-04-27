@@ -40,6 +40,69 @@ fi
 
 mkdir -p logs
 
+# --- Lazy config validation -------------------------------------------------
+# Run a one-shot Claude validation before the main loop when:
+#   • .ralph/state.json is absent, OR
+#   • the sha256 of ralph.config.sh changed since last validation, OR
+#   • the installed @lucasfe/ralph version changed since last validation.
+# This lets users edit ralph.config.sh and have Ralph self-correct it.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+if [ -f ralph.config.sh ]; then
+  RALPH_VERSION=$(node -p "require('$RALPH_PKG_DIR/package.json').version" 2>/dev/null || echo "unknown")
+  export RALPH_VERSION
+
+  current_hash=$(sha256_of ralph.config.sh)
+  needs_validate="no"
+  if [ ! -f .ralph/state.json ]; then
+    needs_validate="yes"
+  else
+    stored_hash=$(jq -r '.config_hash // ""' .ralph/state.json 2>/dev/null || echo "")
+    stored_version=$(jq -r '.ralph_version // ""' .ralph/state.json 2>/dev/null || echo "")
+    if [ "$current_hash" != "$stored_hash" ] || [ "$RALPH_VERSION" != "$stored_version" ]; then
+      needs_validate="yes"
+    fi
+  fi
+
+  if [ "$needs_validate" = "yes" ]; then
+    echo "==> Validando ralph.config.sh contra os manifestos do projeto..."
+    node "$RALPH_PKG_DIR/lib/build-validate-prompt.js" | claude -p --dangerously-skip-permissions \
+      --output-format stream-json --verbose --include-partial-messages 2>&1 \
+      | jq -r --unbuffered '
+          if .type == "assistant" then
+            (.message.content[]? | select(.type=="text").text // empty)
+          elif .type == "user" then
+            (.message.content[]? | select(.type=="tool_result") | "  ↳ tool_result")
+          elif .type == "result" then
+            "==> result: " + (.subtype // "ok")
+          else empty end' \
+      | tee "logs/ralph-validate.log"
+
+    if [ ! -f .ralph/state.json ]; then
+      echo "❌ Validação não produziu .ralph/state.json. Abortando." >&2
+      exit 1
+    fi
+
+    if ! node "$RALPH_PKG_DIR/lib/finalize-state.js"; then
+      echo "❌ Falha ao finalizar .ralph/state.json. Abortando." >&2
+      exit 1
+    fi
+
+    # Re-source the config in case Claude edited it during validation.
+    set -a
+    . ./ralph.config.sh
+    set +a
+    echo "==> Validação concluída."
+  fi
+fi
+# ---------------------------------------------------------------------------
+
 START=$(date +%s)
 successes=()
 failures=()
