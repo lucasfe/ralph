@@ -20,6 +20,18 @@ fi
 cd "$PROJECT_ROOT"
 export PROJECT_ROOT
 
+# Locate the package directory (one level up from this template).
+RALPH_PKG_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+export RALPH_PKG_DIR
+
+# Source ralph.config.sh first so commands/branches/merge config become env
+# vars visible to the prompt builder. Then source .env.local for credentials.
+if [ -f ralph.config.sh ]; then
+  set -a
+  . ./ralph.config.sh
+  set +a
+fi
+
 if [ -f .env.local ]; then
   set -a
   . ./.env.local
@@ -44,7 +56,7 @@ while :; do
   num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
   echo "==> Iteração para issue #$num ($count restantes)"
 
-  cat PROMPT.md | claude -p --dangerously-skip-permissions \
+  node "$RALPH_PKG_DIR/lib/build-prompt.js" | claude -p --dangerously-skip-permissions \
     --output-format stream-json --verbose --include-partial-messages 2>&1 \
     | jq -r --unbuffered '
         if .type == "assistant" then
