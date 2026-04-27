@@ -20,17 +20,14 @@ for cmd in tmux jq gh claude curl npm git; do
   command -v "$cmd" >/dev/null || { echo "❌ '$cmd' não encontrado no PATH"; exit 1; }
 done
 
-# 3. .env.local com credenciais do WhatsApp
-if [ ! -f .env.local ]; then
-  echo "❌ .env.local não encontrado. Adicione CALLMEBOT_KEY e WHATSAPP_PHONE."
-  exit 1
+# 3. .env.local com credenciais do WhatsApp (opcional)
+if [ -f .env.local ]; then
+  set -a
+  . ./.env.local
+  set +a
 fi
-set -a
-. ./.env.local
-set +a
 if [ -z "${CALLMEBOT_KEY:-}" ] || [ -z "${WHATSAPP_PHONE:-}" ]; then
-  echo "❌ CALLMEBOT_KEY ou WHATSAPP_PHONE não definidos em .env.local"
-  exit 1
+  echo "ℹ️  CALLMEBOT_KEY/WHATSAPP_PHONE ausentes; notificação WhatsApp será pulada."
 fi
 
 # 4. gh autenticado
