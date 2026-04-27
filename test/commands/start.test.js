@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { startCommand, StartAbort } from '../../lib/commands/start.js'
+import { templatePath } from '../../lib/paths.js'
+
+const RALPH_TEMPLATE = templatePath('ralph.sh')
 
 function makeStream() {
   const chunks = []
@@ -95,7 +98,7 @@ describe('startCommand', () => {
     const result = await startCommand(deps)
     expect(result).toEqual({ exitCode: 0, started: false })
     expect(deps.stdout.output()).toContain('Nenhuma issue na fila')
-    expect(deps.exec.calls).not.toContain('tmux new -d -s ralph')
+    expect(deps.exec.calls.some((c) => c.startsWith('tmux new -d -s ralph'))).toBe(false)
   })
 
   it('launches tmux when queue has issues', async () => {
@@ -111,7 +114,7 @@ describe('startCommand', () => {
       },
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '3', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && ./ralph.sh`]: {
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
         exitCode: 0,
         stdout: '',
         stderr: '',

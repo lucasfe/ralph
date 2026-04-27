@@ -1,10 +1,24 @@
 #!/bin/bash
 # Ralph loop — resolve open GitHub issues one at a time, fully autonomously.
-# Invoked by start-ralph.sh inside a tmux session. Don't run directly.
+# Invoked by `ralph start` inside a tmux session. Don't run directly.
 
 set -u
 
-cd "$(dirname "$0")"
+# Path safety: anchor the loop to the git project root and refuse to run
+# outside a git repo or in $HOME / root. PROJECT_ROOT is exported so child
+# tools (Claude, gh, npm) inherit the same anchor.
+if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  echo "❌ ralph.sh: not inside a git repository. Aborting." >&2
+  exit 1
+fi
+
+if [ -z "$PROJECT_ROOT" ] || [ "$PROJECT_ROOT" = "/" ] || [ "$PROJECT_ROOT" = "$HOME" ]; then
+  echo "❌ ralph.sh: refusing to run with PROJECT_ROOT='$PROJECT_ROOT'." >&2
+  exit 1
+fi
+
+cd "$PROJECT_ROOT"
+export PROJECT_ROOT
 
 if [ -f .env.local ]; then
   set -a
