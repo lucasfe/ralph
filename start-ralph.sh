@@ -64,7 +64,7 @@ if [ -n "$orphaned" ]; then
 fi
 
 # 8. Verifica se há issue para processar
-count=$(gh issue list --state open --label '-claude-working' --label '-claude-failed' --json number -q '. | length')
+count=$(gh issue list --state open --label '-claude-working' --label '-claude-failed' --label '-do-not-ralph' --json number -q '. | length')
 if [ "$count" = "0" ]; then
   echo "ℹ️  Nenhuma issue na fila. Nada a fazer."
   exit 0
