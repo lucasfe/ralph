@@ -50,14 +50,33 @@ describe('startCommand', () => {
     expect(deps.stderr.output()).toContain("Sessão tmux 'ralph' já existe.")
   })
 
-  it('aborts when a required command is missing', async () => {
+  it('aborts when a critical command is missing', async () => {
     const deps = baseDeps()
-    deps.hasCommand = (cmd) => cmd !== 'jq'
+    deps.hasCommand = (cmd) => cmd !== 'git'
     deps.exec = makeExec({
       'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
     })
     await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
-    expect(deps.stderr.output()).toContain("❌ 'jq' não encontrado no PATH")
+    expect(deps.stderr.output()).toContain("❌ 'git' não encontrado no PATH")
+  })
+
+  it('warns but does not abort when a non-critical command is missing', async () => {
+    const deps = baseDeps()
+    deps.hasCommand = (cmd) => cmd !== 'jq'
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '0', stderr: '' },
+    })
+    const result = await startCommand(deps)
+    expect(result.exitCode).toBe(0)
+    expect(deps.stdout.output()).toContain("⚠️  'jq' não encontrado (opcional)")
   })
 
   it('aborts when gh auth status fails', async () => {

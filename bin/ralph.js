@@ -6,6 +6,7 @@ import { Command } from 'commander'
 import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { initCommand, InitAbort } from '../lib/commands/init.js'
+import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8'))
@@ -53,6 +54,21 @@ program
       await stopCommand()
     } catch (e) {
       if (e instanceof StopAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('doctor')
+  .description('Check required system deps and print install commands for missing ones')
+  .action(async () => {
+    try {
+      const result = await doctorCommand()
+      process.exit(result.exitCode)
+    } catch (e) {
+      if (e instanceof DoctorAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e
