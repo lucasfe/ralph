@@ -4,7 +4,7 @@
   "description": "Ralph — autonomous GitHub issue resolution loop, packaged as a CLI.",
   "type": "module",
   "bin": {
-    "ralph": "./bin/ralph.js"
+    "ralph": "bin/ralph.js"
   },
   "files": [
     "bin",
