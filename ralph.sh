@@ -18,16 +18,16 @@ START=$(date +%s)
 successes=()
 failures=()
 
-label_filter=(--label '-claude-working' --label '-claude-failed' --label '-do-not-ralph')
+SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph'
 
 while :; do
-  count=$(gh issue list --state open "${label_filter[@]}" --json number -q '. | length')
+  count=$(gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length')
   if [ "$count" = "0" ]; then
     echo "Fila vazia, encerrando."
     break
   fi
 
-  num=$(gh issue list --state open "${label_filter[@]}" --sort created --order asc --limit 1 --json number -q '.[0].number')
+  num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
   echo "==> Iteração para issue #$num ($count restantes)"
 
   cat PROMPT.md | claude -p --dangerously-skip-permissions 2>&1 | tee "logs/ralph-issue-$num.log"
