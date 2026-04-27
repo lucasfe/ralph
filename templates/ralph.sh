@@ -147,19 +147,48 @@ git checkout dev 2>/dev/null || true
 git pull --ff-only 2>/dev/null || true
 git branch --merged dev 2>/dev/null | grep -E '^\s+issue-' | xargs -r git branch -d 2>/dev/null || true
 
+# --- End-of-run notifications ---------------------------------------------
 ELAPSED=$(( $(date +%s) - START ))
-mins=$(( ELAPSED / 60 ))
-ok_list=$( [ ${#successes[@]} -gt 0 ] && printf '#%s ' "${successes[@]}" || echo "-" )
-fail_list=$( [ ${#failures[@]} -gt 0 ] && printf '#%s ' "${failures[@]}" || echo "-" )
-msg="Ralph finalizado: ${#successes[@]} ok, ${#failures[@]} falharam, ${mins}min. OK: ${ok_list}| FAIL: ${fail_list}"
+duration_min=$(( ELAPSED / 60 ))
+ok_count=${#successes[@]}
+fail_count=${#failures[@]}
+ok_list=$( [ "$ok_count" -gt 0 ] && printf '#%s ' "${successes[@]}" || echo "-" )
+fail_list=$( [ "$fail_count" -gt 0 ] && printf '#%s ' "${failures[@]}" || echo "-" )
+msg="Ralph finalizado: ${ok_count} ok, ${fail_count} falharam, ${duration_min}min. OK: ${ok_list}| FAIL: ${fail_list}"
+
+if [ "$fail_count" -eq 0 ]; then
+  status="success"
+elif [ "$ok_count" -gt 0 ]; then
+  status="partial"
+else
+  status="failed"
+fi
+
+# Stdout always — visible to anyone running `tmux attach`.
 echo "$msg"
 
-if [ -n "${CALLMEBOT_KEY:-}" ] && [ -n "${WHATSAPP_PHONE:-}" ]; then
-  encoded=$(jq -sRr @uri <<< "$msg")
-  curl -s "https://api.callmebot.com/whatsapp.php?phone=${WHATSAPP_PHONE}&text=${encoded}&apikey=${CALLMEBOT_KEY}" > /dev/null || true
-  echo "==> Notificação WhatsApp enviada."
-else
-  echo "==> CALLMEBOT_KEY/WHATSAPP_PHONE ausentes; pulando notificação."
+# Re-source .env.local so credentials added mid-run are picked up.
+if [ -f ./.env.local ]; then
+  set -a
+  . ./.env.local
+  set +a
 fi
+
+# Built-in WhatsApp via CallMeBot. Failures must not crash the loop.
+if [ -n "${CALLMEBOT_KEY:-}" ] && [ -n "${WHATSAPP_PHONE:-}" ]; then
+  encoded=$(jq -sRr @uri <<< "$msg") || encoded=""
+  if [ -n "$encoded" ]; then
+    curl -s --connect-timeout 5 \
+      "https://api.callmebot.com/whatsapp.php?phone=${WHATSAPP_PHONE}&text=${encoded}&apikey=${CALLMEBOT_KEY}" \
+      > /dev/null || true
+    echo "==> Notificação WhatsApp enviada."
+  fi
+fi
+
+# Custom hook. Project-supplied script with full freedom over channels.
+if [ -x ./ralph-notify.sh ]; then
+  ./ralph-notify.sh "$msg" "$status" "$ok_count" "$fail_count" "$duration_min" || true
+fi
+# ---------------------------------------------------------------------------
 
 tmux kill-session -t ralph 2>/dev/null || exit 0

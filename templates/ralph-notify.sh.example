@@ -4,7 +4,7 @@
 #
 # Args:
 #   $1 — message string (already includes ok/fail summary)
-#   $2 — status ("ok" or "fail")
+#   $2 — status ("success" | "partial" | "failed")
 #   $3 — successes count
 #   $4 — failures count
 #   $5 — duration in minutes
@@ -17,15 +17,23 @@ mins="$5"
 
 # Slack example:
 # curl -s -X POST -H 'Content-type: application/json' \
-#   --data "{\"text\":\"$msg\"}" \
+#   --data "{\"text\":\"[$status] $msg\"}" \
 #   "$SLACK_WEBHOOK_URL"
-
-# macOS native notification:
-# osascript -e "display notification \"$msg\" with title \"Ralph\""
 
 # Discord example:
 # curl -s -H 'Content-Type: application/json' \
-#   -d "{\"content\":\"$msg\"}" \
+#   -d "{\"content\":\"[$status] $msg\"}" \
 #   "$DISCORD_WEBHOOK_URL"
 
-echo "ralph-notify: $msg"
+# macOS native notification:
+# osascript -e "display notification \"$msg\" with title \"Ralph [$status]\""
+
+# sendmail example:
+# {
+#   echo "Subject: Ralph run [$status] — $ok ok / $fail fail / ${mins}min"
+#   echo "To: you@example.com"
+#   echo
+#   echo "$msg"
+# } | sendmail -t
+
+echo "ralph-notify: [$status] $msg"
