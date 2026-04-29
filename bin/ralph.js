@@ -7,6 +7,7 @@ import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
+import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8'))
@@ -55,6 +56,23 @@ program
       await stopCommand()
     } catch (e) {
       if (e instanceof StopAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('cycle')
+  .description(
+    'Run one queue-processing cycle: preflight, lock, drain, notify. Designed for launchd / cron schedules.',
+  )
+  .action(async () => {
+    try {
+      const result = await cycleCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof CycleAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e

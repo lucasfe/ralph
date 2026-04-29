@@ -4,6 +4,15 @@
 
 set -u
 
+# `--once` mode: callable from `ralph cycle`, which owns its own start/end
+# notifications, lock, and process lifetime. In once mode we drain the queue a
+# single time and exit cleanly without sending end-of-run notifications or
+# killing the tmux session (cycle is not running inside one).
+RALPH_ONCE_MODE="${RALPH_ONCE:-}"
+if [ "${1:-}" = "--once" ]; then
+  RALPH_ONCE_MODE=1
+fi
+
 # Path safety: anchor the loop to the git project root and refuse to run
 # outside a git repo or in $HOME / root. PROJECT_ROOT is exported so child
 # tools (Claude, gh, npm) inherit the same anchor.
@@ -166,6 +175,12 @@ fi
 
 # Stdout always — visible to anyone running `tmux attach`.
 echo "$msg"
+
+# In --once mode (called from `ralph cycle`), the parent owns notifications +
+# lifetime. Skip end-of-run notify and tmux teardown.
+if [ -n "$RALPH_ONCE_MODE" ]; then
+  exit 0
+fi
 
 # Re-source .env.local so credentials added mid-run are picked up.
 if [ -f ./.env.local ]; then
