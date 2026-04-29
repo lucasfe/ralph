@@ -135,7 +135,7 @@ while :; do
   state=$(gh issue view "$num" --json state -q '.state')
   if echo ",$labels," | grep -q ",claude-failed,"; then
     failures+=("$num")
-  elif [ "$state" = "CLOSED" ]; then
+  elif [ "$state" = "CLOSED" ] || echo ",$labels," | grep -q ",pending-merge,"; then
     successes+=("$num")
   else
     failures+=("$num")
