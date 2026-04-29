@@ -144,9 +144,8 @@ describe('startCommand', () => {
     expect(deps.stdout.output()).toContain('Ralph iniciado em background. 3 issues na fila.')
   })
 
-  it('skips orphan cleanup when user answers no', async () => {
+  it('warns about orphan claude-working labels and never removes them automatically', async () => {
     const deps = baseDeps()
-    deps.ask = async () => false
     deps.exec = makeExec({
       'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
@@ -161,6 +160,7 @@ describe('startCommand', () => {
     await startCommand(deps)
     expect(deps.stdout.output()).toContain("⚠️  Issues com label 'claude-working'")
     expect(deps.stdout.output()).toContain('Mantendo labels')
+    expect(deps.stdout.output()).toContain('gh issue edit <n> --remove-label claude-working')
     expect(deps.exec.calls.some((c) => c.includes('--remove-label'))).toBe(false)
   })
 
