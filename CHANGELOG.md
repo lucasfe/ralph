@@ -55,6 +55,13 @@ and shipped across slices #14–#23.
   `./ralph-notify.sh` hook called with
   `(msg, status, ok_count, fail_count, duration_min)`; stdout
   always prints the summary. (slice #9)
+- Startup WhatsApp ping: after `ralph start` successfully launches
+  the tmux session, sends a WhatsApp notification announcing Ralph
+  is online. Reuses the existing `CALLMEBOT_KEY` / `WHATSAPP_PHONE`
+  credentials; the message body is configurable via
+  `RALPH_STARTUP_MESSAGE` (defaults to a short "Ralph started" line).
+  Skipped silently when credentials are absent; failures log a
+  warning and never abort startup.
 - Update check: `ralph start` runs `npm view @lucasfe/ralph version`
   with a 5s timeout, warns once per release, and stores
   `last_seen_release` in `.ralph/state.json` to dedupe the warning.

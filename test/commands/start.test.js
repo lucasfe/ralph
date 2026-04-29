@@ -144,9 +144,8 @@ describe('startCommand', () => {
     expect(deps.stdout.output()).toContain('Ralph iniciado em background. 3 issues na fila.')
   })
 
-  it('skips orphan cleanup when user answers no', async () => {
+  it('warns about orphan claude-working labels and never removes them automatically', async () => {
     const deps = baseDeps()
-    deps.ask = async () => false
     deps.exec = makeExec({
       'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
@@ -161,6 +160,7 @@ describe('startCommand', () => {
     await startCommand(deps)
     expect(deps.stdout.output()).toContain("⚠️  Issues com label 'claude-working'")
     expect(deps.stdout.output()).toContain('Mantendo labels')
+    expect(deps.stdout.output()).toContain('gh issue edit <n> --remove-label claude-working')
     expect(deps.exec.calls.some((c) => c.includes('--remove-label'))).toBe(false)
   })
 
@@ -225,6 +225,141 @@ describe('startCommand', () => {
     expect(deps.exec.calls.some((c) => c.startsWith('npm view'))).toBe(false)
   })
 
+  it('sends WhatsApp startup notification with default message when credentials are present', async () => {
+    const deps = baseDeps()
+    const cwd = '/repo'
+    deps.exists = (p) => p.endsWith('.env.local')
+    deps.loadEnv = () => ({ CALLMEBOT_KEY: 'k', WHATSAPP_PHONE: '+1' })
+    const waCalls = []
+    deps.sendWa = async (args) => {
+      waCalls.push(args)
+      return { ok: true }
+    }
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '2', stderr: '' },
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    })
+    await startCommand({ ...deps, cwd })
+    expect(waCalls).toHaveLength(1)
+    expect(waCalls[0]).toEqual({
+      phone: '+1',
+      apiKey: 'k',
+      message: '🟢 Ralph started and is active.',
+    })
+    expect(deps.stdout.output()).toContain('Notificação WhatsApp de startup enviada.')
+  })
+
+  it('uses RALPH_STARTUP_MESSAGE override from .env.local when provided', async () => {
+    const deps = baseDeps()
+    const cwd = '/repo'
+    deps.exists = (p) => p.endsWith('.env.local')
+    deps.loadEnv = () => ({
+      CALLMEBOT_KEY: 'k',
+      WHATSAPP_PHONE: '+1',
+      RALPH_STARTUP_MESSAGE: 'custom hello',
+    })
+    const waCalls = []
+    deps.sendWa = async (args) => {
+      waCalls.push(args)
+      return { ok: true }
+    }
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '1', stderr: '' },
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    })
+    await startCommand({ ...deps, cwd })
+    expect(waCalls[0].message).toBe('custom hello')
+  })
+
+  it('skips WhatsApp startup notification when credentials are missing', async () => {
+    const deps = baseDeps()
+    const cwd = '/repo'
+    let waCalled = false
+    deps.sendWa = async () => {
+      waCalled = true
+      return { ok: true }
+    }
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '1', stderr: '' },
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    })
+    const savedKey = process.env.CALLMEBOT_KEY
+    const savedPhone = process.env.WHATSAPP_PHONE
+    delete process.env.CALLMEBOT_KEY
+    delete process.env.WHATSAPP_PHONE
+    try {
+      await startCommand({ ...deps, cwd })
+    } finally {
+      if (savedKey !== undefined) process.env.CALLMEBOT_KEY = savedKey
+      if (savedPhone !== undefined) process.env.WHATSAPP_PHONE = savedPhone
+    }
+    expect(waCalled).toBe(false)
+    expect(deps.stdout.output()).toContain('notificações WhatsApp serão puladas')
+  })
+
+  it('logs a warning but does not abort when WhatsApp startup notification fails', async () => {
+    const deps = baseDeps()
+    const cwd = '/repo'
+    deps.exists = (p) => p.endsWith('.env.local')
+    deps.loadEnv = () => ({ CALLMEBOT_KEY: 'k', WHATSAPP_PHONE: '+1' })
+    deps.sendWa = async () => ({ ok: false, reason: 'http_500' })
+    deps.exec = makeExec({
+      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '1', stderr: '' },
+      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+    })
+    const result = await startCommand({ ...deps, cwd })
+    expect(result.started).toBe(true)
+    expect(deps.stdout.output()).toContain('Notificação WhatsApp de startup falhou: http_500')
+  })
+
   it('does not print warning or write state when remote version is not newer', async () => {
     const deps = baseDeps()
     const cwd = '/repo'
@@ -254,27 +389,4 @@ describe('startCommand', () => {
     expect(writes).toHaveLength(0)
   })
 
-  it('removes orphan labels when user answers yes', async () => {
-    const deps = baseDeps()
-    deps.ask = async () => true
-    deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
-      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
-        exitCode: 0,
-        stdout: '  #42 stuck',
-        stderr: '',
-      },
-      'gh issue list --state open --label claude-working --json number -q .[].number': {
-        exitCode: 0,
-        stdout: '42',
-        stderr: '',
-      },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
-        { exitCode: 0, stdout: '0', stderr: '' },
-    })
-    await startCommand(deps)
-    expect(deps.exec.calls).toContain('gh issue edit 42 --remove-label claude-working')
-    expect(deps.stdout.output()).toContain('Labels removidas')
-  })
 })
