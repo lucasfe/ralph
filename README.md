@@ -53,6 +53,28 @@ a tmux session named `ralph`. Watch it live with `tmux attach -t ralph`,
 detach with `Ctrl+B` then `D`, or tail per-issue logs in
 `logs/ralph-issue-*.log`.
 
+## What survives an update
+
+`ralph init` and any future Ralph update mechanism (`npm i -g
+@lucasfe/ralph@latest`, re-run of `ralph init`, future `ralph upgrade`)
+treat user-authored config files as read-only. Running an update will
+never silently overwrite credentials, secrets, or your project notes.
+
+| File | Status on re-run | How to overwrite |
+| --- | --- | --- |
+| `.env.local` | **Never written or modified.** Ralph only writes `.env.local.example` (a template you copy from). | Edit by hand; Ralph stays out of it. |
+| `ralph-notify.sh` | **Never written or modified.** Ralph only writes `ralph-notify.sh.example`. | Edit by hand. |
+| `PROMPT.md` | Preserved on re-run; Ralph prints `PROMPT.md already exists — leaving it alone (pass --reset-prompt to overwrite)`. | `ralph init --reset-prompt` |
+| `ralph.config.sh` | Preserved on re-run. | Delete the file and re-run `ralph init`. |
+| `.claude/commands/ralph.md` | Preserved on re-run. | Delete the file and re-run `ralph init`. |
+| `.env.local.example` | Overwritten on every run (it is a template, not a credential store). | n/a |
+| `ralph-notify.sh.example` | Overwritten on every run (template). | n/a |
+| `.gitignore` | Ralph appends missing entries idempotently; existing lines are untouched. | n/a |
+
+The split is enforced by automated tests in
+`packages/ralph/lib/init.test.js`, so a future template-management
+refactor cannot silently break the invariant.
+
 ## Configuration reference
 
 `ralph init` writes `ralph.config.sh` at the repo root. It is meant to

@@ -21,9 +21,10 @@ program
 program
   .command('init')
   .description('Initialize Ralph in the current project (config + templates + slash command)')
-  .action(async () => {
+  .option('--reset-prompt', 'Overwrite an existing PROMPT.md with the package template')
+  .action(async (opts) => {
     try {
-      await initCommand()
+      await initCommand({ resetPrompt: Boolean(opts.resetPrompt) })
     } catch (e) {
       if (e instanceof InitAbort) {
         process.exit(e.exitCode ?? 1)

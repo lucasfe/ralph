@@ -76,6 +76,15 @@ and shipped across slices #14–#23.
 - Vitest infrastructure with `memfs` for hermetic tests on
   `detect-stack`, `init`, `doctor`, `interpolate`, `update-check`,
   `state`, `paths`, and the start/stop/env utilities.
+- `ralph init --reset-prompt` flag for the rare case where the user
+  wants to wipe `PROMPT.md` back to the package template after editing
+  it. Default behavior is unchanged: `PROMPT.md` is preserved on
+  re-run. The skip message now includes the `--reset-prompt` hint so
+  users discover the opt-in. Tests in `lib/init.test.js` lock down the
+  user-authored vs Ralph-authored file split: `.env.local`,
+  `ralph-notify.sh`, `PROMPT.md` (without the flag), and
+  `ralph.config.sh` are guaranteed untouched on re-run, so a future
+  template-management refactor cannot silently overwrite credentials.
 
 ### Configuration
 
