@@ -71,7 +71,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     const result = await startCommand(deps)
@@ -111,7 +111,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     const result = await startCommand(deps)
@@ -131,7 +131,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '3', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
         exitCode: 0,
@@ -154,7 +154,7 @@ describe('startCommand', () => {
         stdout: '  #42 stuck\n  #43 also stuck',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     await startCommand(deps)
@@ -179,7 +179,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
@@ -212,7 +212,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
         exitCode: 0,
@@ -243,7 +243,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '2', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
         exitCode: 0,
@@ -283,7 +283,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
         exitCode: 0,
@@ -311,7 +311,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
         exitCode: 0,
@@ -347,7 +347,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
         exitCode: 0,
@@ -375,7 +375,7 @@ describe('startCommand', () => {
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.1.0\n', stderr: '' },
       [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {

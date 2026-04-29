@@ -107,7 +107,7 @@ START=$(date +%s)
 successes=()
 failures=()
 
-SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph'
+SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge'
 
 while :; do
   count=$(gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length')
@@ -135,7 +135,7 @@ while :; do
   state=$(gh issue view "$num" --json state -q '.state')
   if echo ",$labels," | grep -q ",claude-failed,"; then
     failures+=("$num")
-  elif [ "$state" = "CLOSED" ]; then
+  elif [ "$state" = "CLOSED" ] || echo ",$labels," | grep -q ",pending-merge,"; then
     successes+=("$num")
   else
     failures+=("$num")
