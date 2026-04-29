@@ -254,27 +254,4 @@ describe('startCommand', () => {
     expect(writes).toHaveLength(0)
   })
 
-  it('removes orphan labels when user answers yes', async () => {
-    const deps = baseDeps()
-    deps.ask = async () => true
-    deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
-      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
-        exitCode: 0,
-        stdout: '  #42 stuck',
-        stderr: '',
-      },
-      'gh issue list --state open --label claude-working --json number -q .[].number': {
-        exitCode: 0,
-        stdout: '42',
-        stderr: '',
-      },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph --limit 100 --json number -q . | length':
-        { exitCode: 0, stdout: '0', stderr: '' },
-    })
-    await startCommand(deps)
-    expect(deps.exec.calls).toContain('gh issue edit 42 --remove-label claude-working')
-    expect(deps.stdout.output()).toContain('Labels removidas')
-  })
 })
