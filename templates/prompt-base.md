@@ -39,11 +39,21 @@ operations.
    - `gh pr merge <pr> --auto --{{MERGE_STRATEGY}} --delete-branch`
    - Poll `gh pr view <pr> --json state -q .state` every
      {{MERGE_POLL_INTERVAL}}s. Criteria:
-     - `MERGED` → success, exit.
+     - `MERGED` → go to step 9.
      - `CLOSED` (without merge) → failure.
      - {{MERGE_POLL_MAX}} polls without `MERGED` → failure.
      - CI red detected (`gh pr checks <pr>` returns fail) → try to fix
        the problem; if it fails 2 consecutive times → failure.
+
+9. **Mark complete**: Check the issue state once the PR is `MERGED`.
+   - `gh issue view N --json state -q .state`
+   - If `OPEN` (PR was merged into a non-default branch like
+     `{{DEV_BRANCH}}`, so GitHub auto-close did NOT fire):
+     `gh issue edit N --remove-label claude-working --add-label pending-merge`
+     The issue will close automatically when {{DEV_BRANCH}} rolls
+     forward to {{MAIN_BRANCH}}.
+   - If `CLOSED` (auto-close fired because PR_TARGET=={{MAIN_BRANCH}}):
+     nothing to do. Exit.
 
 ## Failed (at any point)
 
