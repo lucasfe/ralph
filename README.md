@@ -55,7 +55,7 @@ detach with `Ctrl+B` then `D`, or tail per-issue logs in
 
 ## How Ralph resolves issues
 
-Each iteration follows a **TDD red → green → refactor** loop, baked
+Every iteration follows a **TDD red → green → refactor** loop, baked
 into the prompt Claude receives:
 
 1. **Red** — write a failing test that captures the issue's expected
