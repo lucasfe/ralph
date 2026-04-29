@@ -2,6 +2,16 @@
   "name": "@lucasfe/ralph",
   "version": "0.3.0-rc.1",
   "description": "Ralph — autonomous GitHub issue resolution loop, packaged as a CLI.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucasfe/agenthub.git",
+    "directory": "packages/ralph"
+  },
+  "homepage": "https://github.com/lucasfe/agenthub/tree/main/packages/ralph#readme",
+  "bugs": {
+    "url": "https://github.com/lucasfe/agenthub/issues"
+  },
+  "license": "MIT",
   "type": "module",
   "bin": {
     "ralph": "bin/ralph.js"
