@@ -10,7 +10,10 @@ import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
 import {
   scheduleInstallCommand,
+  schedulePauseCommand,
+  scheduleResumeCommand,
   scheduleRemoveCommand,
+  scheduleStatusCommand,
   ScheduleAbort,
 } from '../lib/commands/schedule.js'
 
@@ -110,10 +113,57 @@ schedule
 
 schedule
   .command('remove')
-  .description('Unload and delete the launchd agent for the current repo')
+  .description('Unload and delete the launchd agent for the current repo (or every repo with --all)')
+  .option('--all', 'Remove every Ralph launchd agent on this user account (with confirmation)')
+  .action(async (opts) => {
+    try {
+      const result = await scheduleRemoveCommand({ all: Boolean(opts.all) })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('pause')
+  .description('Unload the launchd agent for the current repo (keeps the plist on disk so resume works)')
   .action(async () => {
     try {
-      const result = await scheduleRemoveCommand()
+      const result = await schedulePauseCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('resume')
+  .description('Re-load a previously paused launchd agent for the current repo')
+  .action(async () => {
+    try {
+      const result = await scheduleResumeCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('status')
+  .description('Print the state of every Ralph launchd agent (use --here to filter to the current repo)')
+  .option('--here', 'Only show the agent for the current repo')
+  .action(async (opts) => {
+    try {
+      const result = await scheduleStatusCommand({ here: Boolean(opts.here) })
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof ScheduleAbort) {
