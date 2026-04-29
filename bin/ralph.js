@@ -8,6 +8,11 @@ import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
+import {
+  scheduleInstallCommand,
+  scheduleRemoveCommand,
+  ScheduleAbort,
+} from '../lib/commands/schedule.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8'))
@@ -73,6 +78,45 @@ program
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof CycleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+const schedule = program
+  .command('schedule')
+  .description('Manage the macOS launchd agent that runs `ralph cycle` on a timer')
+
+schedule
+  .command('install')
+  .description('Install a launchd agent that fires `ralph cycle` every --interval')
+  .option('--interval <duration>', 'Interval between cycles (e.g. 4h, 30m, 1d)', '4h')
+  .option('--force', 'Overwrite an existing plist for this repo')
+  .action(async (opts) => {
+    try {
+      const result = await scheduleInstallCommand({
+        interval: opts.interval,
+        force: Boolean(opts.force),
+      })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('remove')
+  .description('Unload and delete the launchd agent for the current repo')
+  .action(async () => {
+    try {
+      const result = await scheduleRemoveCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e
