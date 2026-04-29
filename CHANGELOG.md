@@ -5,6 +5,13 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.1.0-rc.1...ralph-v0.2.0-rc.1) (2026-04-29)
+
+
+### Features
+
+* agent selector, ralph WhatsApp notifications, release-please bootstrap, pr-title gate ([#86](https://github.com/lucasfe/agenthub/issues/86)) ([81b86e9](https://github.com/lucasfe/agenthub/commit/81b86e94835c411fefed959ce979786337d2d9ea))
+
 ## [0.1.0] - Unreleased
 
 First public release. Extracts the autonomous Ralph loop from the
