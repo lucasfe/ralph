@@ -107,7 +107,7 @@ START=$(date +%s)
 successes=()
 failures=()
 
-SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph'
+SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge'
 
 while :; do
   count=$(gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length')
