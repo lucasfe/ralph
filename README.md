@@ -77,9 +77,10 @@ The config is plain bash; edit it in any editor. On the next
 
 ## Notification setup
 
-Ralph posts a one-line summary at the end of every run. Stdout (visible
-via `tmux attach -t ralph`) is always populated; the other channels
-are opt-in.
+Ralph posts a one-line summary at the end of every run, and a startup
+ping when `ralph start` successfully launches the tmux session. Stdout
+(visible via `tmux attach -t ralph`) is always populated; the other
+channels are opt-in.
 
 ### WhatsApp via CallMeBot (built-in)
 
@@ -92,7 +93,19 @@ are opt-in.
    WHATSAPP_PHONE=<your-phone-with-country-code>
    ```
 3. `.env.local` is added to `.gitignore` automatically. Done — the next
-   run will message you when it finishes.
+   `ralph start` will message you when the loop boots, and again when
+   it finishes.
+
+To customize the startup message body (e.g. include the host name or
+environment), set `RALPH_STARTUP_MESSAGE` in `.env.local`:
+
+```bash
+RALPH_STARTUP_MESSAGE=🟢 Ralph started on prod-runner-1
+```
+
+When unset, the default `🟢 Ralph started and is active.` is used.
+Failures sending the startup ping log a warning and never abort
+`ralph start`; missing credentials skip the ping silently.
 
 [callmebot]: https://www.callmebot.com/blog/free-api-whatsapp-messages/
 
