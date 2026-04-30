@@ -9,6 +9,7 @@ import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
 import {
+  scheduleHeartbeatCommand,
   scheduleInstallCommand,
   schedulePauseCommand,
   scheduleResumeCommand,
@@ -93,13 +94,20 @@ const schedule = program
 
 schedule
   .command('install')
-  .description('Install a launchd agent that fires `ralph cycle` every --interval')
+  .description(
+    'Install both launchd agents: cycle (every --interval) + heartbeat (daily summary at RALPH_DAILY_SUMMARY_TIME or 09:00)',
+  )
   .option('--interval <duration>', 'Interval between cycles (e.g. 4h, 30m, 1d)', '4h')
-  .option('--force', 'Overwrite an existing plist for this repo')
+  .option(
+    '--heartbeat-time <hh:mm>',
+    'Time for the daily heartbeat summary (defaults to RALPH_DAILY_SUMMARY_TIME or 09:00)',
+  )
+  .option('--force', 'Overwrite existing plists for this repo')
   .action(async (opts) => {
     try {
       const result = await scheduleInstallCommand({
         interval: opts.interval,
+        heartbeatTime: opts.heartbeatTime,
         force: Boolean(opts.force),
       })
       process.exit(result.exitCode ?? 0)
@@ -164,6 +172,23 @@ schedule
   .action(async (opts) => {
     try {
       const result = await scheduleStatusCommand({ here: Boolean(opts.here) })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('heartbeat')
+  .description(
+    'Internal: aggregate the last 24h of cycle logs and send the daily summary via WhatsApp',
+  )
+  .action(async () => {
+    try {
+      const result = await scheduleHeartbeatCommand()
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof ScheduleAbort) {
