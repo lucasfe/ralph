@@ -7,6 +7,15 @@ import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
+import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
+import {
+  scheduleInstallCommand,
+  schedulePauseCommand,
+  scheduleResumeCommand,
+  scheduleRemoveCommand,
+  scheduleStatusCommand,
+  ScheduleAbort,
+} from '../lib/commands/schedule.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '..', 'package.json'), 'utf8'))
@@ -55,6 +64,109 @@ program
       await stopCommand()
     } catch (e) {
       if (e instanceof StopAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('cycle')
+  .description(
+    'Run one queue-processing cycle: preflight, lock, drain, notify. Designed for launchd / cron schedules.',
+  )
+  .action(async () => {
+    try {
+      const result = await cycleCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof CycleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+const schedule = program
+  .command('schedule')
+  .description('Manage the macOS launchd agent that runs `ralph cycle` on a timer')
+
+schedule
+  .command('install')
+  .description('Install a launchd agent that fires `ralph cycle` every --interval')
+  .option('--interval <duration>', 'Interval between cycles (e.g. 4h, 30m, 1d)', '4h')
+  .option('--force', 'Overwrite an existing plist for this repo')
+  .action(async (opts) => {
+    try {
+      const result = await scheduleInstallCommand({
+        interval: opts.interval,
+        force: Boolean(opts.force),
+      })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('remove')
+  .description('Unload and delete the launchd agent for the current repo (or every repo with --all)')
+  .option('--all', 'Remove every Ralph launchd agent on this user account (with confirmation)')
+  .action(async (opts) => {
+    try {
+      const result = await scheduleRemoveCommand({ all: Boolean(opts.all) })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('pause')
+  .description('Unload the launchd agent for the current repo (keeps the plist on disk so resume works)')
+  .action(async () => {
+    try {
+      const result = await schedulePauseCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('resume')
+  .description('Re-load a previously paused launchd agent for the current repo')
+  .action(async () => {
+    try {
+      const result = await scheduleResumeCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+schedule
+  .command('status')
+  .description('Print the state of every Ralph launchd agent (use --here to filter to the current repo)')
+  .option('--here', 'Only show the agent for the current repo')
+  .action(async (opts) => {
+    try {
+      const result = await scheduleStatusCommand({ here: Boolean(opts.here) })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ScheduleAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e

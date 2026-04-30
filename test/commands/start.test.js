@@ -389,4 +389,133 @@ describe('startCommand', () => {
     expect(writes).toHaveLength(0)
   })
 
+  describe('cycle-lock coexistence', () => {
+    it('aborts when an alive cycle lock is held', async () => {
+      const deps = baseDeps()
+      const cwd = '/repo'
+      const peekCalls = []
+      deps.peekLock = (repoPath) => {
+        peekCalls.push(repoPath)
+        return {
+          holder: {
+            pid: 9999,
+            startedAt: '2026-04-29T00:00:00.000Z',
+            repoPath: cwd,
+          },
+          alive: true,
+        }
+      }
+      deps.now = () => Date.parse('2026-04-29T02:00:00.000Z')
+      deps.exec = makeExec({
+        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      })
+      await expect(startCommand({ ...deps, cwd })).rejects.toBeInstanceOf(StartAbort)
+      expect(peekCalls).toHaveLength(1)
+      expect(peekCalls[0]).toBe(cwd)
+      const errOut = deps.stderr.output()
+      expect(errOut).toContain('⏸️ Cycle in progress')
+      expect(errOut).toContain('PID 9999')
+      expect(errOut).toContain('2h')
+      expect(errOut).toContain('ralph schedule pause')
+      expect(deps.exec.calls.some((c) => c.startsWith('gh auth status'))).toBe(false)
+      expect(deps.exec.calls.some((c) => c.startsWith('tmux new -d -s ralph'))).toBe(false)
+    })
+
+    it('proceeds when the cycle lock holder is stale (alive=false)', async () => {
+      const deps = baseDeps()
+      const cwd = '/repo'
+      deps.peekLock = () => ({
+        holder: {
+          pid: 4242,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          repoPath: cwd,
+        },
+        alive: false,
+      })
+      deps.exec = makeExec({
+        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+        'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+          { exitCode: 0, stdout: '0', stderr: '' },
+      })
+      const result = await startCommand({ ...deps, cwd })
+      expect(result.exitCode).toBe(0)
+      expect(deps.stderr.output()).not.toContain('Cycle in progress')
+    })
+
+    it('proceeds normally when no cycle lock is held', async () => {
+      const deps = baseDeps()
+      const cwd = '/repo'
+      deps.peekLock = () => null
+      deps.exec = makeExec({
+        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+        'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+          { exitCode: 0, stdout: '0', stderr: '' },
+      })
+      const result = await startCommand({ ...deps, cwd })
+      expect(result.exitCode).toBe(0)
+      expect(deps.stderr.output()).not.toContain('Cycle in progress')
+    })
+
+    it('uses peekLock (read-only) and never acquires the lock', async () => {
+      const deps = baseDeps()
+      const cwd = '/repo'
+      let acquireCalled = false
+      deps.peekLock = () => null
+      deps.acquireLock = () => {
+        acquireCalled = true
+        return { acquired: true, holder: { pid: 1, startedAt: '', repoPath: cwd } }
+      }
+      deps.exec = makeExec({
+        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+        'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+        },
+        'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+          { exitCode: 0, stdout: '0', stderr: '' },
+      })
+      await startCommand({ ...deps, cwd })
+      expect(acquireCalled).toBe(false)
+    })
+
+    it('does not send a WhatsApp notification on the alive-lock abort path', async () => {
+      const deps = baseDeps()
+      const cwd = '/repo'
+      let waCalled = false
+      deps.exists = (p) => p.endsWith('.env.local')
+      deps.loadEnv = () => ({ CALLMEBOT_KEY: 'k', WHATSAPP_PHONE: '+1' })
+      deps.sendWa = async () => {
+        waCalled = true
+        return { ok: true }
+      }
+      deps.peekLock = () => ({
+        holder: {
+          pid: 1234,
+          startedAt: '2026-04-29T00:00:00.000Z',
+          repoPath: cwd,
+        },
+        alive: true,
+      })
+      deps.now = () => Date.parse('2026-04-29T01:00:00.000Z')
+      deps.exec = makeExec({
+        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      })
+      await expect(startCommand({ ...deps, cwd })).rejects.toBeInstanceOf(StartAbort)
+      expect(waCalled).toBe(false)
+    })
+  })
 })
