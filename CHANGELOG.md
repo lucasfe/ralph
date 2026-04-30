@@ -5,6 +5,14 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.4.0-rc.1...ralph-v0.5.0-rc.1) (2026-04-30)
+
+
+### Features
+
+* dev → main rollforward ([#235](https://github.com/lucasfe/agenthub/issues/235)) ([e38068c](https://github.com/lucasfe/agenthub/commit/e38068c67bad4053c24c1e2ed555f652636b7e7c))
+* dev → main rollforward ([#265](https://github.com/lucasfe/agenthub/issues/265)) ([958c923](https://github.com/lucasfe/agenthub/commit/958c9236ce4929218b947a229167f80d62c4cbad))
+
 ## [0.4.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.3.0-rc.1...ralph-v0.4.0-rc.1) (2026-04-29)
 
 
