@@ -5,6 +5,13 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.3.0-rc.1...ralph-v0.4.0-rc.1) (2026-04-29)
+
+
+### Features
+
+* **ralph:** TDD red-green-refactor enforcement in resolution loop ([6dd7b5b](https://github.com/lucasfe/agenthub/commit/6dd7b5bd55ae1a2e967b76ac3404157ad272d18b))
+
 ## [0.3.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.2.1-rc.1...ralph-v0.3.0-rc.1) (2026-04-29)
 
 

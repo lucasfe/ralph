@@ -53,6 +53,26 @@ a tmux session named `ralph`. Watch it live with `tmux attach -t ralph`,
 detach with `Ctrl+B` then `D`, or tail per-issue logs in
 `logs/ralph-issue-*.log`.
 
+## How Ralph resolves issues
+
+Every iteration follows a **TDD red → green → refactor** loop, baked
+into the prompt Claude receives:
+
+1. **Red** — write a failing test that captures the issue's expected
+   behavior, then run `TEST_CMD` and confirm it fails for the right
+   reason (the behavior is not yet implemented).
+2. **Green** — implement the minimum code that makes the new test pass,
+   then run `TEST_CMD` again and confirm every test passes.
+3. **Refactor** — tighten names, remove duplication, and improve the
+   design while keeping the suite green.
+
+The new/updated tests and the implementation land in the same commit
+so the TDD pair is reviewable together. The PR body documents the
+TDD steps (tests added, failing names before, green suite result
+after). TDD is skipped only for changes with zero behavioral impact:
+pure documentation, plain configuration, or dependency bumps without
+logic changes — and the skip is justified in the PR body.
+
 ## What survives an update
 
 `ralph init` and any future Ralph update mechanism (`npm i -g
