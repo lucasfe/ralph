@@ -73,6 +73,38 @@ after). TDD is skipped only for changes with zero behavioral impact:
 pure documentation, plain configuration, or dependency bumps without
 logic changes — and the skip is justified in the PR body.
 
+## Scheduling Ralph (macOS launchd)
+
+Beyond the manual `ralph start` flow, Ralph can run on a launchd
+timer so it processes the queue without human intervention. This is
+macOS-only; on Linux / WSL use cron or systemd.
+
+```bash
+ralph schedule install            # cycle every 4h + heartbeat at 09:00 (defaults)
+ralph schedule install --interval 30m --heartbeat-time 07:30
+ralph schedule status             # state of every Ralph agent on this machine
+ralph schedule status --here      # only the agent for the current repo
+ralph schedule pause              # unload without deleting the plists
+ralph schedule resume             # reload after a pause
+ralph schedule remove             # unload + delete plists for this repo
+ralph schedule remove --all       # unload + delete every Ralph plist (with confirm)
+```
+
+`install` writes two property lists under `~/Library/LaunchAgents/`:
+
+| Plist | Schedule | Purpose |
+| --- | --- | --- |
+| `com.lucasfe.ralph.cycle.<slug>.plist` | `StartInterval` (default 4h) | Runs `ralph cycle` — one queue-processing pass. |
+| `com.lucasfe.ralph.heartbeat.<slug>.plist` | `StartCalendarInterval` (default 09:00) | Sends the daily 24h summary. |
+
+`<slug>` is the basename of the repo's working tree, so multiple
+repos can each have their own pair of agents on the same user account.
+`pause`, `resume`, `remove`, and `status` operate on both plists
+transparently — there is no separate `ralph schedule heartbeat
+install`. The `ralph schedule heartbeat` subcommand exists, but it is
+the entry point launchd invokes when the heartbeat plist fires; you
+will not normally call it by hand.
+
 ## What survives an update
 
 `ralph init` and any future Ralph update mechanism (`npm i -g
@@ -150,6 +182,36 @@ Failures sending the startup ping log a warning and never abort
 `ralph start`; missing credentials skip the ping silently.
 
 [callmebot]: https://www.callmebot.com/blog/free-api-whatsapp-messages/
+
+### Daily heartbeat (24h summary)
+
+When Ralph is scheduled via `ralph schedule install` (see
+[Scheduling Ralph](#scheduling-ralph-macos-launchd)), a second launchd
+agent fires once a day and posts a one-line summary of the last 24h to
+WhatsApp. This is the *positive heartbeat* — proof Ralph is alive even
+on days when no issues moved.
+
+Format:
+
+```
+📊 Ralph 24h | 6 cycles, 12 issues (10 ok, 2 fail) | lucasfe/agenthub | next 09:00
+```
+
+When the summary aggregation itself fails (corrupt logs, missing
+directories, etc.), the message degrades to
+`❌ Ralph 24h summary failed: <reason>` so silence never reads as
+healthy.
+
+The schedule defaults to `09:00` in your local timezone. Override it
+with `RALPH_DAILY_SUMMARY_TIME` in `.env.local`:
+
+```bash
+RALPH_DAILY_SUMMARY_TIME=07:30
+```
+
+The heartbeat reuses the same `CALLMEBOT_KEY` / `WHATSAPP_PHONE`
+credentials as the cycle and startup notifications. Missing credentials
+skip the WhatsApp send (the summary is still printed to the log).
 
 ### Custom hook (`ralph-notify.sh`)
 

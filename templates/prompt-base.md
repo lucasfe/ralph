@@ -13,7 +13,7 @@ operations.
 
 1. **Select issue**: run
    ```
-   gh issue list --state open --search '-label:claude-working -label:claude-failed sort:created-asc' --limit 1 --json number,title,body
+   gh issue list --state open --search '-label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge sort:created-asc' --limit 1 --json number,title,body
    ```
    Take the first. If the list is empty, write "RALPH_DONE" and exit.
    (The bash already checks this before invoking you, so normally there
