@@ -106,6 +106,24 @@ and shipped across slices #14–#23.
   `ralph-notify.sh`, `PROMPT.md` (without the flag), and
   `ralph.config.sh` are guaranteed untouched on re-run, so a future
   template-management refactor cannot silently overwrite credentials.
+- `ralph schedule install / remove / pause / resume / status`:
+  macOS-only launchd integration that runs `ralph cycle` on a timer
+  (default 4h, configurable via `--interval`). `install` writes a
+  per-repo plist under `~/Library/LaunchAgents/` and loads it via
+  `launchctl`; `pause` / `resume` toggle the agent without deleting
+  the plist; `status` reports loaded/paused state, last exit code,
+  next-run interval, and live cycle-lock holder when present.
+  (slices #220, #221)
+- `ralph schedule heartbeat` + dual-plist install: in addition to the
+  cycle agent, `ralph schedule install` writes a second plist
+  (`com.lucasfe.ralph.heartbeat.<slug>.plist`) that fires daily at
+  `RALPH_DAILY_SUMMARY_TIME` (default `09:00`) and sends a one-line
+  WhatsApp summary of the last 24h of cycle logs — the *positive
+  heartbeat* that proves Ralph is alive even on days when no issues
+  moved. `pause`, `resume`, `remove`, and `status` operate on both
+  plists transparently. Failures during summary aggregation degrade
+  to `❌ Ralph 24h summary failed: <reason>` so silence never reads
+  as healthy. (slice #223)
 
 ### Configuration
 
