@@ -9,9 +9,9 @@ context-isolated subagents are available via the Task/Agent tool in this
 headless run, and each returns a structured result you pass forward
 explicitly — outputs do not leak between dispatches. Specialist roles are
 composed into this template below as they land; the **dev specialist** (step
-4) and the **QA specialist** (step 4b) are wired in. Remaining roles (triage,
-review, docs) arrive in later slices; until each lands you carry that part of
-the flow yourself.
+4), the **QA specialist** (step 4b), and the **code reviewer specialist** (step
+4c) are wired in. Remaining roles (triage, docs) arrive in later slices; until
+each lands you carry that part of the flow yourself.
 
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
 operations.
@@ -56,6 +56,19 @@ operations.
 
 {{ROLE_QA}}
 
+4c. **Review via the code reviewer specialist**: once QA's suite is green but
+   **before** any PR is opened, dispatch a context-isolated subagent in the
+   **code reviewer** role (see "Code reviewer specialist" below) with the
+   issue, the dev's diff, and the full test set. The reviewer applies the
+   Ralph-authored maintainability standard and gates the change pre-PR. Blocking
+   findings loop **back to the dev** to fix, then return to the reviewer to
+   re-check — bounded to a **maximum of 2 rounds**. If concerns remain unresolved
+   after 2 rounds, do **not** loop further: open the PR anyway in step 7 and add
+   the prominent warning block to the PR body so a human is pulled in. The
+   give-up backstop below still bounds this loop.
+
+{{ROLE_REVIEW}}
+
 5. **Validate locally**: run `{{TEST_CMD}}` and `{{LINT_CMD}}` (skip
    the empty ones). If they fail, fix and re-run. Repeat up to 3 times;
    if they still fail, go to "Failed".
@@ -77,6 +90,17 @@ operations.
    ```
 
    If TDD was skipped per step 4, replace the TDD block with `## TDD\n- Skipped: <reason — must be docs/config/dep-bump only>`.
+
+   If the code reviewer's concerns were still unresolved after the 2-round
+   limit (step 4c), prepend a prominent warning block to the PR body flagging
+   the unresolved review concerns so a human is pulled in:
+
+   ```
+   > [!WARNING]
+   > **Unresolved review concerns** — the reviewer and dev did not converge
+   > within the 2-round limit. A human must judge the following before merge:
+   > <list each unresolved blocking finding>
+   ```
 
 8. **Auto-merge + wait**:
    - `gh pr merge <pr> --auto --{{MERGE_STRATEGY}} --delete-branch`
