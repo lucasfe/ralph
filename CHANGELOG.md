@@ -5,6 +5,16 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.5.0-rc.1...ralph-v0.6.0-rc.1) (2026-05-31)
+
+
+### Features
+
+* add Ralph dev specialist role (inferred persona + TDD) ([#440](https://github.com/lucasfe/agenthub/issues/440)) ([0ec96e3](https://github.com/lucasfe/agenthub/commit/0ec96e3ef287523867956eeba2b47f72885d612d))
+* add Ralph team-prompt orchestrator skeleton + composition seam ([#435](https://github.com/lucasfe/agenthub/issues/435)) ([75cbc85](https://github.com/lucasfe/agenthub/commit/75cbc8533184659d84a9bc657f7d0f816e90af99))
+* dev → main rollforward ([3d1de04](https://github.com/lucasfe/agenthub/commit/3d1de04d653ae632d44d7b0fca4a426755d891a4))
+* dev → main rollforward ([#433](https://github.com/lucasfe/agenthub/issues/433)) ([5246881](https://github.com/lucasfe/agenthub/commit/524688148ee59a7de46ffcbf210563cd10055691))
+
 ## [0.5.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.4.0-rc.1...ralph-v0.5.0-rc.1) (2026-04-30)
 
 
