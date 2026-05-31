@@ -2,8 +2,8 @@
 # `ralph init` will not overwrite this file.
 
 # Commands Ralph runs locally before opening a PR. Empty string means
-# "skip" (or, for INSTALL_CMD, the value the prompt-base will ask Claude
-# to figure out at runtime).
+# "skip" (or, for INSTALL_CMD, the value the orchestrator prompt will ask
+# Claude to figure out at runtime).
 INSTALL_CMD="{{INSTALL_CMD}}"
 TEST_CMD="{{TEST_CMD}}"
 LINT_CMD="{{LINT_CMD}}"
