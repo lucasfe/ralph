@@ -9,9 +9,11 @@ context-isolated subagents are available via the Task/Agent tool in this
 headless run, and each returns a structured result you pass forward
 explicitly — outputs do not leak between dispatches. Specialist roles are
 composed into this template below as they land; the **dev specialist** (step
-4), the **QA specialist** (step 4b), and the **code reviewer specialist** (step
-4c) are wired in. Remaining roles (triage, docs) arrive in later slices; until
-each lands you carry that part of the flow yourself.
+4), the **QA specialist** (step 4b), the **code reviewer specialist** (step
+4c), and the **tech writer specialist** (step 4d) are wired in. You also
+triage each issue and scale the team to fit it (step 3b): trivial,
+non-behavioral changes take a light path, while substantive changes run the
+full team.
 
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
 operations.
@@ -31,6 +33,25 @@ operations.
 2. **Mark in progress**: `gh issue edit N --add-label claude-working`
 
 3. **Prepare branch**: `git checkout {{DEV_BRANCH}} && git pull && git checkout -b issue-N`
+
+3b. **Triage and scale the team**: before dispatching, classify the issue and
+   scale the team to fit it. Read the issue and the files it implies, then pick
+   one of two paths:
+   - **Trivial / non-behavioral** — the change has no behavioral impact on code:
+     pure docs, plain config, or dependency bumps without logic changes.
+     Skip dev-TDD and QA (steps 4 and 4b) and run only a **light review** plus
+     the writer (steps 4c, 4d). "Light" means the same reviewer (step 4c), just
+     over a docs/config-only diff with no QA augmentation to weigh. Note "TDD
+     skipped (trivial)" for the PR body.
+   - **Substantive** — anything that changes behavior: source code, logic, or any
+     change you cannot prove is purely cosmetic. Run the **full team** — dev,
+     QA, review, writer (steps 4 through 4d).
+
+   Keep the trivial boundary **conservative**: when in doubt, treat the issue as
+   substantive and run the full team. Config that carries logic (build/test
+   wiring, CI behavior, anything the code reads at runtime) is **not** plain
+   config — it is substantive. Only classify as trivial when the change provably
+   cannot alter behavior.
 
 4. **Resolve via the dev specialist**: dispatch a context-isolated
    subagent in the **dev** role (see "Dev specialist" below) with the
@@ -69,6 +90,19 @@ operations.
 
 {{ROLE_REVIEW}}
 
+4d. **Document via the tech writer specialist**: once the review gate has
+   passed, dispatch a context-isolated subagent in the **tech writer** role
+   (see "Tech writer specialist" below) with the issue and the dev's diff. The
+   writer inspects the diff and **discovers** which documentation the change
+   implies — README, `CLAUDE.md`/`AGENTS.md`, `docs/` files, inline
+   docstrings — updating targets inferred from the diff rather than from
+   configuration, so it works on any repo. It respects the never-touch list:
+   `CLAUDE.md` is editable, but `PROMPT.md`, `ralph.config.sh`, and `.claude/`
+   remain off-limits. Add the doc files it updated to the list you paste into
+   the PR body in step 7.
+
+{{ROLE_WRITER}}
+
 5. **Validate locally**: run `{{TEST_CMD}}` and `{{LINT_CMD}}` (skip
    the empty ones). If they fail, fix and re-run. Repeat up to 3 times;
    if they still fail, go to "Failed".
@@ -80,20 +114,36 @@ operations.
    ```
    Closes #N
 
-   ## TDD
+   ## Dev/TDD
    - Tests added/modified: <relative file paths>
    - Before implementation (red): <failing test names + summary of failure>
    - After implementation (green): <suite result, e.g. "all 143 tests pass">
+
+   ## QA scenarios added
+   - <edge-case / adversarial scenarios QA added, and the test paths>
+
+   ## Review verdict
+   - <reviewer's verdict and any blocking findings resolved this round>
+
+   ## Docs updated
+   - <documentation files the writer updated, or "none — diff implied no doc change">
 
    ## Notes
    <anything else worth flagging for review>
    ```
 
-   If TDD was skipped per step 4, replace the TDD block with `## TDD\n- Skipped: <reason — must be docs/config/dep-bump only>`.
+   Each section carries one role's output — Dev/TDD from step 4, QA scenarios
+   from step 4b, Review verdict from step 4c, Docs updated from step 4d. Retain
+   a **single per-issue log** (`logs/ralph-issue-N.log`) for the whole team run;
+   there are **no per-role logs**.
+
+   If TDD was skipped per the triage in step 3b, replace the Dev/TDD section
+   body with `- Skipped: <reason — must be docs/config/dep-bump only>` and the
+   QA scenarios section with `- Skipped (trivial — light path)`.
 
    If the code reviewer's concerns were still unresolved after the 2-round
-   limit (step 4c), prepend a prominent warning block to the PR body flagging
-   the unresolved review concerns so a human is pulled in:
+   limit (step 4c), flag them in the Review verdict section and prepend a
+   prominent warning block to the PR body so a human is pulled in:
 
    ```
    > [!WARNING]
