@@ -9,9 +9,10 @@ context-isolated subagents are available via the Task/Agent tool in this
 headless run, and each returns a structured result you pass forward
 explicitly — outputs do not leak between dispatches. Specialist roles are
 composed into this template below as they land; the **dev specialist** (step
-4), the **QA specialist** (step 4b), and the **code reviewer specialist** (step
-4c) are wired in. Remaining roles (triage, docs) arrive in later slices; until
-each lands you carry that part of the flow yourself.
+4), the **QA specialist** (step 4b), the **code reviewer specialist** (step
+4c), and the **tech writer specialist** (step 4d) are wired in. Remaining roles
+(triage) arrive in later slices; until each lands you carry that part of the
+flow yourself.
 
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
 operations.
@@ -68,6 +69,19 @@ operations.
    give-up backstop below still bounds this loop.
 
 {{ROLE_REVIEW}}
+
+4d. **Document via the tech writer specialist**: once the review gate has
+   passed, dispatch a context-isolated subagent in the **tech writer** role
+   (see "Tech writer specialist" below) with the issue and the dev's diff. The
+   writer inspects the diff and **discovers** which documentation the change
+   implies — README, `CLAUDE.md`/`AGENTS.md`, `docs/` files, inline
+   docstrings — updating targets inferred from the diff rather than from
+   configuration, so it works on any repo. It respects the never-touch list:
+   `CLAUDE.md` is editable, but `PROMPT.md`, `ralph.config.sh`, and `.claude/`
+   remain off-limits. Add the doc files it updated to the list you paste into
+   the PR body in step 7.
+
+{{ROLE_WRITER}}
 
 5. **Validate locally**: run `{{TEST_CMD}}` and `{{LINT_CMD}}` (skip
    the empty ones). If they fail, fix and re-run. Repeat up to 3 times;
