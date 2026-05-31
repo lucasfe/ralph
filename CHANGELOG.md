@@ -5,6 +5,19 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING: Ralph solo mode is permanently retired.** Team mode is
+  now the only mode of operation — there is no activation flag to opt
+  in or out. Every issue is resolved by the orchestrated team of
+  specialists (dev → QA → review → writer, scaled by triage); the
+  single-agent TDD loop now lives inside the dev role. The solo
+  orchestrator template (`prompt-base.md`) has been removed, and a
+  regression guard locks the retirement in so it cannot be silently
+  reintroduced. Shipped as a breaking change (`feat!:`).
+
 ## [0.5.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.4.0-rc.1...ralph-v0.5.0-rc.1) (2026-04-30)
 
 

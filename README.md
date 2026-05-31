@@ -55,23 +55,61 @@ detach with `Ctrl+B` then `D`, or tail per-issue logs in
 
 ## How Ralph resolves issues
 
-Every iteration follows a **TDD red → green → refactor** loop, baked
-into the prompt Claude receives:
+Each iteration runs a **team** of context-isolated specialists,
+coordinated by an orchestrator that processes one issue end-to-end.
+Solo mode has been retired: team mode is the only mode, with no
+activation flag.
 
-1. **Red** — write a failing test that captures the issue's expected
-   behavior, then run `TEST_CMD` and confirm it fails for the right
-   reason (the behavior is not yet implemented).
-2. **Green** — implement the minimum code that makes the new test pass,
-   then run `TEST_CMD` again and confirm every test passes.
-3. **Refactor** — tighten names, remove duplication, and improve the
-   design while keeping the suite green.
+The orchestrator first **triages** the issue and scales the team to
+fit it:
+
+- **Trivial / non-behavioral** — pure docs, plain config, or
+  dependency bumps without logic changes. It skips the dev-TDD and QA
+  stages and runs only a light review plus the writer. The boundary is
+  conservative: when in doubt, the issue is treated as substantive.
+- **Substantive** — anything that changes behavior. It runs the full
+  team, in order: dev → QA → review → writer.
+
+The specialists each have a single contract:
+
+1. **Dev** — turns the issue into working, tested code through a
+   strict **TDD red → green → refactor** loop. *Red:* write a failing
+   test that captures the issue's expected behavior and confirm it
+   fails for the right reason. *Green:* implement the minimum code that
+   makes it pass and confirm the whole suite is green. *Refactor:*
+   tighten names and remove duplication while keeping it green. The dev
+   infers its persona from the issue and the repo's detected stack, and
+   skips TDD only for changes with zero behavioral impact.
+2. **QA** — runs only after the dev's suite is green, and *augments*
+   (never rewrites) it with edge-case and adversarial tests. A failing
+   QA test is treated as a defect and **blocks until green**: it goes
+   back to the dev to fix, then control returns to QA to re-run the
+   suite, until everything passes.
+3. **Reviewer** — a **pre-PR gate**, run after QA is green but before
+   any PR is opened. It judges maintainability (oversized files,
+   tangled control flow, weak abstractions, needless indirection), not
+   just whether the code works. Blocking findings loop **back to the
+   dev** and then back to the reviewer, bounded to a **maximum of 2
+   rounds**. If concerns remain after the round limit, the loop stops
+   and a human is pulled in via the caveat flag (below).
+4. **Writer** — runs after the review gate passes. It inspects the
+   diff and **infers** which docs the change implies (README,
+   `CLAUDE.md`/`AGENTS.md`, `docs/` pages, inline docstrings),
+   updating only those — it writes no tests and introduces no new
+   behavior.
 
 The new/updated tests and the implementation land in the same commit
-so the TDD pair is reviewable together. The PR body documents the
-TDD steps (tests added, failing names before, green suite result
-after). TDD is skipped only for changes with zero behavioral impact:
-pure documentation, plain configuration, or dependency bumps without
-logic changes — and the skip is justified in the PR body.
+so the TDD pair is reviewable together. The PR body carries one
+section per role: Dev/TDD (tests added, red names before, green suite
+after), QA scenarios, Review verdict, and Docs updated. When TDD is
+skipped per triage, the Dev/TDD and QA sections record the skip and
+its justification.
+
+When the reviewer and dev do **not** converge within the 2-round
+limit, the PR is opened **anyway** with a **caveat flag** — a
+prominent unresolved-concerns warning block prepended to the PR body
+listing each blocking finding, so a human knows exactly what still
+needs judgment before merge.
 
 ## Scheduling Ralph (macOS launchd)
 
