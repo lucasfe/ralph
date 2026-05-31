@@ -10,25 +10,18 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### ⚠ BREAKING CHANGES
 
-* dev → main rollforward ([#462](https://github.com/lucasfe/agenthub/issues/462))
+* **Ralph solo mode is permanently retired.** Team mode is now the only
+  mode of operation — there is no activation flag to opt in or out.
+  Every issue is resolved by the orchestrated team of specialists
+  (dev → QA → review → writer, scaled by triage); the single-agent TDD
+  loop now lives inside the dev role. The solo orchestrator template
+  (`prompt-base.md`) has been removed, and a regression guard locks the
+  retirement in so it cannot be silently reintroduced. ([#462](https://github.com/lucasfe/agenthub/issues/462))
 
 ### Features
 
 * dev → main rollforward ([#457](https://github.com/lucasfe/agenthub/issues/457)) ([37d75f7](https://github.com/lucasfe/agenthub/commit/37d75f776029933d8a6e03e9f7e3d27677241037))
 * dev → main rollforward ([#462](https://github.com/lucasfe/agenthub/issues/462)) ([c3d8719](https://github.com/lucasfe/agenthub/commit/c3d8719b9759a81d98da7143b6da2e6e37a742e1))
-
-## [Unreleased]
-
-### Changed
-
-- **BREAKING: Ralph solo mode is permanently retired.** Team mode is
-  now the only mode of operation — there is no activation flag to opt
-  in or out. Every issue is resolved by the orchestrated team of
-  specialists (dev → QA → review → writer, scaled by triage); the
-  single-agent TDD loop now lives inside the dev role. The solo
-  orchestrator template (`prompt-base.md`) has been removed, and a
-  regression guard locks the retirement in so it cannot be silently
-  reintroduced. Shipped as a breaking change (`feat!:`).
 
 ## [0.7.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.6.0-rc.1...ralph-v0.7.0) (2026-05-31)
 
