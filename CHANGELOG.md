@@ -5,6 +5,19 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.6.0-rc.1...ralph-v0.7.0) (2026-05-31)
+
+
+### Features
+
+* add Ralph QA specialist role (augment-after-green, block-until-green) ([#447](https://github.com/lucasfe/agenthub/issues/447)) ([80a9a22](https://github.com/lucasfe/agenthub/commit/80a9a2224a24f5e98a5d1105360829a1ff0592bc))
+* dev → main rollforward ([c5ced2c](https://github.com/lucasfe/agenthub/commit/c5ced2c175749d75f2cd78938c4a4661eb2bb83c))
+
+
+### Miscellaneous Chores
+
+* graduate ralph to 0.7.0 stable ([7d66159](https://github.com/lucasfe/agenthub/commit/7d661591b6f66c22d4910d814acc4bd05fb9ac55))
+
 ## [0.6.0-rc.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.5.0-rc.1...ralph-v0.6.0-rc.1) (2026-05-31)
 
 
