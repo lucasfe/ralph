@@ -9,8 +9,9 @@ context-isolated subagents are available via the Task/Agent tool in this
 headless run, and each returns a structured result you pass forward
 explicitly — outputs do not leak between dispatches. Specialist roles are
 composed into this template below as they land; the **dev specialist** (step
-4) is wired in. Remaining roles (triage, QA, review, docs) arrive in later
-slices; until each lands you carry that part of the flow yourself.
+4) and the **QA specialist** (step 4b) are wired in. Remaining roles (triage,
+review, docs) arrive in later slices; until each lands you carry that part of
+the flow yourself.
 
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
 operations.
@@ -42,6 +43,18 @@ operations.
    `CLAUDE.md`.
 
 {{ROLE_DEV}}
+
+4b. **Harden via the QA specialist**: once the dev's suite is green,
+   dispatch a context-isolated subagent in the **QA** role (see "QA
+   specialist" below) with the issue, the dev's diff, and the tests the
+   dev added. QA augments the green suite with edge-case and adversarial
+   tests. QA-found bugs **block until green**: hand any failing QA test
+   back to the dev to fix, then return to QA to re-run `{{TEST_CMD}}`,
+   until the dev's tests plus QA's augmentation are all green. The
+   give-up backstop below still bounds this loop. Add QA's new test
+   paths to the list you paste into the PR body in step 7.
+
+{{ROLE_QA}}
 
 5. **Validate locally**: run `{{TEST_CMD}}` and `{{LINT_CMD}}` (skip
    the empty ones). If they fail, fix and re-run. Repeat up to 3 times;
