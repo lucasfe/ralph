@@ -63,12 +63,24 @@ activation flag.
 The orchestrator first **triages** the issue and scales the team to
 fit it:
 
-- **Trivial / non-behavioral** — pure docs, plain config, or
-  dependency bumps without logic changes. It skips the dev-TDD and QA
-  stages and runs only a light review plus the writer. The boundary is
-  conservative: when in doubt, the issue is treated as substantive.
-- **Substantive** — anything that changes behavior. It runs the full
-  team, in order: dev → QA → review → writer.
+- **Tier 0 / Light — trivial / non-behavioral** — pure docs, plain
+  config, or dependency bumps without logic changes. It skips the
+  dev-TDD and QA stages and runs only a light review plus the writer.
+  The boundary is conservative: when in doubt, the issue is treated as
+  substantive.
+- **Tier 1 / Standard — substantive** — anything that changes
+  behavior. It runs the full team, in order: dev → QA → review →
+  writer.
+- **Tier 2 / Heavy — gated, dark** — the largest issues (multi-file /
+  multi-module scope, audit, refactor, migration, or multi-hypothesis
+  investigation), or any issue carrying the `ralph-heavy` label, which
+  forces Tier 2. This tier is gated behind the `RALPH_HEAVY_TIER` flag
+  and is **off by default**: when the flag is `0` the heavy tier is
+  unavailable and triage falls back to Tier 1. When uncertain the
+  classifier defaults to Tier 1 (never Tier 2 on a guess), and a heavy
+  run that fails to converge degrades to Tier 1 rather than looping.
+  The Tier 2 fan-out roles do not exist yet — the flag and triage
+  signals are the dark-launch foundation.
 
 The specialists each have a single contract:
 
@@ -182,7 +194,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `AUTO_MERGE`          | `true`                               | v0.1 only supports `true` (manual review mode lands in v0.2).          |
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
-| `RALPH_HEAVY_TIER`    | `0`                                  | Per-issue effort tiering (dark-launch foundation). `0` = off; no behavior yet. |
+| `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path (dark-launch foundation). `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. The fan-out roles do not exist yet. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph notices the change (sha256 mismatch in

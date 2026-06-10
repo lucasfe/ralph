@@ -13,13 +13,15 @@ composed into this template below as they land; the **dev specialist** (step
 4c), and the **tech writer specialist** (step 4d) are wired in. You also
 triage each issue and scale the team to fit it (step 3b): trivial,
 non-behavioral changes take a light path, while substantive changes run the
-full team.
+full team. A third **Tier 2 / Heavy** path exists for the largest issues, but
+it is gated behind the `{{RALPH_HEAVY_TIER}}` flag and is off by default.
 
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
 operations.
 
-Current effort tier: `{{RALPH_HEAVY_TIER}}` (0 = off; this is a dark-launch
-flag with no behavior yet).
+Current effort tier: `{{RALPH_HEAVY_TIER}}` (0 = off). This flag gates the
+Tier 2 / Heavy path in step 3b: when it is `0` the heavy tier is unavailable
+and triage uses only Tier 0 (Light) and Tier 1 (Standard).
 
 ## Required sequence
 
@@ -39,22 +41,37 @@ flag with no behavior yet).
 
 3b. **Triage and scale the team**: before dispatching, classify the issue and
    scale the team to fit it. Read the issue and the files it implies, then pick
-   one of two paths:
-   - **Trivial / non-behavioral** — the change has no behavioral impact on code:
-     pure docs, plain config, or dependency bumps without logic changes.
-     Skip dev-TDD and QA (steps 4 and 4b) and run only a **light review** plus
-     the writer (steps 4c, 4d). "Light" means the same reviewer (step 4c), just
-     over a docs/config-only diff with no QA augmentation to weigh. Note "TDD
-     skipped (trivial)" for the PR body.
-   - **Substantive** — anything that changes behavior: source code, logic, or any
-     change you cannot prove is purely cosmetic. Run the **full team** — dev,
-     QA, review, writer (steps 4 through 4d).
+   one of three tiers. Two are always available; the third is gated:
+   - **Tier 0 / Light — trivial / non-behavioral** — the change has no
+     behavioral impact on code: pure docs, plain config, or dependency bumps
+     without logic changes. Skip dev-TDD and QA (steps 4 and 4b) and run only a
+     **light review** plus the writer (steps 4c, 4d). "Light" means the same
+     reviewer (step 4c), just over a docs/config-only diff with no QA
+     augmentation to weigh. Note "TDD skipped (trivial)" for the PR body.
+   - **Tier 1 / Standard — substantive** — anything that changes behavior:
+     source code, logic, or any change you cannot prove is purely cosmetic. Run
+     the **full team** — dev, QA, review, writer (steps 4 through 4d).
+   - **Tier 2 / Heavy — gated, dark** — the largest issues: changes whose scope
+     spans many files or modules (multi-file / multi-module scope), broad
+     **audit** work, large **refactor** efforts, schema or data **migration**,
+     or a **multi-hypothesis** investigation where the root cause is unknown and
+     several leads must be explored. Tier 2 is gated behind the
+     `RALPH_HEAVY_TIER` flag (see the effort-tier line above): when the flag is
+     `0` (the default) the heavy tier is **off / unavailable** and you must fall
+     back to Tier 1. When Tier 2
+     is active and a heavy run **fails to converge** (does not reach green or
+     keeps churning), **degrade to Tier 1** and finish there rather than looping.
 
-   Keep the trivial boundary **conservative**: when in doubt, treat the issue as
-   substantive and run the full team. Config that carries logic (build/test
-   wiring, CI behavior, anything the code reads at runtime) is **not** plain
-   config — it is substantive. Only classify as trivial when the change provably
-   cannot alter behavior.
+   **`ralph-heavy` label override**: if the issue carries the `ralph-heavy`
+   label, that **forces Tier 2** (subject to the flag being on). Absent that
+   label, classify by the signals above; when the classifier is **uncertain**,
+   default to **Tier 1** (never Tier 2 on a guess).
+
+   Keep the tier boundaries **conservative**: when in doubt, treat the issue as
+   substantive and run the full team (Tier 1). Config that carries logic
+   (build/test wiring, CI behavior, anything the code reads at runtime) is
+   **not** plain config — it is substantive. Only classify as trivial when the
+   change provably cannot alter behavior.
 
 4. **Resolve via the dev specialist**: dispatch a context-isolated
    subagent in the **dev** role (see "Dev specialist" below) with the
