@@ -73,6 +73,58 @@ and triage uses only Tier 0 (Light) and Tier 1 (Standard).
    **not** plain config — it is substantive. Only classify as trivial when the
    change provably cannot alter behavior.
 
+## Tier 2 / Heavy — understand phase (explorer fan-out + inline synthesis)
+
+This phase runs **only on a Tier-2 run** (selected in step 3b, gated behind the
+`{{RALPH_HEAVY_TIER}}` flag). It sits **after** triage (step 3b) and **before**
+the dev dispatch (step 4). On Tier 0 / Tier 1 it is skipped entirely and the dev
+step-4 contract is unchanged.
+
+When Tier 2 is active, **understand before you build**:
+
+1. **Explorer fan-out (read-only)**: dispatch **exactly three** context-isolated
+   subagents in the **explorer** role (see "Explorer specialist" below). The
+   fan-out width is fixed at **3** — not a cost ceiling, but a deliberate choice
+   that avoids unreliable pre-read scope estimation. Hand each explorer a
+   **different, competing hypothesis** about the issue's root cause or the right
+   approach, so the three cover **distinct** leads rather than three takes on the
+   same guess. Explorers run strictly **read-only**: they investigate and report,
+   they never write or edit a file during the understand phase. Each returns the
+   structured return defined in its role.
+
+2. **Synthesizer (inline, named seam)**: the orchestrator runs the synthesizer
+   **inline** — it is **not** a separate subagent dispatch, but an explicit,
+   named, reviewable seam in this loop (see "Synthesizer seam" below). It
+   collapses the **three** explorer structured returns into a **single plan**:
+   the confirmed hypothesis (or the best-supported approach), the concrete change
+   it implies, the files in scope, and the risks the explorers surfaced.
+
+3. **Hand off to the dev**: on a Tier-2 run the dev (step 4) receives the
+   synthesized **plan + issue** instead of the issue alone. The dev's own
+   contract is otherwise unchanged — it still resolves through the strict
+   red → green → refactor loop. On Tier 0 / Tier 1 the dev receives the issue
+   title and body exactly as before.
+
+{{ROLE_EXPLORER}}
+
+### Synthesizer seam
+
+The synthesizer is the named, inline step that turns the three explorer returns
+into the one plan handed to the dev. It runs in the orchestrator itself (no
+subagent), reads each explorer's structured return, and:
+
+- **Reconciles verdicts** — prefers a `confirmed` hypothesis backed by concrete
+  evidence; when explorers disagree, it weighs the evidence rather than voting.
+- **Merges evidence** — unions the file paths, call sites, and risks the three
+  explorers surfaced into one scoped picture.
+- **Emits a single plan** — one ordered, actionable plan (approach, files in
+  scope, test strategy, risks) — the artifact handed to the dev as **plan +
+  issue** in step 4.
+
+Keeping the synthesizer an explicit, sectioned seam (rather than ad-hoc prose)
+makes the Tier-2 decision reviewable: the plan the dev acts on is traceable back
+to the three competing hypotheses it came from.
+
 4. **Resolve via the dev specialist**: dispatch a context-isolated
    subagent in the **dev** role (see "Dev specialist" below) with the
    issue title and body. The dev infers its persona from the issue and

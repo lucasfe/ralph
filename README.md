@@ -79,11 +79,25 @@ fit it:
   unavailable and triage falls back to Tier 1. When uncertain the
   classifier defaults to Tier 1 (never Tier 2 on a guess), and a heavy
   run that fails to converge degrades to Tier 1 rather than looping.
-  The Tier 2 fan-out roles do not exist yet — the flag and triage
-  signals are the dark-launch foundation.
+  When the flag is on, a Tier-2 run adds an **understand phase** before
+  the dev: it fans out **three** read-only explorers chasing competing
+  hypotheses, then an inline synthesizer collapses their structured
+  returns into one plan handed to the dev as **plan + issue** (see the
+  explorer in the roster below).
 
 The specialists each have a single contract:
 
+0. **Explorer** *(Tier 2 only)* — a **read-only** hypothesis
+   investigator that runs in the understand phase, before the dev. On a
+   heavy run the orchestrator dispatches **three** explorers in
+   parallel, each chasing a **different, competing hypothesis** about
+   the root cause or right approach. An explorer reads, searches, and
+   reasons — it never writes or edits a file — and ends with a
+   structured return (hypothesis, verdict, evidence, proposed approach,
+   risks). An inline **synthesizer** (a named seam in the orchestrator,
+   not a subagent) collapses the three returns into one plan, handed to
+   the dev as **plan + issue**. On Tier 0 / Tier 1 this phase is skipped
+   and the dev receives the issue alone.
 1. **Dev** — turns the issue into working, tested code through a
    strict **TDD red → green → refactor** loop. *Red:* write a failing
    test that captures the issue's expected behavior and confirm it
@@ -194,7 +208,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `AUTO_MERGE`          | `true`                               | v0.1 only supports `true` (manual review mode lands in v0.2).          |
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
-| `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path (dark-launch foundation). `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. The fan-out roles do not exist yet. |
+| `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path. `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. When on, a Tier-2 run adds the explorer fan-out + inline synthesis understand phase before the dev. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph notices the change (sha256 mismatch in
