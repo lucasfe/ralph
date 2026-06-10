@@ -83,7 +83,11 @@ fit it:
   the dev: it fans out **three** read-only explorers chasing competing
   hypotheses, then an inline synthesizer collapses their structured
   returns into one plan handed to the dev as **plan + issue** (see the
-  explorer in the roster below).
+  explorer in the roster below). A Tier-2 run also adds a **verify
+  phase** after the single-reviewer gate and before the PR opens: an
+  **adversarial panel of three reviewers** (correctness / security /
+  maintainability lenses) blocks the diff only on a **majority — 2 of 3**
+  (see the reviewer contract below).
 
 The specialists each have a single contract:
 
@@ -117,7 +121,16 @@ The specialists each have a single contract:
    just whether the code works. Blocking findings loop **back to the
    dev** and then back to the reviewer, bounded to a **maximum of 2
    rounds**. If concerns remain after the round limit, the loop stops
-   and a human is pulled in via the caveat flag (below).
+   and a human is pulled in via the caveat flag (below). On a **Tier 2**
+   run this single pass is replaced by an **adversarial panel of three
+   reviewers** in a **verify phase**: the same reviewer contract is
+   reused three times with **distinct lenses** (correctness, security,
+   and the step-4c maintainability standard as the maintainability
+   lens), and the diff is blocked only on a **majority — 2 of 3** (a lone
+   objection is recorded but does not gate the PR). The panel keeps the
+   same 2-round bound; on non-convergence the PR opens anyway with the
+   same caveat flag, identical to Tier 1. On Tier 0 / Tier 1 the panel is
+   skipped and the single-reviewer gate above is left unchanged.
 4. **Writer** — runs after the review gate passes. It inspects the
    diff and **infers** which docs the change implies (README,
    `CLAUDE.md`/`AGENTS.md`, `docs/` pages, inline docstrings),
@@ -208,7 +221,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `AUTO_MERGE`          | `true`                               | v0.1 only supports `true` (manual review mode lands in v0.2).          |
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
-| `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path. `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. When on, a Tier-2 run adds the explorer fan-out + inline synthesis understand phase before the dev. |
+| `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path. `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. When on, a Tier-2 run adds the explorer fan-out + inline synthesis understand phase before the dev, and a 3-reviewer adversarial-panel verify phase (majority-of-3 to block) before the PR opens. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph notices the change (sha256 mismatch in

@@ -162,6 +162,50 @@ to the three competing hypotheses it came from.
 
 {{ROLE_REVIEW}}
 
+## Tier 2 / Heavy — verify phase (3-reviewer adversarial panel, majority block)
+
+This phase runs **only on a Tier-2 run** (selected in step 3b, gated behind the
+heavy-tier flag `RALPH_HEAVY_TIER`). It is the Tier-2 form of the verify/review
+gate: it sits **after** the single-reviewer step 4c and **before** step 4d and
+the PR step (7), gating the diff **before** the PR opens. On a Tier 0 / Tier 1
+run it is **skipped entirely** and the single-reviewer step 4c above is left
+unchanged.
+
+When Tier 2 is active, gate the diff with an **adversarial panel of three
+reviewers** instead of a single pass:
+
+1. **Panel of three (reuse the existing reviewer contract)**: dispatch the
+   existing reviewer role (the "Code reviewer specialist" composed above) as
+   **three** context-isolated subagents. The panel does **not** redefine or
+   duplicate the maintainability rules — it **reuses** that one reviewer contract
+   three times, handing each reviewer a **distinct lens**:
+   - **Correctness lens** — does the change do the right thing: logic, edge cases,
+     and behavior against the issue and the full test set.
+   - **Security lens** — input handling, injection, secrets, auth, and unsafe
+     operations introduced or exposed by the diff.
+   - **Maintainability lens** — the existing maintainability standard from step
+     4c (oversized-file guard, anti-spaghetti, abstraction quality,
+     prefer-deleting-indirection, do-not-approve-on-behavior-alone), applied
+     as-is. The step-4c maintainability standard simply **becomes the
+     maintainability lens** here; it is not restated.
+
+2. **Majority-of-3 to block (2 of 3)**: the panel blocks the diff only when a
+   **majority — 2 of 3 — of the reviewers** agree it must change.
+   A single reviewer cannot block or trap the loop on its own: one lone objection
+   is recorded but does not gate the PR. When 2 of 3 block, the agreed findings
+   loop back to the dev to fix, then control returns to the panel to re-check the
+   diff and re-run `{{TEST_CMD}}` and `{{LINT_CMD}}`.
+
+3. **Max 2 rounds, then non-convergence opens the PR anyway**: this loop is
+   bounded to a **maximum of 2 rounds** (consistent with the single-reviewer
+   step 4c). If the majority still blocks after 2 rounds, the bots have failed to
+   converge — do **not** loop further. Open the PR **anyway** in step 7 with the
+   same prominent `[!WARNING]` block step 7 already prepends, listing the
+   unresolved panel findings so a human is pulled in. On **non-convergence** these
+   semantics are **identical to / consistent with Tier 1**: it is treated as a
+   normal PR-with-warning, so the outer bash success/failure accounting needs **no
+   Tier-2 special case**.
+
 4d. **Document via the tech writer specialist**: once the review gate has
    passed, dispatch a context-isolated subagent in the **tech writer** role
    (see "Tech writer specialist" below) with the issue and the dev's diff. The
