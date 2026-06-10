@@ -18,3 +18,7 @@ MERGE_STRATEGY="squash"
 AUTO_MERGE="true"
 MERGE_POLL_INTERVAL=30
 MERGE_POLL_MAX=40
+
+# Per-issue effort tiering (dark-launch foundation). 0 = off; nothing
+# behaves differently yet.
+RALPH_HEAVY_TIER=0

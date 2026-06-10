@@ -18,6 +18,9 @@ full team.
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
 operations.
 
+Current effort tier: `{{RALPH_HEAVY_TIER}}` (0 = off; this is a dark-launch
+flag with no behavior yet).
+
 ## Required sequence
 
 0. **Ensure dependencies**: run `{{INSTALL_CMD}}` (skip if empty).

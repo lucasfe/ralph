@@ -182,6 +182,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `AUTO_MERGE`          | `true`                               | v0.1 only supports `true` (manual review mode lands in v0.2).          |
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
+| `RALPH_HEAVY_TIER`    | `0`                                  | Per-issue effort tiering (dark-launch foundation). `0` = off; no behavior yet. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph notices the change (sha256 mismatch in
