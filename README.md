@@ -36,7 +36,7 @@ In a git repo on the branch you want Ralph to work from:
 ralph init     # one-time: detect stack, write config, slash command, gitignore
 ralph doctor   # verify required deps are on PATH
 ralph start    # launch the loop in a detached tmux session
-ralph stop     # kill the tmux session when you want Ralph to halt
+ralph stop     # kill this project's tmux session when you want Ralph to halt
 ```
 
 `ralph init` is non-interactive: it inspects the manifests in your repo
