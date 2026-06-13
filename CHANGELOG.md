@@ -5,6 +5,17 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.8.0...ralph-v0.9.0) (2026-06-13)
+
+
+### Features
+
+* add RALPH_HEAVY_TIER config flag + buildPrompt interpolation (dark-launch foundation) ([#490](https://github.com/lucasfe/agenthub/issues/490)) ([725dad0](https://github.com/lucasfe/agenthub/commit/725dad0472f2c7096d4680cc465309e1367a89f9))
+* add sessionNameFor helper for per-project tmux session names ([#502](https://github.com/lucasfe/agenthub/issues/502)) ([b45f0cd](https://github.com/lucasfe/agenthub/commit/b45f0cd958e00dcb54ec9bf0b6b8d1f017c9e52b))
+* dev → main rollforward ([1c6225a](https://github.com/lucasfe/agenthub/commit/1c6225a57fd66c08a1114b7257bb03dd41813616))
+* Tier-2 explorer fan-out + inline synthesis (understand phase) ([#496](https://github.com/lucasfe/agenthub/issues/496)) ([3790c12](https://github.com/lucasfe/agenthub/commit/3790c1215ebefd2d9ff06d166dba32766b0df197))
+* Tier-2 reviewer panel verify gate (3 diverse lenses, majority block) ([#499](https://github.com/lucasfe/agenthub/issues/499)) ([9545aee](https://github.com/lucasfe/agenthub/commit/9545aeea45b679ea8bb0a07b4078c697c70bdb83))
+
 ## [0.8.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.7.0...ralph-v0.8.0) (2026-05-31)
 
 
