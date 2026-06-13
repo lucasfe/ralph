@@ -49,6 +49,52 @@ fi
 
 mkdir -p logs
 
+# --- Claude streaming helper -------------------------------------------------
+# Pretty-prints claude's stream-json stdout via jq into a log file, while
+# keeping claude's stderr OUT of the JSON pipe. Non-JSON stderr lines (auth,
+# credit, rate-limit errors, warnings) are tee'd to the terminal + log instead
+# of being fed to jq (which would fail with "Invalid numeric literal"). jq uses
+# `fromjson?` so any stray non-JSON line on stdout is skipped, not fatal.
+#
+# Args: $1 = prompt-builder script path, $2 = log file path.
+# Sets the global `claude_failed` to "1" when claude exits non-zero, else "0".
+JQ_STREAM_FILTER='fromjson? // empty
+  | if .type == "assistant" then
+      (.message.content[]? | select(.type=="text").text // empty)
+    elif .type == "user" then
+      (.message.content[]? | select(.type=="tool_result") | "  ↳ tool_result")
+    elif .type == "result" then
+      "==> result: " + (.subtype // "ok")
+    else empty end'
+
+run_claude_stream() {
+  prompt_script="$1"
+  log_file="$2"
+  # Truncate the unique per-issue log ONCE up front, then have BOTH the stderr
+  # tee and the stdout tee APPEND. This removes a truncate-vs-append race: if
+  # the stdout `tee` opened with O_TRUNC while the stderr `tee -a` was already
+  # writing, the leading bytes of a stderr line (e.g. a failure signal) could
+  # be clobbered, producing the empty/lost failure log this guards against.
+  : > "$log_file"
+  node "$prompt_script" \
+    | claude -p --dangerously-skip-permissions \
+        --output-format stream-json --verbose --include-partial-messages \
+        2> >(tee -a "$log_file" >&2) \
+    | jq -rR --unbuffered "$JQ_STREAM_FILTER" \
+    | tee -a "$log_file"
+  # PIPESTATUS[1] is claude's exit code (node|claude|jq|tee).
+  if [ "${PIPESTATUS[1]}" -ne 0 ]; then
+    claude_failed=1
+  else
+    claude_failed=0
+  fi
+}
+
+run_claude_for_issue() {
+  run_claude_stream "$RALPH_PKG_DIR/lib/build-prompt.js" "logs/ralph-issue-$1.log"
+}
+# ---------------------------------------------------------------------------
+
 # --- Lazy config validation -------------------------------------------------
 # Run a one-shot Claude validation before the main loop when:
 #   • .ralph/state.json is absent, OR
@@ -81,17 +127,8 @@ if [ -f ralph.config.sh ]; then
 
   if [ "$needs_validate" = "yes" ]; then
     echo "==> Validando ralph.config.sh contra os manifestos do projeto..."
-    node "$RALPH_PKG_DIR/lib/build-validate-prompt.js" | claude -p --dangerously-skip-permissions \
-      --output-format stream-json --verbose --include-partial-messages 2>&1 \
-      | jq -r --unbuffered '
-          if .type == "assistant" then
-            (.message.content[]? | select(.type=="text").text // empty)
-          elif .type == "user" then
-            (.message.content[]? | select(.type=="tool_result") | "  ↳ tool_result")
-          elif .type == "result" then
-            "==> result: " + (.subtype // "ok")
-          else empty end' \
-      | tee "logs/ralph-validate.log"
+    claude_failed=0
+    run_claude_stream "$RALPH_PKG_DIR/lib/build-validate-prompt.js" "logs/ralph-validate.log"
 
     if [ ! -f .ralph/state.json ]; then
       echo "❌ Validação não produziu .ralph/state.json. Abortando." >&2
@@ -115,8 +152,15 @@ fi
 START=$(date +%s)
 successes=()
 failures=()
+claude_failed=0
 
 SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge'
+
+# Track the previously-selected issue so we can detect a zero-progress spin:
+# if the same issue is re-selected without any exclusion-state changing
+# (claude crashed, no label applied, not closed), the queue can never drain
+# and the loop would burn API calls forever. We break out instead.
+prev_num=""
 
 while :; do
   count=$(gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length')
@@ -128,17 +172,12 @@ while :; do
   num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
   echo "==> Iteração para issue #$num ($count restantes)"
 
-  node "$RALPH_PKG_DIR/lib/build-prompt.js" | claude -p --dangerously-skip-permissions \
-    --output-format stream-json --verbose --include-partial-messages 2>&1 \
-    | jq -r --unbuffered '
-        if .type == "assistant" then
-          (.message.content[]? | select(.type=="text").text // empty)
-        elif .type == "user" then
-          (.message.content[]? | select(.type=="tool_result") | "  ↳ tool_result")
-        elif .type == "result" then
-          "==> result: " + (.subtype // "ok")
-        else empty end' \
-    | tee "logs/ralph-issue-$num.log"
+  # Stream claude's JSON to jq, but keep stderr OUT of the JSON pipe: any
+  # non-JSON line claude prints to stderr (auth/credit/rate-limit errors,
+  # warnings) used to be merged via `2>&1` and broke jq with "Invalid numeric
+  # literal". Route stderr to the per-issue log + terminal instead. jq is also
+  # made tolerant of stray non-JSON input as defense-in-depth.
+  run_claude_for_issue "$num"
 
   labels=$(gh issue view "$num" --json labels -q '[.labels[].name] | join(",")')
   state=$(gh issue view "$num" --json state -q '.state')
@@ -147,8 +186,25 @@ while :; do
   elif [ "$state" = "CLOSED" ] || echo ",$labels," | grep -q ",pending-merge,"; then
     successes+=("$num")
   else
+    # No exclusion label and still open. If claude failed (non-zero exit) mark
+    # the issue claude-failed so the queue advances on the next iteration.
+    if [ "$claude_failed" = "1" ]; then
+      echo "⚠️  claude falhou na issue #$num (exit não-zero). Marcando claude-failed." >&2
+      gh issue edit "$num" --add-label claude-failed >/dev/null 2>&1 || true
+    fi
+
+    # Zero-progress guard: if we just re-selected the SAME issue we worked on
+    # last iteration and it still has no exclusion state, no progress was made.
+    # Record it as a failure and abort rather than spinning forever.
+    if [ "$num" = "$prev_num" ]; then
+      echo "❌ ralph.sh: sem progresso na issue #$num (re-selecionada sem mudar de estado). Abortando o loop." >&2
+      failures+=("$num")
+      break
+    fi
     failures+=("$num")
   fi
+
+  prev_num="$num"
 done
 
 echo "==> Cleanup"
