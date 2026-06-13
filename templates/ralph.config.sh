@@ -18,3 +18,8 @@ MERGE_STRATEGY="squash"
 AUTO_MERGE="true"
 MERGE_POLL_INTERVAL=30
 MERGE_POLL_MAX=40
+
+# Per-issue effort tiering (dark-launch foundation). Gates the Tier 2 /
+# Heavy triage path. 0 = off (the default): the heavy tier is unavailable
+# and triage falls back to Tier 1, so behavior is unchanged.
+RALPH_HEAVY_TIER=0

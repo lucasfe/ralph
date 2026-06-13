@@ -13,10 +13,15 @@ composed into this template below as they land; the **dev specialist** (step
 4c), and the **tech writer specialist** (step 4d) are wired in. You also
 triage each issue and scale the team to fit it (step 3b): trivial,
 non-behavioral changes take a light path, while substantive changes run the
-full team.
+full team. A third **Tier 2 / Heavy** path exists for the largest issues, but
+it is gated behind the `{{RALPH_HEAVY_TIER}}` flag and is off by default.
 
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
 operations.
+
+Current effort tier: `{{RALPH_HEAVY_TIER}}` (0 = off). This flag gates the
+Tier 2 / Heavy path in step 3b: when it is `0` the heavy tier is unavailable
+and triage uses only Tier 0 (Light) and Tier 1 (Standard).
 
 ## Required sequence
 
@@ -36,22 +41,89 @@ operations.
 
 3b. **Triage and scale the team**: before dispatching, classify the issue and
    scale the team to fit it. Read the issue and the files it implies, then pick
-   one of two paths:
-   - **Trivial / non-behavioral** — the change has no behavioral impact on code:
-     pure docs, plain config, or dependency bumps without logic changes.
-     Skip dev-TDD and QA (steps 4 and 4b) and run only a **light review** plus
-     the writer (steps 4c, 4d). "Light" means the same reviewer (step 4c), just
-     over a docs/config-only diff with no QA augmentation to weigh. Note "TDD
-     skipped (trivial)" for the PR body.
-   - **Substantive** — anything that changes behavior: source code, logic, or any
-     change you cannot prove is purely cosmetic. Run the **full team** — dev,
-     QA, review, writer (steps 4 through 4d).
+   one of three tiers. Two are always available; the third is gated:
+   - **Tier 0 / Light — trivial / non-behavioral** — the change has no
+     behavioral impact on code: pure docs, plain config, or dependency bumps
+     without logic changes. Skip dev-TDD and QA (steps 4 and 4b) and run only a
+     **light review** plus the writer (steps 4c, 4d). "Light" means the same
+     reviewer (step 4c), just over a docs/config-only diff with no QA
+     augmentation to weigh. Note "TDD skipped (trivial)" for the PR body.
+   - **Tier 1 / Standard — substantive** — anything that changes behavior:
+     source code, logic, or any change you cannot prove is purely cosmetic. Run
+     the **full team** — dev, QA, review, writer (steps 4 through 4d).
+   - **Tier 2 / Heavy — gated, dark** — the largest issues: changes whose scope
+     spans many files or modules (multi-file / multi-module scope), broad
+     **audit** work, large **refactor** efforts, schema or data **migration**,
+     or a **multi-hypothesis** investigation where the root cause is unknown and
+     several leads must be explored. Tier 2 is gated behind the
+     `RALPH_HEAVY_TIER` flag (see the effort-tier line above): when the flag is
+     `0` (the default) the heavy tier is **off / unavailable** and you must fall
+     back to Tier 1. When Tier 2
+     is active and a heavy run **fails to converge** (does not reach green or
+     keeps churning), **degrade to Tier 1** and finish there rather than looping.
 
-   Keep the trivial boundary **conservative**: when in doubt, treat the issue as
-   substantive and run the full team. Config that carries logic (build/test
-   wiring, CI behavior, anything the code reads at runtime) is **not** plain
-   config — it is substantive. Only classify as trivial when the change provably
-   cannot alter behavior.
+   **`ralph-heavy` label override**: if the issue carries the `ralph-heavy`
+   label, that **forces Tier 2** (subject to the flag being on). Absent that
+   label, classify by the signals above; when the classifier is **uncertain**,
+   default to **Tier 1** (never Tier 2 on a guess).
+
+   Keep the tier boundaries **conservative**: when in doubt, treat the issue as
+   substantive and run the full team (Tier 1). Config that carries logic
+   (build/test wiring, CI behavior, anything the code reads at runtime) is
+   **not** plain config — it is substantive. Only classify as trivial when the
+   change provably cannot alter behavior.
+
+## Tier 2 / Heavy — understand phase (explorer fan-out + inline synthesis)
+
+This phase runs **only on a Tier-2 run** (selected in step 3b, gated behind the
+`{{RALPH_HEAVY_TIER}}` flag). It sits **after** triage (step 3b) and **before**
+the dev dispatch (step 4). On Tier 0 / Tier 1 it is skipped entirely and the dev
+step-4 contract is unchanged.
+
+When Tier 2 is active, **understand before you build**:
+
+1. **Explorer fan-out (read-only)**: dispatch **exactly three** context-isolated
+   subagents in the **explorer** role (see "Explorer specialist" below). The
+   fan-out width is fixed at **3** — not a cost ceiling, but a deliberate choice
+   that avoids unreliable pre-read scope estimation. Hand each explorer a
+   **different, competing hypothesis** about the issue's root cause or the right
+   approach, so the three cover **distinct** leads rather than three takes on the
+   same guess. Explorers run strictly **read-only**: they investigate and report,
+   they never write or edit a file during the understand phase. Each returns the
+   structured return defined in its role.
+
+2. **Synthesizer (inline, named seam)**: the orchestrator runs the synthesizer
+   **inline** — it is **not** a separate subagent dispatch, but an explicit,
+   named, reviewable seam in this loop (see "Synthesizer seam" below). It
+   collapses the **three** explorer structured returns into a **single plan**:
+   the confirmed hypothesis (or the best-supported approach), the concrete change
+   it implies, the files in scope, and the risks the explorers surfaced.
+
+3. **Hand off to the dev**: on a Tier-2 run the dev (step 4) receives the
+   synthesized **plan + issue** instead of the issue alone. The dev's own
+   contract is otherwise unchanged — it still resolves through the strict
+   red → green → refactor loop. On Tier 0 / Tier 1 the dev receives the issue
+   title and body exactly as before.
+
+{{ROLE_EXPLORER}}
+
+### Synthesizer seam
+
+The synthesizer is the named, inline step that turns the three explorer returns
+into the one plan handed to the dev. It runs in the orchestrator itself (no
+subagent), reads each explorer's structured return, and:
+
+- **Reconciles verdicts** — prefers a `confirmed` hypothesis backed by concrete
+  evidence; when explorers disagree, it weighs the evidence rather than voting.
+- **Merges evidence** — unions the file paths, call sites, and risks the three
+  explorers surfaced into one scoped picture.
+- **Emits a single plan** — one ordered, actionable plan (approach, files in
+  scope, test strategy, risks) — the artifact handed to the dev as **plan +
+  issue** in step 4.
+
+Keeping the synthesizer an explicit, sectioned seam (rather than ad-hoc prose)
+makes the Tier-2 decision reviewable: the plan the dev acts on is traceable back
+to the three competing hypotheses it came from.
 
 4. **Resolve via the dev specialist**: dispatch a context-isolated
    subagent in the **dev** role (see "Dev specialist" below) with the
@@ -89,6 +161,50 @@ operations.
    give-up backstop below still bounds this loop.
 
 {{ROLE_REVIEW}}
+
+## Tier 2 / Heavy — verify phase (3-reviewer adversarial panel, majority block)
+
+This phase runs **only on a Tier-2 run** (selected in step 3b, gated behind the
+heavy-tier flag `RALPH_HEAVY_TIER`). It is the Tier-2 form of the verify/review
+gate: it sits **after** the single-reviewer step 4c and **before** step 4d and
+the PR step (7), gating the diff **before** the PR opens. On a Tier 0 / Tier 1
+run it is **skipped entirely** and the single-reviewer step 4c above is left
+unchanged.
+
+When Tier 2 is active, gate the diff with an **adversarial panel of three
+reviewers** instead of a single pass:
+
+1. **Panel of three (reuse the existing reviewer contract)**: dispatch the
+   existing reviewer role (the "Code reviewer specialist" composed above) as
+   **three** context-isolated subagents. The panel does **not** redefine or
+   duplicate the maintainability rules — it **reuses** that one reviewer contract
+   three times, handing each reviewer a **distinct lens**:
+   - **Correctness lens** — does the change do the right thing: logic, edge cases,
+     and behavior against the issue and the full test set.
+   - **Security lens** — input handling, injection, secrets, auth, and unsafe
+     operations introduced or exposed by the diff.
+   - **Maintainability lens** — the existing maintainability standard from step
+     4c (oversized-file guard, anti-spaghetti, abstraction quality,
+     prefer-deleting-indirection, do-not-approve-on-behavior-alone), applied
+     as-is. The step-4c maintainability standard simply **becomes the
+     maintainability lens** here; it is not restated.
+
+2. **Majority-of-3 to block (2 of 3)**: the panel blocks the diff only when a
+   **majority — 2 of 3 — of the reviewers** agree it must change.
+   A single reviewer cannot block or trap the loop on its own: one lone objection
+   is recorded but does not gate the PR. When 2 of 3 block, the agreed findings
+   loop back to the dev to fix, then control returns to the panel to re-check the
+   diff and re-run `{{TEST_CMD}}` and `{{LINT_CMD}}`.
+
+3. **Max 2 rounds, then non-convergence opens the PR anyway**: this loop is
+   bounded to a **maximum of 2 rounds** (consistent with the single-reviewer
+   step 4c). If the majority still blocks after 2 rounds, the bots have failed to
+   converge — do **not** loop further. Open the PR **anyway** in step 7 with the
+   same prominent `[!WARNING]` block step 7 already prepends, listing the
+   unresolved panel findings so a human is pulled in. On **non-convergence** these
+   semantics are **identical to / consistent with Tier 1**: it is treated as a
+   normal PR-with-warning, so the outer bash success/failure accounting needs **no
+   Tier-2 special case**.
 
 4d. **Document via the tech writer specialist**: once the review gate has
    passed, dispatch a context-isolated subagent in the **tech writer** role
