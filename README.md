@@ -49,9 +49,11 @@ at runtime.
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
 optionally prints an upgrade notice, and launches the bash loop inside
-a tmux session named `ralph`. Watch it live with `tmux attach -t ralph`,
-detach with `Ctrl+B` then `D`, or tail per-issue logs in
-`logs/ralph-issue-*.log`.
+a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
+project path, so multiple repos can run Ralph concurrently without
+colliding). The exact attach / kill commands for your session are
+printed by `ralph start`; detach with `Ctrl+B` then `D`, or tail
+per-issue logs in `logs/ralph-issue-*.log`.
 
 ## How Ralph resolves issues
 
@@ -231,8 +233,8 @@ The config is plain bash; edit it in any editor. On the next
 
 Ralph posts a one-line summary at the end of every run, and a startup
 ping when `ralph start` successfully launches the tmux session. Stdout
-(visible via `tmux attach -t ralph`) is always populated; the other
-channels are opt-in.
+(visible via the `tmux attach` command printed by `ralph start`) is
+always populated; the other channels are opt-in.
 
 ### WhatsApp via CallMeBot (built-in)
 
@@ -318,10 +320,11 @@ the loop.
 
 ## Troubleshooting
 
-**"Sessão tmux 'ralph' já existe."** — A previous `ralph start`
-already launched the loop. Either attach (`tmux attach -t ralph`) and
-let it finish, or stop it (`ralph stop` / `tmux kill-session -t ralph`)
-before starting again.
+**"Sessão tmux 'ralph-…' já existe."** — A previous `ralph start`
+already launched the loop for *this* project (the session name is
+per-project: `ralph-<repo>-<hash>`). Either attach and let it finish, or
+stop it (`ralph stop`) before starting again — `ralph start` prints the
+exact attach / kill commands for your session.
 
 **`ralph doctor` reports a missing required dep.** — Install it with
 the command shown in the output (e.g. `brew install gh` on macOS,

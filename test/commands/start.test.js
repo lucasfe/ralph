@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { startCommand, StartAbort } from '../../lib/commands/start.js'
 import { templatePath } from '../../lib/paths.js'
+import { sessionNameFor } from '../../lib/lock.js'
 
 const RALPH_TEMPLATE = templatePath('ralph.sh')
+
+// Per-project session name used across the suite. startCommand derives the
+// session name from cwd via sessionNameFor; tests default to cwd '/repo'.
+const SESSION = sessionNameFor('/repo')
 
 function makeStream() {
   const chunks = []
@@ -31,6 +36,7 @@ function makeExec(handlers) {
 }
 
 const baseDeps = () => ({
+  cwd: '/repo',
   stdout: makeStream(),
   stderr: makeStream(),
   stdin: process.stdin,
@@ -41,20 +47,60 @@ const baseDeps = () => ({
 })
 
 describe('startCommand', () => {
-  it('aborts when tmux ralph session already exists', async () => {
+  it('aborts when this project tmux session already exists', async () => {
     const deps = baseDeps()
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 0, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 0, stdout: '', stderr: '' },
     })
     await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
-    expect(deps.stderr.output()).toContain("Sessão tmux 'ralph' já existe.")
+    expect(deps.stderr.output()).toContain(`Sessão tmux '${SESSION}' já existe.`)
+    // The error hint prints the per-project attach / kill commands.
+    expect(deps.stdout.output()).toContain(`tmux attach -t ${SESSION}`)
+    expect(deps.stdout.output()).toContain(`tmux kill-session -t ${SESSION}`)
+  })
+
+  it('uses the per-project derived session name, not the literal "ralph"', async () => {
+    const deps = baseDeps()
+    deps.exec = makeExec({
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 0, stdout: '', stderr: '' },
+    })
+    await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
+    // The uniqueness check targets the derived name and never the literal "ralph".
+    expect(deps.exec.calls).toContain(`tmux has-session -t ${SESSION}`)
+    expect(deps.exec.calls.some((c) => c === 'tmux has-session -t ralph')).toBe(false)
+  })
+
+  it('is not blocked when only another project’s session exists', async () => {
+    const deps = baseDeps()
+    // Another project's session ("ralph-other-...") is present; ours is not.
+    // has-session for OUR derived name returns non-zero, so start proceeds past
+    // the uniqueness check even though some other session exists.
+    deps.exec = makeExec({
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${sessionNameFor('/other-project')}`]: {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '0', stderr: '' },
+    })
+    const result = await startCommand(deps)
+    expect(result.exitCode).toBe(0)
+    expect(deps.stderr.output()).not.toContain('já existe')
   })
 
   it('aborts when a critical command is missing', async () => {
     const deps = baseDeps()
     deps.hasCommand = (cmd) => cmd !== 'git'
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
     })
     await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
     expect(deps.stderr.output()).toContain("❌ 'git' não encontrado no PATH")
@@ -64,7 +110,7 @@ describe('startCommand', () => {
     const deps = baseDeps()
     deps.hasCommand = (cmd) => cmd !== 'jq'
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -82,7 +128,7 @@ describe('startCommand', () => {
   it('aborts when gh auth status fails', async () => {
     const deps = baseDeps()
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 1, stdout: '', stderr: '' },
     })
     await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
@@ -92,8 +138,9 @@ describe('startCommand', () => {
   it('aborts when .mcp.json is invalid', async () => {
     const deps = baseDeps()
     deps.exists = (p) => p.endsWith('.mcp.json')
+    const workSession = sessionNameFor('/work')
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${workSession}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'jq -e . /work/.mcp.json': { exitCode: 1, stdout: '', stderr: '' },
     })
@@ -104,7 +151,7 @@ describe('startCommand', () => {
   it('exits 0 without launching when queue is empty', async () => {
     const deps = baseDeps()
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -117,14 +164,15 @@ describe('startCommand', () => {
     const result = await startCommand(deps)
     expect(result).toEqual({ exitCode: 0, started: false })
     expect(deps.stdout.output()).toContain('Nenhuma issue na fila')
-    expect(deps.exec.calls.some((c) => c.startsWith('tmux new -d -s ralph'))).toBe(false)
+    expect(deps.exec.calls.some((c) => c.startsWith(`tmux new -d -s ${SESSION}`))).toBe(false)
   })
 
-  it('launches tmux when queue has issues', async () => {
+  it('launches tmux when queue has issues, with the derived name and RALPH_TMUX_SESSION injected', async () => {
     const deps = baseDeps()
     const cwd = '/repo'
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -133,7 +181,7 @@ describe('startCommand', () => {
       },
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '3', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -142,12 +190,40 @@ describe('startCommand', () => {
     const result = await startCommand({ ...deps, cwd })
     expect(result).toEqual({ exitCode: 0, started: true, count: 3 })
     expect(deps.stdout.output()).toContain('Ralph iniciado em background. 3 issues na fila.')
+    // The launch targets the derived name and injects RALPH_TMUX_SESSION into the loop env.
+    expect(deps.exec.calls).toContain(launchKey)
+    // Success message prints the per-project attach / kill commands.
+    expect(deps.stdout.output()).toContain(`tmux attach -t ${SESSION}`)
+    expect(deps.stdout.output()).toContain(`tmux kill-session -t ${SESSION}`)
+  })
+
+  it('injects RALPH_TMUX_SESSION matching the cwd-derived name for a different project', async () => {
+    const deps = baseDeps()
+    const cwd = '/other-project'
+    const session = sessionNameFor(cwd)
+    const launchKey = `tmux new -d -s ${session} cd '${cwd}' && RALPH_TMUX_SESSION='${session}' bash '${RALPH_TEMPLATE}'`
+    deps.exec = makeExec({
+      [`tmux has-session -t ${session}`]: { exitCode: 1, stdout: '', stderr: '' },
+      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      },
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+        { exitCode: 0, stdout: '1', stderr: '' },
+      [launchKey]: { exitCode: 0, stdout: '', stderr: '' },
+    })
+    const result = await startCommand({ ...deps, cwd })
+    expect(result.started).toBe(true)
+    expect(deps.exec.calls).toContain(launchKey)
+    expect(session).not.toBe(SESSION)
   })
 
   it('warns about orphan claude-working labels and never removes them automatically', async () => {
     const deps = baseDeps()
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -171,8 +247,9 @@ describe('startCommand', () => {
     deps.currentVersion = '0.1.0'
     deps.readSt = () => ({ last_seen_release: '', detected_stack: 'npm' })
     deps.writeSt = (root, obj) => writes.push({ root, obj })
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -182,7 +259,7 @@ describe('startCommand', () => {
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -204,8 +281,9 @@ describe('startCommand', () => {
     deps.currentVersion = '0.1.0'
     deps.readSt = () => null
     deps.writeSt = (root, obj) => writes.push({ root, obj })
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -214,7 +292,7 @@ describe('startCommand', () => {
       },
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -235,8 +313,9 @@ describe('startCommand', () => {
       waCalls.push(args)
       return { ok: true }
     }
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -245,7 +324,7 @@ describe('startCommand', () => {
       },
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '2', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -275,8 +354,9 @@ describe('startCommand', () => {
       waCalls.push(args)
       return { ok: true }
     }
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -285,7 +365,7 @@ describe('startCommand', () => {
       },
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -303,8 +383,9 @@ describe('startCommand', () => {
       waCalled = true
       return { ok: true }
     }
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -313,7 +394,7 @@ describe('startCommand', () => {
       },
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -339,8 +420,9 @@ describe('startCommand', () => {
     deps.exists = (p) => p.endsWith('.env.local')
     deps.loadEnv = () => ({ CALLMEBOT_KEY: 'k', WHATSAPP_PHONE: '+1' })
     deps.sendWa = async () => ({ ok: false, reason: 'http_500' })
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -349,7 +431,7 @@ describe('startCommand', () => {
       },
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -367,8 +449,9 @@ describe('startCommand', () => {
     deps.currentVersion = '0.2.0'
     deps.readSt = () => ({ last_seen_release: '' })
     deps.writeSt = (root, obj) => writes.push({ root, obj })
+    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
     deps.exec = makeExec({
-      'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
       'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
@@ -378,7 +461,7 @@ describe('startCommand', () => {
       'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.1.0\n', stderr: '' },
-      [`tmux new -d -s ralph cd '${cwd}' && bash '${RALPH_TEMPLATE}'`]: {
+      [launchKey]: {
         exitCode: 0,
         stdout: '',
         stderr: '',
@@ -407,7 +490,7 @@ describe('startCommand', () => {
       }
       deps.now = () => Date.parse('2026-04-29T02:00:00.000Z')
       deps.exec = makeExec({
-        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       })
       await expect(startCommand({ ...deps, cwd })).rejects.toBeInstanceOf(StartAbort)
       expect(peekCalls).toHaveLength(1)
@@ -418,7 +501,7 @@ describe('startCommand', () => {
       expect(errOut).toContain('2h')
       expect(errOut).toContain('ralph schedule pause')
       expect(deps.exec.calls.some((c) => c.startsWith('gh auth status'))).toBe(false)
-      expect(deps.exec.calls.some((c) => c.startsWith('tmux new -d -s ralph'))).toBe(false)
+      expect(deps.exec.calls.some((c) => c.startsWith(`tmux new -d -s ${SESSION}`))).toBe(false)
     })
 
     it('proceeds when the cycle lock holder is stale (alive=false)', async () => {
@@ -433,7 +516,7 @@ describe('startCommand', () => {
         alive: false,
       })
       deps.exec = makeExec({
-        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
         'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
         'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
           exitCode: 0,
@@ -453,7 +536,7 @@ describe('startCommand', () => {
       const cwd = '/repo'
       deps.peekLock = () => null
       deps.exec = makeExec({
-        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
         'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
         'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
           exitCode: 0,
@@ -478,7 +561,7 @@ describe('startCommand', () => {
         return { acquired: true, holder: { pid: 1, startedAt: '', repoPath: cwd } }
       }
       deps.exec = makeExec({
-        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
         'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
         'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
           exitCode: 0,
@@ -512,7 +595,7 @@ describe('startCommand', () => {
       })
       deps.now = () => Date.parse('2026-04-29T01:00:00.000Z')
       deps.exec = makeExec({
-        'tmux has-session -t ralph': { exitCode: 1, stdout: '', stderr: '' },
+        [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       })
       await expect(startCommand({ ...deps, cwd })).rejects.toBeInstanceOf(StartAbort)
       expect(waCalled).toBe(false)
