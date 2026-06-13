@@ -346,7 +346,28 @@ release. The reminder is deduped via `last_seen_release` in
 **No issues are picked up.** — Check the queue filter Ralph uses:
 `state:open -label:claude-working -label:claude-failed -label:do-not-ralph`.
 Issues already labelled `claude-working` or `claude-failed` are
-skipped; clear those labels to retry.
+skipped; clear those labels to retry. Ralph applies `claude-failed`
+itself when Claude exits non-zero on an issue (auth/credit/rate-limit
+errors, crashes) without otherwise resolving it, so the queue keeps
+advancing instead of stalling on the same issue — see the per-issue log
+to find out why.
+
+**An iteration prints `claude falhou na issue #N (exit não-zero)`.** —
+Claude exited non-zero on that issue without opening a PR, closing it,
+or applying an exclusion label. Ralph adds the `claude-failed` label so
+the next iteration moves on. The cause (auth, credit balance,
+rate-limit, or a crash) is captured in `logs/ralph-issue-N.log`:
+Claude's stderr is now written there (and echoed to the terminal)
+rather than being merged into the JSON stream. Fix the underlying
+problem, clear the `claude-failed` label, and re-run.
+
+**The loop aborts with `sem progresso na issue #N`.** — A zero-progress
+guard fired: the same issue was re-selected on consecutive iterations
+with no change to its exclusion state (no PR, not closed, no label),
+which means the loop could never drain the queue. Rather than burn API
+calls spinning forever, Ralph records the issue as a failure and stops.
+Inspect `logs/ralph-issue-N.log` for the root cause, resolve or label
+the issue (`claude-failed`, `do-not-ralph`), then start Ralph again.
 
 ## Links
 
