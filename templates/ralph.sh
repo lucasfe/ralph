@@ -206,4 +206,4 @@ if [ -x ./ralph-notify.sh ]; then
 fi
 # ---------------------------------------------------------------------------
 
-tmux kill-session -t ralph 2>/dev/null || exit 0
+tmux kill-session -t "${RALPH_TMUX_SESSION:-ralph}" 2>/dev/null || exit 0
