@@ -56,7 +56,7 @@ printed by `ralph start`; detach with `Ctrl+B` then `D`, or tail
 per-issue logs in `logs/ralph-issue-*.log`. Each iteration also tees
 Claude's raw stream-json to `logs/ralph-issue-*.jsonl` and appends one
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
-[Per-issue telemetry](#per-issue-telemetry)).
+[Monitoring data model](#monitoring-data-model)).
 
 ## How Ralph resolves issues
 
@@ -379,33 +379,95 @@ calls spinning forever, Ralph records the issue as a failure and stops.
 Inspect `logs/ralph-issue-N.log` for the root cause, resolve or label
 the issue (`claude-failed`, `do-not-ralph`), then start Ralph again.
 
-## Per-issue telemetry
+## Monitoring data model
 
-After each issue iteration — regardless of outcome — Ralph records two
-artifacts under the project root:
+Ralph emits two **append-only, newline-delimited JSON** telemetry streams
+at two different grains: one **per issue** and one **per run**. Both are
+**observation-only** — capture happens after the loop has already decided
+an outcome and can never abort or alter the loop (every write is wrapped
+`|| true`). The streams introduce **no new config tunables, no push
+alerts, and no ceilings**; they only record what already happened.
+
+The two streams are designed to map cleanly onto two future database
+tables — a `runs` table (per-run stream) and an `issues` table (per-issue
+stream) — joined on [`run_id`](#run_id-the-join-key).
+
+### Per-issue stream — `.ralph/metrics/issues.jsonl`
+
+After each issue iteration — regardless of outcome — Ralph appends one
+`RALPH_ISSUE_EVENT <json>` line to `.ralph/metrics/issues.jsonl`, plus a
+raw-output sidecar:
 
 | Path | Contents |
 | --- | --- |
+| `.ralph/metrics/issues.jsonl` | One appended `RALPH_ISSUE_EVENT <json>` line per iteration. **Append-only** — events accumulate across runs and are never truncated. Maps to the future `issues` table. |
 | `logs/ralph-issue-N.jsonl` | Claude's raw `stream-json` stdout for that issue, tee'd verbatim. Truncated fresh per issue. |
-| `.ralph/metrics/issues.jsonl` | One appended `RALPH_ISSUE_EVENT <json>` line per iteration. **Append-only** — events accumulate across runs and are never truncated. |
 
-Capture is **best-effort telemetry**: it runs after the loop has already
-decided the issue's outcome and can never abort or alter the loop — any
-failure is swallowed.
-
-Each event line is `RALPH_ISSUE_EVENT ` followed by a JSON object with
-these fields:
+Each event line is the tag `RALPH_ISSUE_EVENT ` followed by a JSON object
+with these fields:
 
 | Field | Meaning |
 | --- | --- |
 | `issue_number` | The issue resolved this iteration. |
-| `run_id` | Ties all events from one loop invocation together: `<tmux-session>-<start-epoch-seconds>`. |
-| `ts` | Event timestamp. |
-| `subtype`, `total_cost_usd`, `num_turns`, `duration_ms`, `usage` | Pulled from the last `result` line of the raw stream-json (zeroed if absent). |
+| `run_id` | The [join key](#run_id-the-join-key) — ties every issue event from one loop invocation to its run. |
+| `ts` | Event timestamp (epoch milliseconds). |
+| `subtype` | The `result` line's subtype (e.g. `success`), or `null` if absent. |
+| `total_cost_usd` | Claude's reported cost for the iteration. |
+| `num_turns` | Number of turns in the iteration. |
+| `duration_ms` | Wall-clock duration Claude reports for the iteration. |
+| `usage` | The four raw token counts, broken out: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (each zeroed if absent). |
 | `claude_exit_code` | Claude's exit code for the iteration. |
 | `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
 | `verdict` | `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. |
 | `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. |
+
+`subtype`, `total_cost_usd`, `num_turns`, `duration_ms`, and `usage` are
+all pulled from the **last** parseable `result` line of the raw
+stream-json; blank, garbage, and non-JSON lines are skipped, and the
+fields default to zero/`null` when no `result` line is present.
+
+### Per-run stream — `RALPH_CYCLE_EVENT` in the heartbeat log
+
+At the end of each run, Ralph appends exactly one `RALPH_CYCLE_EVENT
+<json>` line to `logs/ralph-cycle.out.log` — the file the
+[daily heartbeat](#daily-heartbeat-24h-summary) globs for its 24h rollup.
+This stream maps to the future `runs` table.
+
+| Field | Meaning |
+| --- | --- |
+| `ts` | Run-end timestamp (ISO 8601, UTC). |
+| `status` | `success` (no failures), `partial` (some ok, some failed), or `failed`. |
+| `ok`, `failed` | Real per-run counts of resolved vs. failed issues. |
+| `durationMin` | Run duration in minutes. |
+| `processed` | Total issues processed (`ok + failed`). |
+| `run_id` | The [join key](#run_id-the-join-key) — the same value stamped on every per-issue event from this run. |
+
+Both run paths now emit real counts: scheduled `ralph cycle` passes and
+interactive `ralph start` runs each append one `RALPH_CYCLE_EVENT`, so an
+interactive run shows up in the 24h summary just like an automated cycle.
+(`ralph cycle` stays the sole emitter for the scheduled path, so the two
+never double-count.) The `run_id` field is purely additive — same tag,
+file, and parser the heartbeat already reads.
+
+### `run_id` — the join key
+
+`run_id` is the key that links the two streams. Its shape is:
+
+```
+<tmux-session-name>-<start-epoch-seconds>
+```
+
+e.g. `ralph-agenthub-a1b2c3-1718700000`. It is computed **once** per run
+from a single source of truth and reused by both the per-issue capture
+and the end-of-run `RALPH_CYCLE_EVENT`, so the two streams can never drift
+apart.
+
+To join: every `RALPH_ISSUE_EVENT` in `.ralph/metrics/issues.jsonl`
+carries the `run_id` of the run that produced it, and exactly one
+`RALPH_CYCLE_EVENT` in `logs/ralph-cycle.out.log` carries that same
+`run_id`. One run event therefore fans out to N issue events — the same
+one-to-many relationship the future `runs` ←→ `issues` tables will model,
+with `run_id` as the foreign key.
 
 ## Links
 
