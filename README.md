@@ -285,6 +285,13 @@ directories, etc.), the message degrades to
 `❌ Ralph 24h summary failed: <reason>` so silence never reads as
 healthy.
 
+The cycle count covers **both** scheduled `ralph cycle` passes and
+interactive `ralph start` runs. Each finished run appends one run event
+to `logs/ralph-cycle.out.log`, which the rollup aggregates; an
+interactive `ralph start` therefore shows up in the 24h summary just
+like an automated cycle does. (`ralph cycle` itself stays the sole
+emitter for the scheduled path, so the two never double-count.)
+
 The schedule defaults to `09:00` in your local timezone. Override it
 with `RALPH_DAILY_SUMMARY_TIME` in `.env.local`:
 

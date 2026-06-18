@@ -167,6 +167,10 @@ fi
 # ---------------------------------------------------------------------------
 
 START=$(date +%s)
+# Single source of truth for the run_id (`<session>-<start-epoch>`). Both the
+# per-issue capture and the end-of-run RALPH_CYCLE_EVENT reference this, so the
+# two can never drift apart.
+RALPH_RUN_ID="${RALPH_TMUX_SESSION:-ralph}-${START}"
 successes=()
 failures=()
 claude_failed=0
@@ -203,7 +207,7 @@ while :; do
   # .ralph/metrics/issues.jsonl. Runs once per iteration regardless of outcome.
   # Telemetry failure MUST NEVER abort or alter the loop, hence `|| true`.
   RALPH_ISSUE_NUMBER="$num" \
-    RALPH_RUN_ID="${RALPH_TMUX_SESSION:-ralph}-${START}" \
+    RALPH_RUN_ID="$RALPH_RUN_ID" \
     RALPH_CLAUDE_EXIT="$claude_failed" \
     RALPH_ISSUE_LABELS="$labels" \
     RALPH_ISSUE_STATE="$state" \
@@ -268,6 +272,20 @@ echo "$msg"
 if [ -n "$RALPH_ONCE_MODE" ]; then
   exit 0
 fi
+
+# --- Run-event telemetry (issue #531) -------------------------------------
+# Normal (interactive `ralph start`) mode only. The automated path (`ralph
+# cycle`) is the sole emitter for itself and runs detached, so its stdout never
+# reaches logs/ralph-cycle.out.log — the file lib/heartbeat.js globs for the 24h
+# rollup. Append exactly one RALPH_CYCLE_EVENT line carrying the loop's REAL
+# bash-computed counts + the same run_id used by the per-issue capture, so
+# interactive runs are counted too. Purely additive; same tag/file/fields the
+# heartbeat already parses. Best-effort: `|| true` so it NEVER aborts the loop.
+run_event_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+printf 'RALPH_CYCLE_EVENT {"ts":"%s","status":"%s","ok":%d,"failed":%d,"durationMin":%d,"processed":%d,"run_id":"%s"}\n' \
+  "$run_event_ts" "$status" "$ok_count" "$fail_count" "$duration_min" "$((ok_count + fail_count))" "$RALPH_RUN_ID" \
+  >> logs/ralph-cycle.out.log || true
+# ---------------------------------------------------------------------------
 
 # Re-source .env.local so credentials added mid-run are picked up.
 if [ -f ./.env.local ]; then
