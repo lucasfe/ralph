@@ -227,6 +227,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
 | `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path. `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. When on, a Tier-2 run adds the explorer fan-out + inline synthesis understand phase before the dev, and a 3-reviewer adversarial-panel verify phase (majority-of-3 to block) before the PR opens. |
+| `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000; default 1,000,000 for the opus family). A non-numeric or `<= 0` value is ignored. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph notices the change (sha256 mismatch in
@@ -420,11 +421,17 @@ with these fields:
 | `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
 | `verdict` | `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. |
 | `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. |
+| `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage). `0` when no `message_start` or usage is present. |
+| `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000; default 1,000,000 for the opus family) or from the [`RALPH_CONTEXT_WINDOW`](#configuration-reference) override. |
+| `model` | The model id from the last `message_start`, or `null` if absent. |
 
 `subtype`, `total_cost_usd`, `num_turns`, `duration_ms`, and `usage` are
 all pulled from the **last** parseable `result` line of the raw
 stream-json; blank, garbage, and non-JSON lines are skipped, and the
 fields default to zero/`null` when no `result` line is present.
+`context_end_tokens`, `context_end_pct`, and `model` are pulled from the
+**last** `message_start` event (bare or wrapped in a `stream_event`
+envelope) and degrade to `0`/`null` when none is present.
 
 ### Per-run stream — `RALPH_CYCLE_EVENT` in the heartbeat log
 
