@@ -70,19 +70,36 @@ JQ_STREAM_FILTER='fromjson? // empty
 run_claude_stream() {
   prompt_script="$1"
   log_file="$2"
+  raw_jsonl="${3:-}"
   # Truncate the unique per-issue log ONCE up front, then have BOTH the stderr
   # tee and the stdout tee APPEND. This removes a truncate-vs-append race: if
   # the stdout `tee` opened with O_TRUNC while the stderr `tee -a` was already
   # writing, the leading bytes of a stderr line (e.g. a failure signal) could
   # be clobbered, producing the empty/lost failure log this guards against.
   : > "$log_file"
-  node "$prompt_script" \
-    | claude -p --dangerously-skip-permissions \
-        --output-format stream-json --verbose --include-partial-messages \
-        2> >(tee -a "$log_file" >&2) \
-    | jq -rR --unbuffered "$JQ_STREAM_FILTER" \
-    | tee -a "$log_file"
-  # PIPESTATUS[1] is claude's exit code (node|claude|jq|tee).
+  if [ -n "$raw_jsonl" ]; then
+    # Tee claude's RAW stream-json stdout to "$raw_jsonl" (fresh per issue, so a
+    # plain `tee` truncate is fine) BETWEEN claude and jq. Claude stays pipe
+    # element index 1 so ${PIPESTATUS[1]} exit detection is unaffected
+    # (node|claude|tee|jq|tee → claude still index 1).
+    node "$prompt_script" \
+      | claude -p --dangerously-skip-permissions \
+          --output-format stream-json --verbose --include-partial-messages \
+          2> >(tee -a "$log_file" >&2) \
+      | tee "$raw_jsonl" \
+      | jq -rR --unbuffered "$JQ_STREAM_FILTER" \
+      | tee -a "$log_file"
+  else
+    # Original pipeline (node|claude|jq|tee) — byte-for-byte unchanged when no
+    # raw path is supplied (e.g. the config-validation call).
+    node "$prompt_script" \
+      | claude -p --dangerously-skip-permissions \
+          --output-format stream-json --verbose --include-partial-messages \
+          2> >(tee -a "$log_file" >&2) \
+      | jq -rR --unbuffered "$JQ_STREAM_FILTER" \
+      | tee -a "$log_file"
+  fi
+  # PIPESTATUS[1] is claude's exit code (claude is index 1 in BOTH variants).
   if [ "${PIPESTATUS[1]}" -ne 0 ]; then
     claude_failed=1
   else
@@ -91,7 +108,7 @@ run_claude_stream() {
 }
 
 run_claude_for_issue() {
-  run_claude_stream "$RALPH_PKG_DIR/lib/build-prompt.js" "logs/ralph-issue-$1.log"
+  run_claude_stream "$RALPH_PKG_DIR/lib/build-prompt.js" "logs/ralph-issue-$1.log" "logs/ralph-issue-$1.jsonl"
 }
 # ---------------------------------------------------------------------------
 
@@ -181,6 +198,20 @@ while :; do
 
   labels=$(gh issue view "$num" --json labels -q '[.labels[].name] | join(",")')
   state=$(gh issue view "$num" --json state -q '.state')
+
+  # Best-effort per-issue telemetry: capture one RALPH_ISSUE_EVENT line into
+  # .ralph/metrics/issues.jsonl. Runs once per iteration regardless of outcome.
+  # Telemetry failure MUST NEVER abort or alter the loop, hence `|| true`.
+  RALPH_ISSUE_NUMBER="$num" \
+    RALPH_RUN_ID="${RALPH_TMUX_SESSION:-ralph}-${START}" \
+    RALPH_CLAUDE_EXIT="$claude_failed" \
+    RALPH_ISSUE_LABELS="$labels" \
+    RALPH_ISSUE_STATE="$state" \
+    RALPH_DEV_BRANCH="${DEV_BRANCH:-}" \
+    RALPH_RAW_JSONL_PATH="logs/ralph-issue-$num.jsonl" \
+    RALPH_STDERR_LOG_PATH="logs/ralph-issue-$num.log" \
+    node "$RALPH_PKG_DIR/lib/capture-issue-event.js" || true
+
   if echo ",$labels," | grep -q ",claude-failed,"; then
     failures+=("$num")
   elif [ "$state" = "CLOSED" ] || echo ",$labels," | grep -q ",pending-merge,"; then

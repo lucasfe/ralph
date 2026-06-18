@@ -53,7 +53,10 @@ a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are
 printed by `ralph start`; detach with `Ctrl+B` then `D`, or tail
-per-issue logs in `logs/ralph-issue-*.log`.
+per-issue logs in `logs/ralph-issue-*.log`. Each iteration also tees
+Claude's raw stream-json to `logs/ralph-issue-*.jsonl` and appends one
+telemetry event line to `.ralph/metrics/issues.jsonl` (see
+[Per-issue telemetry](#per-issue-telemetry)).
 
 ## How Ralph resolves issues
 
@@ -368,6 +371,34 @@ which means the loop could never drain the queue. Rather than burn API
 calls spinning forever, Ralph records the issue as a failure and stops.
 Inspect `logs/ralph-issue-N.log` for the root cause, resolve or label
 the issue (`claude-failed`, `do-not-ralph`), then start Ralph again.
+
+## Per-issue telemetry
+
+After each issue iteration — regardless of outcome — Ralph records two
+artifacts under the project root:
+
+| Path | Contents |
+| --- | --- |
+| `logs/ralph-issue-N.jsonl` | Claude's raw `stream-json` stdout for that issue, tee'd verbatim. Truncated fresh per issue. |
+| `.ralph/metrics/issues.jsonl` | One appended `RALPH_ISSUE_EVENT <json>` line per iteration. **Append-only** — events accumulate across runs and are never truncated. |
+
+Capture is **best-effort telemetry**: it runs after the loop has already
+decided the issue's outcome and can never abort or alter the loop — any
+failure is swallowed.
+
+Each event line is `RALPH_ISSUE_EVENT ` followed by a JSON object with
+these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `issue_number` | The issue resolved this iteration. |
+| `run_id` | Ties all events from one loop invocation together: `<tmux-session>-<start-epoch-seconds>`. |
+| `ts` | Event timestamp. |
+| `subtype`, `total_cost_usd`, `num_turns`, `duration_ms`, `usage` | Pulled from the last `result` line of the raw stream-json (zeroed if absent). |
+| `claude_exit_code` | Claude's exit code for the iteration. |
+| `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
+| `verdict` | `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. |
+| `files`, `insertions`, `deletions` | Diff stats — **placeholders (`0`) in this slice**, wired in a later change. |
 
 ## Links
 

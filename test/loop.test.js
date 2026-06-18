@@ -1,11 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { spawnSync } from 'node:child_process'
+import { spawnSync, execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { templatePath } from '../lib/paths.js'
 
 const RALPH_TEMPLATE = templatePath('ralph.sh')
+// Resolve the REAL node binary so the stub can delegate the capture-issue-event
+// invocation to it (the stub shadows `node` on PATH; build-prompt.js stays an
+// echo, but the telemetry sidecar must actually run).
+const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.execPath)'], {
+  encoding: 'utf8',
+}).trim()
 
 // These integration tests execute templates/ralph.sh's main loop against
 // stubbed external commands (git, gh, claude, jq, node) placed on a PATH we
@@ -71,7 +77,13 @@ exit 0
   writeStub(
     'node',
     `#!/bin/bash
-# build-prompt.js / build-validate-prompt.js -> emit a dummy prompt.
+# The telemetry sidecar (capture-issue-event.js) must run for real so the
+# .ralph/metrics/issues.jsonl assertion is meaningful; delegate it to the real
+# node binary. Everything else (build-prompt.js / build-validate-prompt.js)
+# just needs to emit a dummy prompt.
+case "$*" in
+  *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+esac
 echo "PROMPT"
 exit 0
 `
@@ -240,5 +252,25 @@ exit 0
     expect(res.stdout).toContain('Fila vazia, encerrando.')
     // All resolved -> reported as successes, none failed.
     expect(res.stdout).toMatch(/3 ok, 0 falharam|Ralph finalizado: 3 ok/)
+
+    // #529: per-issue telemetry — the capture sidecar must have appended a
+    // RALPH_ISSUE_EVENT line per resolved issue to .ralph/metrics/issues.jsonl.
+    const metricsFile = join(workdir, '.ralph', 'metrics', 'issues.jsonl')
+    expect(existsSync(metricsFile), `expected metrics at ${metricsFile}. stderr:\n${res.stderr}`).toBe(true)
+    const eventLines = readFileSync(metricsFile, 'utf8').trim().split('\n').filter(Boolean)
+    expect(eventLines.length).toBe(3)
+    for (const line of eventLines) {
+      expect(line.startsWith('RALPH_ISSUE_EVENT ')).toBe(true)
+      const ev = JSON.parse(line.slice('RALPH_ISSUE_EVENT '.length))
+      // Issues were reported CLOSED -> pass verdict; run_id is session-START.
+      expect(ev.verdict).toBe('pass')
+      expect(ev.run_id).toMatch(/^ralph-test-\d+$/)
+      expect(typeof ev.issue_number).toBe('number')
+    }
+    // One event for each selected issue number (3, 2, 1).
+    const issueNums = eventLines
+      .map((l) => JSON.parse(l.slice('RALPH_ISSUE_EVENT '.length)).issue_number)
+      .sort()
+    expect(issueNums).toEqual([1, 2, 3])
   })
 })
