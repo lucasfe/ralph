@@ -5,6 +5,21 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.12.1...ralph-v0.13.0) (2026-06-18)
+
+
+### Features
+
+* dev → main rollforward ([ad156c9](https://github.com/lucasfe/agenthub/commit/ad156c95b320359ff077a8dc252a639b3e281b88))
+* **ralph:** capture end-of-job context-window occupancy per issue ([#546](https://github.com/lucasfe/agenthub/issues/546)) ([9c7cad4](https://github.com/lucasfe/agenthub/commit/9c7cad48365906682d5d3b8cddef3c9c0605a067))
+* **ralph:** per-issue event capture to issues.jsonl (minimal end-to-end) ([#535](https://github.com/lucasfe/agenthub/issues/535)) ([87955c5](https://github.com/lucasfe/agenthub/commit/87955c5ca5753ef932cec4f89584201a1628a533))
+* **ralph:** real PR diff-stats in per-issue events ([#538](https://github.com/lucasfe/agenthub/issues/538)) ([9edd3e7](https://github.com/lucasfe/agenthub/commit/9edd3e7e42b20bed440687483fb7da5a8882c02e))
+
+
+### Bug Fixes
+
+* **ralph:** emit run event so ralph start runs reach the 24h rollup ([#540](https://github.com/lucasfe/agenthub/issues/540)) ([5856ee3](https://github.com/lucasfe/agenthub/commit/5856ee376988dc4099862ff4228188ac74202657))
+
 ## [0.12.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.12.0...ralph-v0.12.1) (2026-06-13)
 
 
