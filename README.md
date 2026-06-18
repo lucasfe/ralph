@@ -53,7 +53,10 @@ a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are
 printed by `ralph start`; detach with `Ctrl+B` then `D`, or tail
-per-issue logs in `logs/ralph-issue-*.log`.
+per-issue logs in `logs/ralph-issue-*.log`. Each iteration also tees
+Claude's raw stream-json to `logs/ralph-issue-*.jsonl` and appends one
+telemetry event line to `.ralph/metrics/issues.jsonl` (see
+[Monitoring data model](#monitoring-data-model)).
 
 ## How Ralph resolves issues
 
@@ -224,6 +227,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
 | `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path. `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. When on, a Tier-2 run adds the explorer fan-out + inline synthesis understand phase before the dev, and a 3-reviewer adversarial-panel verify phase (majority-of-3 to block) before the PR opens. |
+| `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000; default 1,000,000 for the opus family). A non-numeric or `<= 0` value is ignored. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph notices the change (sha256 mismatch in
@@ -281,6 +285,13 @@ When the summary aggregation itself fails (corrupt logs, missing
 directories, etc.), the message degrades to
 `❌ Ralph 24h summary failed: <reason>` so silence never reads as
 healthy.
+
+The cycle count covers **both** scheduled `ralph cycle` passes and
+interactive `ralph start` runs. Each finished run appends one run event
+to `logs/ralph-cycle.out.log`, which the rollup aggregates; an
+interactive `ralph start` therefore shows up in the 24h summary just
+like an automated cycle does. (`ralph cycle` itself stays the sole
+emitter for the scheduled path, so the two never double-count.)
 
 The schedule defaults to `09:00` in your local timezone. Override it
 with `RALPH_DAILY_SUMMARY_TIME` in `.env.local`:
@@ -368,6 +379,102 @@ which means the loop could never drain the queue. Rather than burn API
 calls spinning forever, Ralph records the issue as a failure and stops.
 Inspect `logs/ralph-issue-N.log` for the root cause, resolve or label
 the issue (`claude-failed`, `do-not-ralph`), then start Ralph again.
+
+## Monitoring data model
+
+Ralph emits two **append-only, newline-delimited JSON** telemetry streams
+at two different grains: one **per issue** and one **per run**. Both are
+**observation-only** — capture happens after the loop has already decided
+an outcome and can never abort or alter the loop (every write is wrapped
+`|| true`). The streams introduce **no new config tunables, no push
+alerts, and no ceilings**; they only record what already happened.
+
+The two streams are designed to map cleanly onto two future database
+tables — a `runs` table (per-run stream) and an `issues` table (per-issue
+stream) — joined on [`run_id`](#run_id-the-join-key).
+
+### Per-issue stream — `.ralph/metrics/issues.jsonl`
+
+After each issue iteration — regardless of outcome — Ralph appends one
+`RALPH_ISSUE_EVENT <json>` line to `.ralph/metrics/issues.jsonl`, plus a
+raw-output sidecar:
+
+| Path | Contents |
+| --- | --- |
+| `.ralph/metrics/issues.jsonl` | One appended `RALPH_ISSUE_EVENT <json>` line per iteration. **Append-only** — events accumulate across runs and are never truncated. Maps to the future `issues` table. |
+| `logs/ralph-issue-N.jsonl` | Claude's raw `stream-json` stdout for that issue, tee'd verbatim. Truncated fresh per issue. |
+
+Each event line is the tag `RALPH_ISSUE_EVENT ` followed by a JSON object
+with these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `issue_number` | The issue resolved this iteration. |
+| `run_id` | The [join key](#run_id-the-join-key) — ties every issue event from one loop invocation to its run. |
+| `ts` | Event timestamp (epoch milliseconds). |
+| `subtype` | The `result` line's subtype (e.g. `success`), or `null` if absent. |
+| `total_cost_usd` | Claude's reported cost for the iteration. |
+| `num_turns` | Number of turns in the iteration. |
+| `duration_ms` | Wall-clock duration Claude reports for the iteration. |
+| `usage` | The four raw token counts, broken out: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (each zeroed if absent). |
+| `claude_exit_code` | Claude's exit code for the iteration. |
+| `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
+| `verdict` | `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. |
+| `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. |
+| `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage). `0` when no `message_start` or usage is present. |
+| `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000; default 1,000,000 for the opus family) or from the [`RALPH_CONTEXT_WINDOW`](#configuration-reference) override. |
+| `model` | The model id from the last `message_start`, or `null` if absent. |
+
+`subtype`, `total_cost_usd`, `num_turns`, `duration_ms`, and `usage` are
+all pulled from the **last** parseable `result` line of the raw
+stream-json; blank, garbage, and non-JSON lines are skipped, and the
+fields default to zero/`null` when no `result` line is present.
+`context_end_tokens`, `context_end_pct`, and `model` are pulled from the
+**last** `message_start` event (bare or wrapped in a `stream_event`
+envelope) and degrade to `0`/`null` when none is present.
+
+### Per-run stream — `RALPH_CYCLE_EVENT` in the heartbeat log
+
+At the end of each run, Ralph appends exactly one `RALPH_CYCLE_EVENT
+<json>` line to `logs/ralph-cycle.out.log` — the file the
+[daily heartbeat](#daily-heartbeat-24h-summary) globs for its 24h rollup.
+This stream maps to the future `runs` table.
+
+| Field | Meaning |
+| --- | --- |
+| `ts` | Run-end timestamp (ISO 8601, UTC). |
+| `status` | `success` (no failures), `partial` (some ok, some failed), or `failed`. |
+| `ok`, `failed` | Real per-run counts of resolved vs. failed issues. |
+| `durationMin` | Run duration in minutes. |
+| `processed` | Total issues processed (`ok + failed`). |
+| `run_id` | The [join key](#run_id-the-join-key) — the same value stamped on every per-issue event from this run. |
+
+Both run paths now emit real counts: scheduled `ralph cycle` passes and
+interactive `ralph start` runs each append one `RALPH_CYCLE_EVENT`, so an
+interactive run shows up in the 24h summary just like an automated cycle.
+(`ralph cycle` stays the sole emitter for the scheduled path, so the two
+never double-count.) The `run_id` field is purely additive — same tag,
+file, and parser the heartbeat already reads.
+
+### `run_id` — the join key
+
+`run_id` is the key that links the two streams. Its shape is:
+
+```
+<tmux-session-name>-<start-epoch-seconds>
+```
+
+e.g. `ralph-agenthub-a1b2c3-1718700000`. It is computed **once** per run
+from a single source of truth and reused by both the per-issue capture
+and the end-of-run `RALPH_CYCLE_EVENT`, so the two streams can never drift
+apart.
+
+To join: every `RALPH_ISSUE_EVENT` in `.ralph/metrics/issues.jsonl`
+carries the `run_id` of the run that produced it, and exactly one
+`RALPH_CYCLE_EVENT` in `logs/ralph-cycle.out.log` carries that same
+`run_id`. One run event therefore fans out to N issue events — the same
+one-to-many relationship the future `runs` ←→ `issues` tables will model,
+with `run_id` as the foreign key.
 
 ## Links
 

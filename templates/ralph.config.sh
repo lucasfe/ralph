@@ -19,6 +19,13 @@ AUTO_MERGE="true"
 MERGE_POLL_INTERVAL=30
 MERGE_POLL_MAX=40
 
+# Context-window override (tokens) for end-of-job occupancy metrics. Leave
+# unset/empty to auto-resolve from the run's model id (opus/sonnet/fable =
+# 1_000_000, haiku = 200_000; default 1_000_000 for the opus family). Set a
+# positive integer to override, e.g. RALPH_CONTEXT_WINDOW=200000 for a 200k
+# model. A non-numeric or <= 0 value is ignored.
+# RALPH_CONTEXT_WINDOW=1000000
+
 # Per-issue effort tiering (dark-launch foundation). Gates the Tier 2 /
 # Heavy triage path. 0 = off (the default): the heavy tier is unavailable
 # and triage falls back to Tier 1, so behavior is unchanged.
