@@ -398,7 +398,7 @@ these fields:
 | `claude_exit_code` | Claude's exit code for the iteration. |
 | `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
 | `verdict` | `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. |
-| `files`, `insertions`, `deletions` | Diff stats — **placeholders (`0`) in this slice**, wired in a later change. |
+| `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. |
 
 ## Links
 
