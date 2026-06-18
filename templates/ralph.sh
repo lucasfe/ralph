@@ -170,7 +170,7 @@ START=$(date +%s)
 # Single source of truth for the run_id (`<session>-<start-epoch>`). Both the
 # per-issue capture and the end-of-run RALPH_CYCLE_EVENT reference this, so the
 # two can never drift apart.
-RALPH_RUN_ID="${RALPH_TMUX_SESSION:-ralph}-${START}"
+RALPH_RUN_ID="${RALPH_RUN_ID:-${RALPH_TMUX_SESSION:-ralph}-${START}}"
 successes=()
 failures=()
 claude_failed=0
