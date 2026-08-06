@@ -8,6 +8,16 @@ INSTALL_CMD="{{INSTALL_CMD}}"
 TEST_CMD="{{TEST_CMD}}"
 LINT_CMD="{{LINT_CMD}}"
 
+# Coding agent Ralph drives. "claude" (default) uses Claude Code; "codex" uses
+# the OpenAI Codex CLI. Unset or unrecognized falls back to "claude". Nothing
+# else in this file changes between agents.
+RALPH_AGENT="{{RALPH_AGENT}}"
+
+# Model id for the Codex agent (ignored when RALPH_AGENT=claude). Leave
+# unset/commented to let Codex use its configured default. Example:
+# RALPH_CODEX_MODEL="gpt-5-codex"
+# RALPH_CODEX_MODEL=""
+
 # Branches. Autodetected from `origin/HEAD` and `git branch -a`.
 MAIN_BRANCH="{{MAIN_BRANCH}}"
 DEV_BRANCH="{{DEV_BRANCH}}"

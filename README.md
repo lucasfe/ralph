@@ -1,10 +1,20 @@
 # @lucasfe/ralph
 
 Ralph is an autonomous loop that picks the next open GitHub issue, asks
-Claude Code to resolve it, opens a pull request, and waits for the merge
+a coding agent to resolve it, opens a pull request, and waits for the merge
 — then moves on to the next one. This package extracts the in-repo Ralph
 scripts into a reusable CLI so any project can opt in with a single
 `npm i -g @lucasfe/ralph` invocation.
+
+By default the coding agent is **Claude Code**. Ralph can also drive the
+**OpenAI Codex** CLI instead — see [Choosing the coding agent](#choosing-the-coding-agent).
+
+> **⚠️ Codex support is experimental.** The Codex path is unit- and
+> stub-tested (registry, stream parsing, invocation argv, auth probe, and
+> template parity all have coverage), but it has **not** been exercised in a
+> live end-to-end run against the real `codex` CLI. Expect rough edges and
+> report anything that misbehaves. Claude Code remains the fully-exercised
+> default.
 
 The full design is captured in [issue #13][prd].
 
@@ -25,8 +35,11 @@ npx @lucasfe/ralph init
 ```
 
 Requirements: Node ≥18, plus a few system tools that `ralph doctor`
-will check for you (`git`, `gh`, `tmux`, `claude`, `jq`, `curl`).
-macOS, Linux, and WSL2 are supported.
+will check for you (`git`, `gh`, `tmux`, `jq`, `curl`) and **one coding-agent
+CLI** — either `claude` (the default) **or** `codex`, depending on which agent
+you configure. Only the selected agent's CLI is required; `ralph doctor`
+validates that one and never asks a Codex-only machine to install `claude` (or
+vice-versa). macOS, Linux, and WSL2 are supported.
 
 ## Quick start
 
@@ -39,12 +52,14 @@ ralph start    # launch the loop in a detached tmux session
 ralph stop     # kill this project's tmux session when you want Ralph to halt
 ```
 
-`ralph init` is non-interactive: it inspects the manifests in your repo
+`ralph init` inspects the manifests in your repo
 (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Gemfile`,
 `composer.json`, lockfiles) and writes a `ralph.config.sh` with the
 right install/test/lint commands for your stack. If nothing matches,
-the values are left empty and Claude is instructed to figure them out
-at runtime.
+the values are left empty and the agent is instructed to figure them out
+at runtime. The stack detection is non-interactive; the only prompt is the
+coding-agent picker (see below), and even that is skipped when a
+`--agent` flag is passed or stdin is not a TTY (it defaults to `claude`).
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
@@ -54,7 +69,8 @@ project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are
 printed by `ralph start`; detach with `Ctrl+B` then `D`, or tail
 per-issue logs in `logs/ralph-issue-*.log`. Each iteration also tees
-Claude's raw stream-json to `logs/ralph-issue-*.jsonl` and appends one
+the agent's raw JSON stream (Claude's `stream-json`, or Codex's
+`codex exec --json` JSONL) to `logs/ralph-issue-*.jsonl` and appends one
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
 [Monitoring data model](#monitoring-data-model)).
 
@@ -155,6 +171,42 @@ prominent unresolved-concerns warning block prepended to the PR body
 listing each blocking finding, so a human knows exactly what still
 needs judgment before merge.
 
+## Choosing the coding agent
+
+Ralph drives one coding-agent CLI per project. The choice is recorded as
+`RALPH_AGENT` in `ralph.config.sh`:
+
+- **`claude`** (default) — Claude Code. Fully exercised; unchanged from
+  earlier releases.
+- **`codex`** — the OpenAI Codex CLI. **Experimental** (see the callout at the
+  top of this README): validated by unit + stub tests, not yet by a live
+  end-to-end run.
+
+Pick the agent at `ralph init` time:
+
+```bash
+ralph init --agent codex     # write RALPH_AGENT="codex"
+ralph init --agent claude    # write RALPH_AGENT="claude" (same as the default)
+ralph init                   # interactive prompt on a TTY, else defaults to claude
+```
+
+When you run `ralph init` in an interactive terminal without `--agent`, it
+prompts `Which coding agent? [claude]/codex:` — a blank answer takes the
+default. An unrecognized value (a typo, a model name, anything not `claude`
+or `codex`) is **not fatal**: Ralph warns, falls back to `claude`, and writes
+the valid fallback into the config so an unattended run is never aborted by a
+typo. The value is case-insensitive and trimmed.
+
+To switch an existing project, edit `RALPH_AGENT` in `ralph.config.sh` by hand
+(or delete the file and re-run `ralph init --agent <name>`). `ralph doctor`
+reports which agent it validated (`Ralph doctor — platform: … — agent: codex`)
+and checks that agent's CLI — Claude needs `claude`; Codex needs `codex`.
+
+Nothing else in `ralph.config.sh` changes between agents. The two agents share
+the same team roles, triage tiers, PR flow, and telemetry; only the
+orchestrator template and the invoked CLI differ. For Codex you can also pin a
+model with `RALPH_CODEX_MODEL` (see [Configuration reference](#configuration-reference)).
+
 ## Scheduling Ralph (macOS launchd)
 
 Beyond the manual `ralph start` flow, Ralph can run on a launchd
@@ -216,7 +268,9 @@ be committed. Re-running `ralph init` never overwrites it.
 
 | Variable              | Default                              | Purpose                                                                 |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
-| `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask Claude. |
+| `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
+| `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
+| `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
 | `TEST_CMD`            | autodetected (e.g. `npm test`)       | Test command run before opening a PR. Empty = skip.                    |
 | `LINT_CMD`            | autodetected (e.g. `npm run lint`)   | Lint command run before opening a PR. Empty = skip.                    |
 | `MAIN_BRANCH`         | from `origin/HEAD`                   | The protected branch (PRs ultimately land here).                       |
@@ -227,11 +281,12 @@ be committed. Re-running `ralph init` never overwrites it.
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
 | `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path. `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. When on, a Tier-2 run adds the explorer fan-out + inline synthesis understand phase before the dev, and a 3-reviewer adversarial-panel verify phase (majority-of-3 to block) before the PR opens. |
-| `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000; default 1,000,000 for the opus family). A non-numeric or `<= 0` value is ignored. |
+| `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (Anthropic: `opus`/`sonnet`/`fable` = 1,000,000, `haiku` = 200,000; OpenAI/Codex: `gpt-5`/`gpt-4.1`/`gpt-4`/`o3`/`o4`/`codex` = 400,000, legacy `gpt-4o` = 128,000). An unknown model resolves to no window (`null` pct). A non-numeric or `<= 0` value is ignored. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph notices the change (sha256 mismatch in
-`.ralph/state.json`) and re-validates the config one-shot via Claude.
+`.ralph/state.json`) and re-validates the config one-shot via the
+selected agent.
 
 ## Notification setup
 
@@ -339,7 +394,19 @@ exact attach / kill commands for your session.
 
 **`ralph doctor` reports a missing required dep.** — Install it with
 the command shown in the output (e.g. `brew install gh` on macOS,
-`apt install gh` on Linux/WSL). Ralph never auto-installs deps.
+`apt install gh` on Linux/WSL). Ralph never auto-installs deps. `doctor`
+checks only the **selected** agent's CLI: on a Codex project it wants
+`codex` (`npm install -g @openai/codex`) and will not ask for `claude`;
+on a Claude project the reverse holds.
+
+**`ralph cycle`/`start` aborts with `codex not authenticated`.** — When
+`RALPH_AGENT=codex`, the preflight runs `codex login status` and keys on
+its **exit code** only. A non-zero exit (or a missing `codex` CLI) blocks
+the run. Log in with `codex login` (or provision the CLI's managed
+credentials) and retry. Managed-credential builds that print
+`Login is not required.` and exit zero count as authenticated. The Claude
+path is unchanged: it still checks for the Claude credentials file and
+reports `claude credentials missing` when absent.
 
 **Issues stuck with the `claude-working` label after a crash.** — The
 next `ralph start` detects orphans and asks whether to clear them and
@@ -402,7 +469,7 @@ raw-output sidecar:
 | Path | Contents |
 | --- | --- |
 | `.ralph/metrics/issues.jsonl` | One appended `RALPH_ISSUE_EVENT <json>` line per iteration. **Append-only** — events accumulate across runs and are never truncated. Maps to the future `issues` table. |
-| `logs/ralph-issue-N.jsonl` | Claude's raw `stream-json` stdout for that issue, tee'd verbatim. Truncated fresh per issue. |
+| `logs/ralph-issue-N.jsonl` | The agent's raw JSON stdout for that issue, tee'd verbatim (Claude's `stream-json`, or Codex's `codex exec --json` JSONL). Truncated fresh per issue. |
 
 Each event line is the tag `RALPH_ISSUE_EVENT ` followed by a JSON object
 with these fields:
@@ -412,28 +479,33 @@ with these fields:
 | `issue_number` | The issue resolved this iteration. |
 | `run_id` | The [join key](#run_id-the-join-key) — ties every issue event from one loop invocation to its run. |
 | `ts` | Event timestamp (epoch milliseconds). |
-| `subtype` | The `result` line's subtype (e.g. `success`), or `null` if absent. |
-| `total_cost_usd` | Claude's reported cost for the iteration. |
+| `agent` | The **resolved** coding agent that produced the event: `claude` or `codex`. A `RALPH_AGENT` typo records the fallback (`claude`), so a misconfiguration stays auditable. |
+| `subtype` | The result subtype (e.g. `success`, `error`), or `null` if absent. |
+| `total_cost_usd` | The agent's reported cost for the iteration. **Codex always reports `0`** — the Codex stream carries no price and Ralph never fabricates one. |
 | `num_turns` | Number of turns in the iteration. |
-| `duration_ms` | Wall-clock duration Claude reports for the iteration. |
-| `usage` | The four raw token counts, broken out: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (each zeroed if absent). |
-| `claude_exit_code` | Claude's exit code for the iteration. |
+| `duration_ms` | Wall-clock duration for the iteration. Claude self-reports it in its `result` line; **Codex's stream carries no duration**, so the loop supplies its own measured wall-clock time (`RALPH_DURATION_MS`). |
+| `usage` | The four raw token counts, broken out: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (each zeroed if absent). **For Codex**, `reasoning_output_tokens` are folded into `output_tokens` (they are billable output and dominate even trivial turns; the raw split stays in the `.jsonl` sidecar), `cached_input_tokens` map to `cache_read_input_tokens`, and `cache_write_input_tokens` map to `cache_creation_input_tokens`. |
+| `claude_exit_code` | The agent's exit code for the iteration. (The field name is kept verbatim for both agents so the schema is unchanged.) |
 | `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
 | `verdict` | `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. |
 | `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. |
-| `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage). `0` when no `message_start` or usage is present. |
-| `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000; default 1,000,000 for the opus family) or from the [`RALPH_CONTEXT_WINDOW`](#configuration-reference) override. |
-| `model` | The model id from the last `message_start`, or `null` if absent. |
-| `context_window` | The resolved context window in tokens — the **same** window that backs `context_end_pct` (single source of truth). Resolves from the model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000) or from the [`RALPH_CONTEXT_WINDOW`](#configuration-reference) override. `null` when the window is unknown. |
+| `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The input side of the **most recent** model request: for Claude, the sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage); for Codex, the same sum taken from the last `turn.completed` usage. `0` when no usage is present. |
+| `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (see [`RALPH_CONTEXT_WINDOW`](#configuration-reference) for the Anthropic + OpenAI/Codex maps) or from the override. |
+| `model` | The resolved model id. For Claude it comes from the last `message_start`. **Codex's stream carries no model id**, so this is the configured [`RALPH_CODEX_MODEL`](#configuration-reference), or `null` when that is unset — Ralph never guesses. |
+| `context_window` | The resolved context window in tokens — the **same** window that backs `context_end_pct` (single source of truth). Resolves from the model id (see [`RALPH_CONTEXT_WINDOW`](#configuration-reference)) or from the override. `null` when the window is unknown (including Codex with no configured model). |
 
-`subtype`, `total_cost_usd`, `num_turns`, `duration_ms`, and `usage` are
-all pulled from the **last** parseable `result` line of the raw
-stream-json; blank, garbage, and non-JSON lines are skipped, and the
-fields default to zero/`null` when no `result` line is present.
-`context_end_tokens`, `context_end_pct`, `model`, and `context_window`
-are pulled from the
-**last** `message_start` event (bare or wrapped in a `stream_event`
-envelope) and degrade to `0`/`null` when none is present.
+Stream parsing is agent-specific but yields the same normalized event
+shape. For **Claude**, `subtype`, `total_cost_usd`, `num_turns`,
+`duration_ms`, and `usage` come from the **last** parseable `result` line,
+while `context_end_tokens`, `context_end_pct`, `model`, and
+`context_window` come from the **last** `message_start` event (bare or
+wrapped in a `stream_event` envelope). For **Codex**, the same fields come
+from the `codex exec --json` JSONL events (`turn.completed` usage,
+`turn.failed`/`error` for the subtype), with cost pinned to `0`, duration
+supplied by the loop, and the model taken from `RALPH_CODEX_MODEL`. Either
+way, blank, garbage, and non-JSON lines are skipped, and every field
+degrades to zero/`null` when its source event is absent — the parse never
+throws.
 
 ### Per-run stream — `RALPH_CYCLE_EVENT` in the heartbeat log
 

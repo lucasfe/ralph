@@ -49,16 +49,44 @@ fi
 
 mkdir -p logs
 
-# --- Claude streaming helper -------------------------------------------------
-# Pretty-prints claude's stream-json stdout via jq into a log file, while
-# keeping claude's stderr OUT of the JSON pipe. Non-JSON stderr lines (auth,
-# credit, rate-limit errors, warnings) are tee'd to the terminal + log instead
-# of being fed to jq (which would fail with "Invalid numeric literal"). jq uses
+# --- Coding-agent resolution (#554) -----------------------------------------
+# Resolve which coding-agent CLI to drive (claude, the default, or codex) and
+# the exact argv to invoke it with. lib/agent-invocation.js is the single source
+# of truth — it reads RALPH_AGENT / RALPH_CODEX_MODEL from the env we just
+# sourced and prints eval-able bash setting RALPH_RESOLVED_AGENT, RALPH_AGENT_CLI
+# and the RALPH_AGENT_ARGS array. For claude the argv is byte-for-byte the flags
+# the loop has always used, so the Claude path is unchanged.
+resolve_agent_invocation() {
+  local sh
+  if sh="$(node "$RALPH_PKG_DIR/lib/agent-invocation.js" 2>/dev/null)"; then
+    eval "$sh"
+  fi
+  # Defensive defaults if resolution somehow failed: fall back to Claude's argv.
+  RALPH_RESOLVED_AGENT="${RALPH_RESOLVED_AGENT:-claude}"
+  RALPH_AGENT_CLI="${RALPH_AGENT_CLI:-claude}"
+  if [ -z "${RALPH_AGENT_ARGS+x}" ]; then
+    RALPH_AGENT_ARGS=(-p --dangerously-skip-permissions --output-format stream-json --verbose --include-partial-messages)
+  fi
+}
+resolve_agent_invocation
+export RALPH_RESOLVED_AGENT
+
+# --- Agent streaming helper --------------------------------------------------
+# Pretty-prints the agent's JSON stdout via jq into a log file, while keeping
+# the agent's stderr OUT of the JSON pipe. Non-JSON stderr lines (auth, credit,
+# rate-limit errors, warnings) are tee'd to the terminal + log instead of being
+# fed to jq (which would fail with "Invalid numeric literal"). jq uses
 # `fromjson?` so any stray non-JSON line on stdout is skipped, not fatal.
 #
-# Args: $1 = prompt-builder script path, $2 = log file path.
-# Sets the global `claude_failed` to "1" when claude exits non-zero, else "0".
-JQ_STREAM_FILTER='fromjson? // empty
+# The Claude filter renders stream-json events; the Codex filter renders
+# `codex exec --json` JSONL events. Both are cosmetic — the authoritative
+# metrics parse happens in Node (capture-issue-event.js via parseAgentStream),
+# never here.
+#
+# Args: $1 = prompt-builder script path, $2 = log file path, $3 = raw jsonl path
+# (optional). Sets the global `claude_failed` to "1" when the agent exits
+# non-zero, else "0" (name kept for the telemetry sidecar's RALPH_CLAUDE_EXIT).
+JQ_STREAM_FILTER_CLAUDE='fromjson? // empty
   | if .type == "assistant" then
       (.message.content[]? | select(.type=="text").text // empty)
     elif .type == "user" then
@@ -67,10 +95,26 @@ JQ_STREAM_FILTER='fromjson? // empty
       "==> result: " + (.subtype // "ok")
     else empty end'
 
-run_claude_stream() {
+JQ_STREAM_FILTER_CODEX='fromjson? // empty
+  | if .type == "item.completed" then
+      (.item
+        | if (.type // "") == "agent_message" or (.type // "") == "assistant_message" then (.text // .message // empty)
+          elif (.type // "") == "command_execution" then ("  $ " + (.command // ""))
+          elif (.type // "") == "error" then ("  ✗ " + (.message // "error"))
+          else empty end)
+    elif .type == "turn.completed" then "==> result: success"
+    elif .type == "turn.failed" then "==> result: error"
+    elif .type == "error" then "==> result: error"
+    else empty end'
+
+run_agent_stream() {
   prompt_script="$1"
   log_file="$2"
   raw_jsonl="${3:-}"
+  local stream_filter="$JQ_STREAM_FILTER_CLAUDE"
+  if [ "${RALPH_RESOLVED_AGENT:-claude}" = "codex" ]; then
+    stream_filter="$JQ_STREAM_FILTER_CODEX"
+  fi
   # Truncate the unique per-issue log ONCE up front, then have BOTH the stderr
   # tee and the stdout tee APPEND. This removes a truncate-vs-append race: if
   # the stdout `tee` opened with O_TRUNC while the stderr `tee -a` was already
@@ -78,28 +122,26 @@ run_claude_stream() {
   # be clobbered, producing the empty/lost failure log this guards against.
   : > "$log_file"
   if [ -n "$raw_jsonl" ]; then
-    # Tee claude's RAW stream-json stdout to "$raw_jsonl" (fresh per issue, so a
-    # plain `tee` truncate is fine) BETWEEN claude and jq. Claude stays pipe
-    # element index 1 so ${PIPESTATUS[1]} exit detection is unaffected
-    # (node|claude|tee|jq|tee → claude still index 1).
+    # Tee the agent's RAW JSON stdout to "$raw_jsonl" (fresh per issue, so a
+    # plain `tee` truncate is fine) BETWEEN the agent and jq. The agent CLI
+    # stays pipe element index 1 so ${PIPESTATUS[1]} exit detection is
+    # unaffected (node|agent|tee|jq|tee → agent still index 1).
     node "$prompt_script" \
-      | claude -p --dangerously-skip-permissions \
-          --output-format stream-json --verbose --include-partial-messages \
+      | "$RALPH_AGENT_CLI" "${RALPH_AGENT_ARGS[@]}" \
           2> >(tee -a "$log_file" >&2) \
       | tee "$raw_jsonl" \
-      | jq -rR --unbuffered "$JQ_STREAM_FILTER" \
+      | jq -rR --unbuffered "$stream_filter" \
       | tee -a "$log_file"
   else
-    # Original pipeline (node|claude|jq|tee) — byte-for-byte unchanged when no
-    # raw path is supplied (e.g. the config-validation call).
+    # No raw path supplied (e.g. the config-validation call) — pipeline is
+    # node|agent|jq|tee, agent still index 1.
     node "$prompt_script" \
-      | claude -p --dangerously-skip-permissions \
-          --output-format stream-json --verbose --include-partial-messages \
+      | "$RALPH_AGENT_CLI" "${RALPH_AGENT_ARGS[@]}" \
           2> >(tee -a "$log_file" >&2) \
-      | jq -rR --unbuffered "$JQ_STREAM_FILTER" \
+      | jq -rR --unbuffered "$stream_filter" \
       | tee -a "$log_file"
   fi
-  # PIPESTATUS[1] is claude's exit code (claude is index 1 in BOTH variants).
+  # PIPESTATUS[1] is the agent's exit code (index 1 in BOTH variants).
   if [ "${PIPESTATUS[1]}" -ne 0 ]; then
     claude_failed=1
   else
@@ -107,8 +149,8 @@ run_claude_stream() {
   fi
 }
 
-run_claude_for_issue() {
-  run_claude_stream "$RALPH_PKG_DIR/lib/build-prompt.js" "logs/ralph-issue-$1.log" "logs/ralph-issue-$1.jsonl"
+run_agent_for_issue() {
+  run_agent_stream "$RALPH_PKG_DIR/lib/build-prompt.js" "logs/ralph-issue-$1.log" "logs/ralph-issue-$1.jsonl"
 }
 # ---------------------------------------------------------------------------
 
@@ -145,7 +187,7 @@ if [ -f ralph.config.sh ]; then
   if [ "$needs_validate" = "yes" ]; then
     echo "==> Validando ralph.config.sh contra os manifestos do projeto..."
     claude_failed=0
-    run_claude_stream "$RALPH_PKG_DIR/lib/build-validate-prompt.js" "logs/ralph-validate.log"
+    run_agent_stream "$RALPH_PKG_DIR/lib/build-validate-prompt.js" "logs/ralph-validate.log"
 
     if [ ! -f .ralph/state.json ]; then
       echo "❌ Validação não produziu .ralph/state.json. Abortando." >&2
@@ -191,14 +233,17 @@ while :; do
   fi
 
   num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
-  echo "==> Iteração para issue #$num ($count restantes)"
+  echo "==> Iteração para issue #$num ($count restantes) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
 
-  # Stream claude's JSON to jq, but keep stderr OUT of the JSON pipe: any
-  # non-JSON line claude prints to stderr (auth/credit/rate-limit errors,
+  # Stream the agent's JSON to jq, but keep stderr OUT of the JSON pipe: any
+  # non-JSON line the agent prints to stderr (auth/credit/rate-limit errors,
   # warnings) used to be merged via `2>&1` and broke jq with "Invalid numeric
   # literal". Route stderr to the per-issue log + terminal instead. jq is also
   # made tolerant of stray non-JSON input as defense-in-depth.
-  run_claude_for_issue "$num"
+  issue_start_ms=$(date +%s000)
+  run_agent_for_issue "$num"
+  issue_end_ms=$(date +%s000)
+  issue_dur_ms=$(( issue_end_ms - issue_start_ms ))
 
   labels=$(gh issue view "$num" --json labels -q '[.labels[].name] | join(",")')
   state=$(gh issue view "$num" --json state -q '.state')
@@ -214,6 +259,9 @@ while :; do
     RALPH_DEV_BRANCH="${DEV_BRANCH:-}" \
     RALPH_RAW_JSONL_PATH="logs/ralph-issue-$num.jsonl" \
     RALPH_STDERR_LOG_PATH="logs/ralph-issue-$num.log" \
+    RALPH_AGENT="${RALPH_RESOLVED_AGENT:-claude}" \
+    RALPH_CODEX_MODEL="${RALPH_CODEX_MODEL:-}" \
+    RALPH_DURATION_MS="$issue_dur_ms" \
     node "$RALPH_PKG_DIR/lib/capture-issue-event.js" || true
 
   if echo ",$labels," | grep -q ",claude-failed,"; then
