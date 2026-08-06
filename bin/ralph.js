@@ -32,9 +32,10 @@ program
   .command('init')
   .description('Initialize Ralph in the current project (config + templates + slash command)')
   .option('--reset-prompt', 'Overwrite an existing PROMPT.md with the package template')
+  .option('--agent <name>', 'Coding agent to configure: claude (default) or codex')
   .action(async (opts) => {
     try {
-      await initCommand({ resetPrompt: Boolean(opts.resetPrompt) })
+      await initCommand({ resetPrompt: Boolean(opts.resetPrompt), agent: opts.agent ?? null })
     } catch (e) {
       if (e instanceof InitAbort) {
         process.exit(e.exitCode ?? 1)

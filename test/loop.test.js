@@ -94,6 +94,7 @@ exit 0
 # just needs to emit a dummy prompt.
 case "$*" in
   *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+  *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
 esac
 echo "PROMPT"
 exit 0

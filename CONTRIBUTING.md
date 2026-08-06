@@ -32,6 +32,31 @@ Three runtime deps (`commander`, `execa`, `picocolors`); tests use
 - Follow strict semver: patch = bug fix, minor = additive feature,
   major = breaking with migration notes added to `CHANGELOG.md`.
 
+## Orchestrator templates: edit both, always
+
+Ralph ships **two** orchestrator templates, one per coding agent:
+
+- `templates/prompt-team.md` — the Claude Code orchestrator.
+- `templates/prompt-team-codex.md` — the Codex orchestrator.
+
+The shared specialist roles (`templates/roles/*.md`) are composed into both via
+the same `{{ROLE_DEV}}` / `{{ROLE_QA}}` / `{{ROLE_REVIEW}}` / `{{ROLE_WRITER}}` /
+`{{ROLE_EXPLORER}}` placeholders, and both consume the same `{{INSTALL_CMD}}`,
+`{{TEST_CMD}}`, branch, merge, and `{{RALPH_HEAVY_TIER}}` variables. Only the
+**orchestrator body** is forked — it describes how each agent delegates (Claude
+Code's subagents vs. Codex's sequential-persona degradation), so the two bodies
+are deliberately not identical.
+
+**When you change one orchestrator template, change the other to match.** Any
+edit to a shared placeholder, a numbered step heading, the `## Absolute
+restrictions` block, or a PR-body section name must land in **both** files.
+`lib/template-parity.test.js` enforces this in CI: it asserts that both
+templates carry the same role placeholders, variables, step headings,
+restriction rules, and PR-body sections, so a one-sided edit fails the suite
+instead of shipping a skewed Codex prompt. The forked orchestrator prose is not
+asserted, so you are free to word each agent's delegation instructions
+differently — just keep the shared structure in lockstep.
+
 ## Manual smoke test (pre-release recipe)
 
 The package is dogfooded against the host repo continuously, but
