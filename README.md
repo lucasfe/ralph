@@ -424,12 +424,14 @@ with these fields:
 | `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage). `0` when no `message_start` or usage is present. |
 | `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000; default 1,000,000 for the opus family) or from the [`RALPH_CONTEXT_WINDOW`](#configuration-reference) override. |
 | `model` | The model id from the last `message_start`, or `null` if absent. |
+| `context_window` | The resolved context window in tokens — the **same** window that backs `context_end_pct` (single source of truth). Resolves from the model id (`opus`/`sonnet`/`fable` = 1,000,000; `haiku` = 200,000) or from the [`RALPH_CONTEXT_WINDOW`](#configuration-reference) override. `null` when the window is unknown. |
 
 `subtype`, `total_cost_usd`, `num_turns`, `duration_ms`, and `usage` are
 all pulled from the **last** parseable `result` line of the raw
 stream-json; blank, garbage, and non-JSON lines are skipped, and the
 fields default to zero/`null` when no `result` line is present.
-`context_end_tokens`, `context_end_pct`, and `model` are pulled from the
+`context_end_tokens`, `context_end_pct`, `model`, and `context_window`
+are pulled from the
 **last** `message_start` event (bare or wrapped in a `stream_event`
 envelope) and degrade to `0`/`null` when none is present.
 
