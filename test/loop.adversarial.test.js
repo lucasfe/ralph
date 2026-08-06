@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { spawnSync } from 'node:child_process'
+import { spawnSync, execFileSync } from 'node:child_process'
 import {
   mkdtempSync,
   rmSync,
@@ -14,6 +14,12 @@ import { join } from 'node:path'
 import { templatePath } from '../lib/paths.js'
 
 const RALPH_TEMPLATE = templatePath('ralph.sh')
+// Resolve the REAL node binary so the stub can delegate agent-invocation.js
+// (the JS→bash bridge) to it; the loop now FAILS FAST if that resolution yields
+// nothing, so the bridge must run for real. build-prompt.js stays an echo.
+const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.execPath)'], {
+  encoding: 'utf8',
+}).trim()
 
 // Adversarial / edge-case companions to test/loop.test.js. These reuse the same
 // stub-on-PATH harness but exercise the corners of the issue #505 fix that the
@@ -116,6 +122,11 @@ exit 0
   writeStub(
     'node',
     `#!/bin/bash
+# The JS→bash agent bridge must run for real (the loop fails fast without it);
+# everything else (build-prompt.js) just needs to emit a dummy prompt.
+case "$*" in
+  *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
+esac
 echo "PROMPT"
 exit 0
 `
@@ -433,6 +444,74 @@ exit 0
     expect(edits, 'claude_failed must have triggered an --add-label claude-failed edit').toMatch(
       /--add-label claude-failed/
     )
+  })
+
+  it('resolves the agent even when the node bridge prints a warning to STDERR (#555)', () => {
+    // Regression: resolve_agent_invocation must capture the bridge's stderr
+    // SEPARATELY so stdout stays pristine for eval. Here the node stub delegates
+    // agent-invocation.js to REAL_NODE (emitting valid RALPH_AGENT_* assignments
+    // on stdout) AND prints a node-style warning to stderr. If stderr were folded
+    // into $sh (the old 2>&1 bug), eval would hit the warning line and die with a
+    // syntax error, RALPH_AGENT_ARGS would never be set, and under `set -u` the
+    // loop would abort with an unbound-variable error. The loop must still drain.
+    writeStub(
+      'node',
+      `#!/bin/bash
+case "$*" in
+  *agent-invocation.js*)
+    "${REAL_NODE}" "$@"
+    echo "(node:12345) ExperimentalWarning: some transitive dep warning" >&2
+    exit 0
+    ;;
+esac
+echo "PROMPT"
+exit 0
+`
+    )
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`
+    )
+    // Count drains after #88 is resolved (CLOSED) so the loop terminates.
+    writeStub(
+      'gh',
+      `#!/bin/bash
+DONE="${join(workdir, 'done88.txt')}"
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  case "$*" in
+    *sort:created-asc*) echo "88"; touch "$DONE"; exit 0 ;;
+    *) [ -f "$DONE" ] && echo "0" || echo "1"; exit 0 ;;
+  esac
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *labels*) echo "" ;;
+    *state*)  echo "CLOSED" ;;
+    *)        echo "" ;;
+  esac
+  exit 0
+fi
+exit 0
+`
+    )
+
+    const res = runLoop()
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
+    expect(res.status).toBe(0)
+    // eval must NOT have choked on the warning line, and set -u must NOT have
+    // tripped on an unset RALPH_AGENT_ARGS.
+    expect(`${res.stdout}\n${res.stderr}`).not.toMatch(
+      /syntax error|unbound variable|RALPH_AGENT_ARGS/,
+    )
+    // The abort branch must NOT have fired despite the stderr noise.
+    expect(res.stderr).not.toMatch(/failed to resolve agent invocation/)
+    // The loop resolved the agent and drained the queue normally.
+    expect(res.stdout).toContain('==> result: success')
+    expect(res.stdout).toContain('Fila vazia, encerrando.')
   })
 
   it('empty queue: exits cleanly with 0 ok / 0 failed when count is "0" immediately', () => {

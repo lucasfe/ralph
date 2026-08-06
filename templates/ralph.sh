@@ -53,20 +53,26 @@ mkdir -p logs
 # Resolve which coding-agent CLI to drive (claude, the default, or codex) and
 # the exact argv to invoke it with. lib/agent-invocation.js is the single source
 # of truth — it reads RALPH_AGENT / RALPH_CODEX_MODEL from the env we just
-# sourced and prints eval-able bash setting RALPH_RESOLVED_AGENT, RALPH_AGENT_CLI
-# and the RALPH_AGENT_ARGS array. For claude the argv is byte-for-byte the flags
-# the loop has always used, so the Claude path is unchanged.
+# sourced and prints eval-able bash setting RALPH_RESOLVED_AGENT, RALPH_AGENT_CLI,
+# the RALPH_AGENT_ARGS array and RALPH_AGENT_STREAM_FILTER. For claude the argv is
+# byte-for-byte the flags the loop has always used, so the Claude path is
+# unchanged. This bash holds NO agent-specific knowledge of its own.
 resolve_agent_invocation() {
-  local sh
-  if sh="$(node "$RALPH_PKG_DIR/lib/agent-invocation.js" 2>/dev/null)"; then
-    eval "$sh"
+  local sh _err
+  # Fail fast: bash has no agent defaults to fall back to. If the node bridge
+  # fails or yields nothing, abort loudly rather than silently guessing.
+  # Capture stderr to a temp file so stdout stays PRISTINE for eval: a node
+  # Deprecation/Experimental warning (or nvm/shim banner) on a SUCCESSFUL run
+  # must never be folded into $sh, or eval would choke on the warning line.
+  _err="$(mktemp)"
+  if ! sh="$(node "$RALPH_PKG_DIR/lib/agent-invocation.js" 2>"$_err")" || [ -z "$sh" ]; then
+    echo "ralph.sh: failed to resolve agent invocation from lib/agent-invocation.js. Aborting." >&2
+    cat "$_err" >&2
+    rm -f "$_err"
+    exit 1
   fi
-  # Defensive defaults if resolution somehow failed: fall back to Claude's argv.
-  RALPH_RESOLVED_AGENT="${RALPH_RESOLVED_AGENT:-claude}"
-  RALPH_AGENT_CLI="${RALPH_AGENT_CLI:-claude}"
-  if [ -z "${RALPH_AGENT_ARGS+x}" ]; then
-    RALPH_AGENT_ARGS=(-p --dangerously-skip-permissions --output-format stream-json --verbose --include-partial-messages)
-  fi
+  rm -f "$_err"
+  eval "$sh"
 }
 resolve_agent_invocation
 export RALPH_RESOLVED_AGENT
@@ -78,43 +84,19 @@ export RALPH_RESOLVED_AGENT
 # fed to jq (which would fail with "Invalid numeric literal"). jq uses
 # `fromjson?` so any stray non-JSON line on stdout is skipped, not fatal.
 #
-# The Claude filter renders stream-json events; the Codex filter renders
-# `codex exec --json` JSONL events. Both are cosmetic — the authoritative
-# metrics parse happens in Node (capture-issue-event.js via parseAgentStream),
-# never here.
+# The jq stream filter is agent-specific and comes from RALPH_AGENT_STREAM_FILTER
+# (resolved from the JS registry via lib/agent-invocation.js), so this bash holds
+# no agent knowledge. The filter is cosmetic — the authoritative metrics parse
+# happens in Node (capture-issue-event.js via parseAgentStream), never here.
 #
 # Args: $1 = prompt-builder script path, $2 = log file path, $3 = raw jsonl path
 # (optional). Sets the global `claude_failed` to "1" when the agent exits
 # non-zero, else "0" (name kept for the telemetry sidecar's RALPH_CLAUDE_EXIT).
-JQ_STREAM_FILTER_CLAUDE='fromjson? // empty
-  | if .type == "assistant" then
-      (.message.content[]? | select(.type=="text").text // empty)
-    elif .type == "user" then
-      (.message.content[]? | select(.type=="tool_result") | "  ↳ tool_result")
-    elif .type == "result" then
-      "==> result: " + (.subtype // "ok")
-    else empty end'
-
-JQ_STREAM_FILTER_CODEX='fromjson? // empty
-  | if .type == "item.completed" then
-      (.item
-        | if (.type // "") == "agent_message" or (.type // "") == "assistant_message" then (.text // .message // empty)
-          elif (.type // "") == "command_execution" then ("  $ " + (.command // ""))
-          elif (.type // "") == "error" then ("  ✗ " + (.message // "error"))
-          else empty end)
-    elif .type == "turn.completed" then "==> result: success"
-    elif .type == "turn.failed" then "==> result: error"
-    elif .type == "error" then "==> result: error"
-    else empty end'
-
 run_agent_stream() {
   prompt_script="$1"
   log_file="$2"
   raw_jsonl="${3:-}"
-  local stream_filter="$JQ_STREAM_FILTER_CLAUDE"
-  if [ "${RALPH_RESOLVED_AGENT:-claude}" = "codex" ]; then
-    stream_filter="$JQ_STREAM_FILTER_CODEX"
-  fi
+  local stream_filter="$RALPH_AGENT_STREAM_FILTER"
   # Truncate the unique per-issue log ONCE up front, then have BOTH the stderr
   # tee and the stdout tee APPEND. This removes a truncate-vs-append race: if
   # the stdout `tee` opened with O_TRUNC while the stderr `tee -a` was already
