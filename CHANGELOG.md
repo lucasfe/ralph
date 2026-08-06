@@ -5,6 +5,16 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.13.0...ralph-v0.14.0) (2026-08-06)
+
+
+### Features
+
+* dev → main rollforward ([35136f4](https://github.com/lucasfe/agenthub/commit/35136f496d6807d12819e73bdbf54583220cc182))
+* **ralph:** agent registry as single source of agent knowledge ([#577](https://github.com/lucasfe/agenthub/issues/577)) ([03fc888](https://github.com/lucasfe/agenthub/commit/03fc888b82e03b4c7ae1ae55c08471cf4ba46e0e))
+* **ralph:** record resolved context_window on per-issue metrics events ([#573](https://github.com/lucasfe/agenthub/issues/573)) ([ed4d73b](https://github.com/lucasfe/agenthub/commit/ed4d73beaffe28b46ae60cfddeb90ef6c30f1fd9))
+* **ralph:** support Codex as an alternative agent alongside Claude Code ([#574](https://github.com/lucasfe/agenthub/issues/574)) ([f3880f3](https://github.com/lucasfe/agenthub/commit/f3880f34a985e7f8401652751bf1aaac9a88a6b5))
+
 ## [0.13.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.12.1...ralph-v0.13.0) (2026-06-18)
 
 
