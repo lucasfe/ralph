@@ -34,28 +34,59 @@ Three runtime deps (`commander`, `execa`, `picocolors`); tests use
 
 ## Orchestrator templates: edit both, always
 
-Ralph ships **two** orchestrator templates, one per coding agent:
+Ralph ships **three** orchestrator templates:
 
-- `templates/prompt-team.md` — the Claude Code orchestrator.
-- `templates/prompt-team-codex.md` — the Codex orchestrator.
+- `templates/prompt-team.md` — the Claude Code orchestrator (GitHub source).
+- `templates/prompt-team-codex.md` — the Codex orchestrator (GitHub source).
+- `templates/prompt-team-folder.md` — the folder-mode orchestrator (#565),
+  selected by `build-prompt.js` when `TASK_SOURCE=folder`. It composes the
+  **same** shared role files as the other two but forks the intake and
+  completion prose: it reads a local task file, moves it `todo → in-progress`,
+  commits straight to `DEV_BRANCH`, and moves the file to `done/` (no PR/merge).
+  It is **not** covered by `template-parity.test.js` (that test asserts only the
+  Claude ↔ Codex pair), so its shared skeleton can drift — keep it in sync by
+  hand when you touch a role placeholder or a numbered step that all templates
+  share.
 
-The shared specialist roles (`templates/roles/*.md`) are composed into both via
+The shared specialist roles (`templates/roles/*.md`) are composed into all via
 the same `{{ROLE_DEV}}` / `{{ROLE_QA}}` / `{{ROLE_REVIEW}}` / `{{ROLE_WRITER}}` /
-`{{ROLE_EXPLORER}}` placeholders, and both consume the same `{{INSTALL_CMD}}`,
+`{{ROLE_EXPLORER}}` placeholders, and all consume the same `{{INSTALL_CMD}}`,
 `{{TEST_CMD}}`, branch, merge, and `{{RALPH_HEAVY_TIER}}` variables. Only the
 **orchestrator body** is forked — it describes how each agent delegates (Claude
-Code's subagents vs. Codex's sequential-persona degradation), so the two bodies
-are deliberately not identical.
+Code's subagents vs. Codex's sequential-persona degradation) and, for the
+folder template, how intake/completion differ from the GitHub flow, so the
+bodies are deliberately not identical.
 
-**When you change one orchestrator template, change the other to match.** Any
+**When you change one orchestrator template, change the others to match.** Any
 edit to a shared placeholder, a numbered step heading, the `## Absolute
-restrictions` block, or a PR-body section name must land in **both** files.
-`lib/template-parity.test.js` enforces this in CI: it asserts that both
-templates carry the same role placeholders, variables, step headings,
-restriction rules, and PR-body sections, so a one-sided edit fails the suite
-instead of shipping a skewed Codex prompt. The forked orchestrator prose is not
-asserted, so you are free to word each agent's delegation instructions
-differently — just keep the shared structure in lockstep.
+restrictions` block, or a PR-body section name must land in **all** the files it
+applies to. `lib/template-parity.test.js` enforces this **for the Claude ↔ Codex
+pair** in CI: it asserts that both GitHub templates carry the same role
+placeholders, variables, step headings, restriction rules, and PR-body sections,
+so a one-sided edit fails the suite instead of shipping a skewed Codex prompt.
+The folder template is **not** in that assertion, so keep it in sync by hand.
+The forked orchestrator prose is not asserted, so you are free to word each
+agent's delegation instructions differently — just keep the shared structure in
+lockstep.
+
+### Codex maturity, sandbox, and network — do not "tighten" these
+
+- **The Codex path is experimental.** It is unit- and stub-tested (registry,
+  stream parsing, invocation argv, auth probe, template parity, and the full
+  bash loop against a stubbed `codex`), but it has **not** been run end-to-end
+  against a live `codex` CLI. The default Claude path is unchanged and fully
+  exercised. Keep the README's experimental callout honest — do not upgrade the
+  claim until a real live run has happened.
+- **The `workspace-write` sandbox is a *partial* boundary.** In design testing
+  it did not block a write to the system temp directory, so the Codex
+  orchestrator's stay-inside-the-project rule — not the sandbox — is what
+  contains a run. The `## Absolute restrictions` note in
+  `prompt-team-codex.md` documents this deliberately; do not delete it.
+- **Network access is required and enabled on purpose.** `codex exec` runs with
+  `sandbox_workspace_write.network_access=true` (see `lib/agent-registry.js`)
+  because the loop must run `gh`, `npm`, and `git push` every iteration.
+  Disabling network access breaks the loop — no PR can be opened or merged. Do
+  not "harden" it away.
 
 ## Manual smoke test (pre-release recipe)
 

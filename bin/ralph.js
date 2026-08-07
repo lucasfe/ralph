@@ -33,9 +33,14 @@ program
   .description('Initialize Ralph in the current project (config + templates + slash command)')
   .option('--reset-prompt', 'Overwrite an existing PROMPT.md with the package template')
   .option('--agent <name>', 'Coding agent to configure: claude (default) or codex')
+  .option('--source <github|folder>', 'Task source: github (default) or folder')
   .action(async (opts) => {
     try {
-      await initCommand({ resetPrompt: Boolean(opts.resetPrompt), agent: opts.agent ?? null })
+      await initCommand({
+        resetPrompt: Boolean(opts.resetPrompt),
+        agent: opts.agent ?? null,
+        source: opts.source ?? null,
+      })
     } catch (e) {
       if (e instanceof InitAbort) {
         process.exit(e.exitCode ?? 1)

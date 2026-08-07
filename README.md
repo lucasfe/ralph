@@ -9,12 +9,18 @@ scripts into a reusable CLI so any project can opt in with a single
 By default the coding agent is **Claude Code**. Ralph can also drive the
 **OpenAI Codex** CLI instead — see [Choosing the coding agent](#choosing-the-coding-agent).
 
+By default Ralph draws its work from **GitHub issues** (the flow described
+above). It can instead pull tasks from a **local `.ralph/tasks/` folder** with
+no GitHub remote, auth, or `gh` dependency — committing straight to your dev
+branch with no PR. See [Choosing the task source](#choosing-the-task-source).
+
 > **⚠️ Codex support is experimental.** The Codex path is unit- and
-> stub-tested (registry, stream parsing, invocation argv, auth probe, and
-> template parity all have coverage), but it has **not** been exercised in a
-> live end-to-end run against the real `codex` CLI. Expect rough edges and
-> report anything that misbehaves. Claude Code remains the fully-exercised
-> default.
+> stub-tested (registry, stream parsing, invocation argv, auth probe, template
+> parity, and the full bash loop driven against a stubbed `codex` emitting the
+> real `codex exec --json` event shape all have coverage), but it has **not**
+> been exercised in a live end-to-end run against the real `codex` CLI. Expect
+> rough edges and report anything that misbehaves. Claude Code remains the
+> fully-exercised default.
 
 The full design is captured in [issue #13][prd].
 
@@ -39,7 +45,11 @@ will check for you (`git`, `gh`, `tmux`, `jq`, `curl`) and **one coding-agent
 CLI** — either `claude` (the default) **or** `codex`, depending on which agent
 you configure. Only the selected agent's CLI is required; `ralph doctor`
 validates that one and never asks a Codex-only machine to install `claude` (or
-vice-versa). macOS, Linux, and WSL2 are supported.
+vice-versa). `gh` is required **only** for the default GitHub task source — in
+folder mode (`TASK_SOURCE=folder`) `ralph doctor` skips it, so a repo with no
+GitHub remote needs only `git`, the agent CLI, and `jq` (see
+[Choosing the task source](#choosing-the-task-source)). macOS, Linux, and WSL2
+are supported.
 
 ## Quick start
 
@@ -190,15 +200,25 @@ ralph init --agent claude    # write RALPH_AGENT="claude" (same as the default)
 ralph init                   # interactive prompt on a TTY, else defaults to claude
 ```
 
-When you run `ralph init` in an interactive terminal without `--agent`, it
-prompts `Which coding agent? [claude]/codex:` — a blank answer takes the
-default. An unrecognized value (a typo, a model name, anything not `claude`
-or `codex`) is **not fatal**: Ralph warns, falls back to `claude`, and writes
-the valid fallback into the config so an unattended run is never aborted by a
-typo. The value is case-insensitive and trimmed.
+The `--agent` value is case-insensitive and trimmed, and it is **validated
+before anything is written**: an invalid value (a typo, a model name, anything
+that is not `claude` or `codex`) is **rejected** with
+`❌ Unknown agent '<x>'. Valid agents: claude, codex.` and a nonzero exit, so a
+mistyped flag never silently falls back to `claude`.
+
+When you run `ralph init` in an interactive terminal **without** `--agent`, it
+prompts `Use Codex instead of Claude Code? [y/N]:` — answer `y`/`yes` for
+`codex`; a blank answer or anything else keeps the default `claude`. This
+prompt path never aborts: a stray keystroke just lands on the safe default. When
+stdin is **not** a TTY and no flag is passed, `ralph init` skips the prompt and
+defaults to `claude` silently, so an unattended run is never blocked.
 
 To switch an existing project, edit `RALPH_AGENT` in `ralph.config.sh` by hand
-(or delete the file and re-run `ralph init --agent <name>`). `ralph doctor`
+(or delete the file and re-run `ralph init --agent <name>`). The next
+`ralph start` detects that the resolved agent no longer matches the one recorded
+in `.ralph/state.json` and re-runs config validation once under the new agent —
+so the switch self-heals even though the rest of the config is unchanged.
+`ralph doctor`
 reports which agent it validated (`Ralph doctor — platform: … — agent: codex`)
 and checks that agent's CLI — Claude needs `claude`; Codex needs `codex`.
 
@@ -206,6 +226,141 @@ Nothing else in `ralph.config.sh` changes between agents. The two agents share
 the same team roles, triage tiers, PR flow, and telemetry; only the
 orchestrator template and the invoked CLI differ. For Codex you can also pin a
 model with `RALPH_CODEX_MODEL` (see [Configuration reference](#configuration-reference)).
+
+### Codex sandbox and network access
+
+Ralph runs `codex exec` with a **`workspace-write` sandbox** and network access
+left on (`sandbox_workspace_write.network_access=true`), with approvals disabled
+so the unattended loop never blocks on a prompt.
+
+- **The sandbox is a *partial* boundary, not a substitute for the prompt's
+  stay-inside-the-project rule.** During design the `workspace-write` sandbox did
+  **not** prevent a write to the system temp directory. Treat it as defense in
+  depth, not containment: the orchestrator's "never touch files outside the
+  project root" instruction — not the sandbox — is what keeps a run contained.
+  Do not over-trust the sandbox.
+- **Network access is mandatory.** Ralph's loop drives `gh`, `npm`, and
+  `git push` on every iteration, so with network access disabled those commands
+  fail and no PR can be opened or merged. This is why the Codex sandbox is
+  configured with network access enabled; if you tighten it, the loop stops
+  working. (Claude Code runs unsandboxed and likewise needs network — the
+  requirement is not Codex-specific.)
+
+## Choosing the task source
+
+Ralph draws its work from one **task source** per project, recorded as
+`TASK_SOURCE` in `ralph.config.sh`:
+
+- **`github`** (default) — today's behavior, unchanged. Ralph resolves open
+  GitHub issues via `gh`, opens a PR per issue, and waits for the merge.
+- **`folder`** — a fully-local mode. Tasks live as numbered markdown files under
+  a gitignored `.ralph/tasks/` tree whose directories encode status. Ralph
+  drains an autonomous queue, does the work, commits **directly to the dev
+  branch**, and moves the task file to a terminal directory. No PRs, no
+  auto-merge, and no `gh` dependency — folder mode needs only `git`, the agent
+  CLI, and `jq`.
+
+Pick the source at `ralph init` time:
+
+```bash
+ralph init --source folder    # write TASK_SOURCE="folder"
+ralph init --source github    # write TASK_SOURCE="github" (same as the default)
+ralph init                    # interactive prompt on a TTY, else defaults to github
+```
+
+The `--source` value is case-insensitive and trimmed, and it is **validated
+before anything is written**: an invalid value is **rejected** with
+`❌ Unknown task source '<x>'. Valid sources: github, folder.` and a nonzero
+exit, so a mistyped flag never silently falls back.
+
+When you run `ralph init` in an interactive terminal **without** `--source`, it
+prompts `Draw tasks from a local .ralph/tasks/ folder instead of GitHub? [y/N]:`
+— answer `y`/`yes` for `folder`; a blank answer or anything else keeps the
+default `github`. When stdin is **not** a TTY and no flag is passed, `ralph
+init` skips the prompt and defaults to `github` silently, so existing
+automation keeps working unchanged.
+
+To switch an existing project, edit `TASK_SOURCE` in `ralph.config.sh` by hand.
+The bash loop, the prompt builder, and `ralph doctor`/`cycle` preflight all read
+this one value, so the loop and prompt consistently honor it on every run.
+
+### Folder-mode layout
+
+In folder mode, `ralph init` scaffolds the `.ralph/tasks/` tree (empty
+directories only — no README or example task). The tree separates an autonomous
+lane (`afk`) from a human-in-the-loop parking lot (`hitl`):
+
+```
+.ralph/tasks/
+  afk/todo/           # queued — Ralph picks the lowest-numbered file here
+  afk/in-progress/    # the task Ralph is currently working
+  afk/done/           # resolved successfully
+  afk/failed/         # failed, crashed, or left unfinished
+  hitl/todo/          # staging only — Ralph NEVER auto-picks from here
+```
+
+Ralph's autonomous loop only ever picks from `afk/todo/`. The `hitl` lane is a
+human-only parking lot for tasks you are not ready to release to the robot; you
+activate a task by **moving its file** `hitl/todo → afk/todo` (there is no
+command for this — it is a plain file move). The whole `.ralph/tasks/` tree is
+gitignored, so task files and their status moves never pollute your work
+commits; the loop also `mkdir -p`s any missing status directory before use, so a
+partial or freshly-cloned tree never crashes a run.
+
+### Task-file format
+
+Each task is a numbered markdown file (e.g. `001-fix-login.md`). The **leading
+integer is the task's stable identity** — it drives the branch/log/telemetry
+keys (analogous to today's `issue-N`) and stays constant as the file moves
+between status directories. The file is YAML-ish frontmatter (`title`, optional
+`labels`) delimited by `---`, followed by a markdown body:
+
+```markdown
+---
+title: Fix login redirect loop
+labels: bug, auth
+---
+
+When a session expires mid-request the app redirects to `/login` in a loop.
+Reproduce by ... and fix so the user lands on the originally requested page.
+```
+
+The `title` and body map 1:1 onto a GitHub issue's title and body, so the
+prompt fills the same way regardless of source. `labels` accepts a comma list
+(`bug, auth`) or a bracketed list (`[bug, auth]`).
+
+**Numbering rule** (a spec for a future task-authoring skill; the skill itself
+is out of scope): the next number is `max(N) + 1` scanned across **all**
+directories in **both** lanes, so a number is never reused — even by a task
+already in `done/`, `failed/`, or the `hitl` parking lot.
+
+### How Ralph works a folder task
+
+Each iteration Ralph picks the lowest-numbered file in `afk/todo/` (the folder
+analog of GitHub's `sort:created-asc`), then runs the same team flow described
+in [How Ralph resolves issues](#how-ralph-resolves-issues) — only the intake and
+completion differ:
+
+- The agent moves the file `todo → in-progress` when it starts, resolves the
+  task, commits directly to `DEV_BRANCH` (no branch, no PR, no merge), and moves
+  the file to `done/` on success.
+- The bash loop owns the **failure sweep**: on a non-zero exit, a file left in
+  `in-progress/`, or a no-op (the agent exited 0 but left the file in `todo/`),
+  bash moves the task to `failed/` so the queue always advances and no task is
+  silently lost.
+- The **zero-progress guard** still applies: if the same task is re-selected on
+  consecutive iterations with no state change, Ralph stops rather than spin
+  forever.
+
+Per-task telemetry works exactly as in GitHub mode: the same
+`.ralph/metrics/issues.jsonl` stream and daily heartbeat rollup serve both
+sources, keyed on the task id, with the terminal directory (`done`/`failed`) as
+the outcome and the frontmatter labels recorded (see
+[Monitoring data model](#monitoring-data-model)).
+
+> **Accepted tradeoff:** committing straight to the dev branch means folder mode
+> has no per-task rollback boundary — a bad autonomous commit lands directly on
+> `DEV_BRANCH`.
 
 ## Scheduling Ralph (macOS launchd)
 
@@ -270,6 +425,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
+| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs) or `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`). Unset/unrecognized falls back to `github`. Set by `ralph init --source <name>` / the interactive picker. See [Choosing the task source](#choosing-the-task-source). |
 | `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
 | `TEST_CMD`            | autodetected (e.g. `npm test`)       | Test command run before opening a PR. Empty = skip.                    |
 | `LINT_CMD`            | autodetected (e.g. `npm run lint`)   | Lint command run before opening a PR. Empty = skip.                    |
@@ -284,9 +440,16 @@ be committed. Re-running `ralph init` never overwrites it.
 | `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (Anthropic: `opus`/`sonnet`/`fable` = 1,000,000, `haiku` = 200,000; OpenAI/Codex: `gpt-5`/`gpt-4.1`/`gpt-4`/`o3`/`o4`/`codex` = 400,000, legacy `gpt-4o` = 128,000). An unknown model resolves to no window (`null` pct). A non-numeric or `<= 0` value is ignored. |
 
 The config is plain bash; edit it in any editor. On the next
-`ralph start` Ralph notices the change (sha256 mismatch in
-`.ralph/state.json`) and re-validates the config one-shot via the
-selected agent.
+`ralph start` Ralph re-validates the config one-shot via the selected
+agent whenever any of these differ from what `.ralph/state.json`
+recorded on the last validation:
+
+- the sha256 of `ralph.config.sh` (you edited the config),
+- the installed `@lucasfe/ralph` version, or
+- the resolved coding agent — `RALPH_AGENT` from `ralph.config.sh`, or
+  an override via the `RALPH_AGENT` env var. Switching agents re-checks
+  the config under the agent that will actually run it (so a Codex-only
+  machine can bootstrap), even when the config bytes are unchanged.
 
 ## Notification setup
 
@@ -412,7 +575,7 @@ reports `claude credentials missing` when absent.
 next `ralph start` detects orphans and asks whether to clear them and
 reprocess. Answer `y` to re-queue the issues.
 
-**Reset Claude's understanding of the config.** — Delete
+**Reset the agent's understanding of the config.** — Delete
 `.ralph/state.json` (or the whole `.ralph/` directory) and run
 `ralph start` again. Lazy validation re-runs and rewrites the state
 based on the current `ralph.config.sh` and project manifests.
