@@ -191,12 +191,18 @@ ralph init --agent claude    # write RALPH_AGENT="claude" (same as the default)
 ralph init                   # interactive prompt on a TTY, else defaults to claude
 ```
 
-When you run `ralph init` in an interactive terminal without `--agent`, it
-prompts `Which coding agent? [claude]/codex:` — a blank answer takes the
-default. An unrecognized value (a typo, a model name, anything not `claude`
-or `codex`) is **not fatal**: Ralph warns, falls back to `claude`, and writes
-the valid fallback into the config so an unattended run is never aborted by a
-typo. The value is case-insensitive and trimmed.
+The `--agent` value is case-insensitive and trimmed, and it is **validated
+before anything is written**: an invalid value (a typo, a model name, anything
+that is not `claude` or `codex`) is **rejected** with
+`❌ Unknown agent '<x>'. Valid agents: claude, codex.` and a nonzero exit, so a
+mistyped flag never silently falls back to `claude`.
+
+When you run `ralph init` in an interactive terminal **without** `--agent`, it
+prompts `Use Codex instead of Claude Code? [y/N]:` — answer `y`/`yes` for
+`codex`; a blank answer or anything else keeps the default `claude`. This
+prompt path never aborts: a stray keystroke just lands on the safe default. When
+stdin is **not** a TTY and no flag is passed, `ralph init` skips the prompt and
+defaults to `claude` silently, so an unattended run is never blocked.
 
 To switch an existing project, edit `RALPH_AGENT` in `ralph.config.sh` by hand
 (or delete the file and re-run `ralph init --agent <name>`). `ralph doctor`
