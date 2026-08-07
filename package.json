@@ -1,6 +1,6 @@
 {
   "name": "@lucasfe/ralph",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Ralph — autonomous GitHub issue resolution loop, packaged as a CLI.",
   "repository": {
     "type": "git",

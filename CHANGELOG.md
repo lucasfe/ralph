@@ -5,6 +5,16 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.14.0...ralph-v0.15.0) (2026-08-07)
+
+
+### Features
+
+* dev → main rollforward ([28f479b](https://github.com/lucasfe/agenthub/commit/28f479b449745c2d59ee924cfe6acc7f37cdfae0))
+* **ralph:** agent selection in ralph init (flag, TTY prompt, non-interactive default) ([#588](https://github.com/lucasfe/agenthub/issues/588)) ([a22a7d5](https://github.com/lucasfe/agenthub/commit/a22a7d55654da452598902e16aafc08953fe16c7))
+* **ralph:** configurable task source — GitHub issues or local folder ([#597](https://github.com/lucasfe/agenthub/issues/597)) ([8e7b90c](https://github.com/lucasfe/agenthub/commit/8e7b90cc3fad12589fd489f71a0eeded6f1b5d93))
+* **ralph:** run config validation through the selected agent ([#591](https://github.com/lucasfe/agenthub/issues/591)) ([0789708](https://github.com/lucasfe/agenthub/commit/0789708bc10c4db271c99b627ad4c46c33cb7b81))
+
 ## [0.14.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.13.0...ralph-v0.14.0) (2026-08-06)
 
 
