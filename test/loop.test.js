@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { spawnSync, execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, chmodSync, existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { templatePath } from '../lib/paths.js'
@@ -13,6 +14,18 @@ const RALPH_TEMPLATE = templatePath('ralph.sh')
 const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.execPath)'], {
   encoding: 'utf8',
 }).trim()
+
+// Resolve the REAL jq binary. The validation-block tests below exercise the
+// `needs_validate` decision, which parses .ralph/state.json fields
+// (.config_hash / .ralph_version / .agent) via jq — the default jq stub only
+// emulates the streaming filter, so those tests delegate to the real jq. If jq
+// is unavailable the validation tests are skipped (ralph itself requires jq).
+let REAL_JQ = ''
+try {
+  REAL_JQ = execFileSync('bash', ['-c', 'command -v jq'], { encoding: 'utf8' }).trim()
+} catch {
+  REAL_JQ = ''
+}
 
 // These integration tests execute templates/ralph.sh's main loop against
 // stubbed external commands (git, gh, claude, jq, node) placed on a PATH we
@@ -29,7 +42,7 @@ function writeStub(name, body) {
   chmodSync(p, 0o755)
 }
 
-function runLoop({ timeout = 15000, once = false } = {}) {
+function runLoop({ timeout = 15000, once = false, extraEnv = {} } = {}) {
   // Prepend our stub bin to PATH; keep the real bash + coreutils available.
   const env = {
     ...process.env,
@@ -38,6 +51,7 @@ function runLoop({ timeout = 15000, once = false } = {}) {
     // Ensure no real notifications fire.
     CALLMEBOT_KEY: '',
     WHATSAPP_PHONE: '',
+    ...extraEnv,
   }
   const args = once ? [RALPH_TEMPLATE, '--once'] : [RALPH_TEMPLATE]
   return spawnSync('bash', args, {
@@ -551,4 +565,319 @@ exit 0
       `expected NO RALPH_CYCLE_EVENT in once mode, got:\n${cycleEvents.join('\n')}`,
     ).toBe(0)
   })
+})
+
+// ---------------------------------------------------------------------------
+// Issue #562 — lazy config validation runs through the CONFIGURED agent, and a
+// change of agent (even via RALPH_AGENT env, which doesn't alter config_hash)
+// triggers a fresh validation pass. These tests drive the validation block at
+// the top of ralph.sh, which the other suites deliberately skip by not
+// creating ralph.config.sh. Here we DO create it and pre-seed .ralph/state.json
+// with a chosen (agent, config_hash, ralph_version) so we can control the
+// needs_validate decision precisely.
+// ---------------------------------------------------------------------------
+describe('ralph.sh lazy validation — agent-aware revalidation (#562)', () => {
+  // Package dir + version so we can seed a state.json whose ralph_version
+  // MATCHES what the script computes (via `node -p require(pkg).version`),
+  // isolating the AGENT trigger from the version trigger.
+  const PKG_DIR = join(RALPH_TEMPLATE, '..', '..')
+  const PKG_VERSION = JSON.parse(readFileSync(join(PKG_DIR, 'package.json'), 'utf8')).version
+
+  const CONFIG_CONTENT = 'INSTALL_CMD="npm ci"\nTEST_CMD="npm test"\n'
+  const CONFIG_HASH = createHash('sha256').update(CONFIG_CONTENT).digest('hex')
+
+  // A complete state.json so lib/finalize-state.js (run for real) is satisfied.
+  function seedState({ agent, configHash = CONFIG_HASH, ralphVersion = PKG_VERSION }) {
+    const state = {
+      validated_at: '2026-08-06T00:00:00Z',
+      detected_stack: 'npm',
+      notes: 'seeded',
+      last_seen_release: '',
+      config_hash: configHash,
+      ralph_version: ralphVersion,
+    }
+    if (agent !== undefined) state.agent = agent
+    writeFileSync(join(workdir, '.ralph', 'state.json'), JSON.stringify(state))
+  }
+
+  // Stubs tailored for the validation block: real jq (to parse state.json),
+  // real node for the version query + the JS bridges (agent-invocation.js,
+  // finalize-state.js, capture-issue-event.js), an empty gh queue so the main
+  // loop exits immediately after validation, and a claude stub that emits valid
+  // JSON. The validation prompt builders (build-validate-prompt.js) just echo.
+  function seedValidationStubs() {
+    writeStub(
+      'node',
+      `#!/bin/bash
+case "$*" in
+  *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+  *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
+  *finalize-state.js*) exec "${REAL_NODE}" "$@" ;;
+  *package.json*) exec "${REAL_NODE}" "$@" ;;
+esac
+echo "PROMPT"
+exit 0
+`
+    )
+    writeStub('jq', `#!/bin/bash\nexec "${REAL_JQ}" "$@"\n`)
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`
+    )
+    // Empty queue: the count query returns 0, so the loop prints "Fila vazia"
+    // and exits right after validation.
+    writeStub(
+      'gh',
+      `#!/bin/bash
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  echo "0"
+  exit 0
+fi
+exit 0
+`
+    )
+    writeFileSync(join(workdir, 'ralph.config.sh'), CONFIG_CONTENT)
+  }
+
+  // A validation-agent stub that behaves like a REAL agent: it rewrites
+  // .ralph/state.json with the required fields (validated_at, detected_stack,
+  // notes, last_seen_release) so the post-validation existence check passes and
+  // finalize-state.js (run for real) can record the resolved agent + hash +
+  // version on top. `cli` picks which CLI name the stub is installed as
+  // (claude | codex) so a test can prove the validation pass went through the
+  // agent it expected; `marker` is a file the stub touches so a test can assert
+  // the CLI actually ran (or, on a skip, that it did NOT).
+  function writeValidatingAgentStub(cli, marker) {
+    writeStub(
+      cli,
+      `#!/bin/bash
+cat > /dev/null
+mkdir -p .ralph
+cat > .ralph/state.json <<'JSON'
+{"validated_at":"2026-08-06T00:00:00Z","detected_stack":"npm","notes":"stub-validated","last_seen_release":""}
+JSON
+touch "${marker}"
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`,
+    )
+  }
+
+  it.skipIf(!REAL_JQ)(
+    'revalidates when the stored agent differs from the resolved agent (hash+version match)',
+    () => {
+      seedValidationStubs()
+      // Resolved agent is claude (RALPH_AGENT unset), but state records codex →
+      // the config must be re-checked under the agent that will actually run it.
+      seedState({ agent: 'codex' })
+
+      const res = runLoop({ timeout: 20000 })
+      expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+      expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+      // The validation pass ran: banner printed and its log was produced.
+      expect(res.stdout).toContain('Validando ralph.config.sh')
+      expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(true)
+      // Queue then drains cleanly.
+      expect(res.stdout).toContain('Fila vazia, encerrando.')
+    },
+  )
+
+  it.skipIf(!REAL_JQ)(
+    'skips validation when stored agent matches and hash+version match',
+    () => {
+      seedValidationStubs()
+      // Resolved agent is claude and state already records claude with a matching
+      // hash + version → nothing changed, so NO revalidation.
+      seedState({ agent: 'claude' })
+
+      const res = runLoop({ timeout: 20000 })
+      expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+      expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+      // Validation must NOT run.
+      expect(res.stdout).not.toContain('Validando ralph.config.sh')
+      expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(false)
+      expect(res.stdout).toContain('Fila vazia, encerrando.')
+    },
+  )
+
+  it.skipIf(!REAL_JQ)(
+    'self-heals a legacy state.json with no agent field (one revalidation)',
+    () => {
+      seedValidationStubs()
+      // Pre-existing state written before agents were recorded: no `agent` key.
+      // stored_agent resolves to "" which differs from "claude" → one
+      // self-healing revalidation.
+      seedState({ agent: undefined })
+
+      const res = runLoop({ timeout: 20000 })
+      expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+      expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+      expect(res.stdout).toContain('Validando ralph.config.sh')
+      expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(true)
+      // finalize-state.js (run for real) records the resolved agent, so the
+      // healed state now carries agent: "claude".
+      const healed = JSON.parse(readFileSync(join(workdir, '.ralph', 'state.json'), 'utf8'))
+      expect(healed.agent).toBe('claude')
+    },
+  )
+
+  // -------------------------------------------------------------------------
+  // QA augmentation (#562) — edge/adversarial paths the dev's 3 tests didn't
+  // pin: a corrupt state.json, the codex-only bootstrap headline story, and the
+  // anti-churn round-trip (a second run must not re-validate).
+  // -------------------------------------------------------------------------
+
+  it.skipIf(!REAL_JQ)(
+    'QA: adversarial — a malformed (non-JSON) state.json triggers exactly one self-healing revalidation',
+    () => {
+      seedValidationStubs()
+      // Corrupt state.json: NOT valid JSON. `jq -r '.agent // ""'` errors, but
+      // the `2>/dev/null || echo ""` guard yields stored_agent="" (and the hash
+      // /version reads likewise fail-safe to ""), so needs_validate flips to yes
+      // — the safe outcome: never trust a garbage state, re-validate. Install a
+      // real-behaving claude stub so the pass can rewrite a VALID state.json;
+      // otherwise finalize-state.js would read garbage and abort.
+      const marker = join(workdir, 'claude-ran.marker')
+      writeValidatingAgentStub('claude', marker)
+      writeFileSync(join(workdir, '.ralph', 'state.json'), 'this is NOT json {{{ ,,, ]]]')
+
+      const res = runLoop({ timeout: 20000 })
+      expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+      expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+      // Revalidation fired (safe self-heal), and it went through the agent CLI.
+      expect(res.stdout).toContain('Validando ralph.config.sh')
+      expect(existsSync(marker), 'validation pass must have invoked the agent CLI').toBe(true)
+      expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(true)
+      // The garbage was replaced with a well-formed, finalized state.json.
+      const healed = JSON.parse(readFileSync(join(workdir, '.ralph', 'state.json'), 'utf8'))
+      expect(healed.agent).toBe('claude')
+      expect(healed.config_hash).toBe(CONFIG_HASH)
+    },
+  )
+
+  it.skipIf(!REAL_JQ)(
+    'QA: codex-only bootstrap — no state.json, resolved agent=codex → validation runs through the CODEX CLI and records agent:"codex"',
+    () => {
+      seedValidationStubs()
+      // Headline user story: a fresh machine whose agent is codex, with NO prior
+      // state. The absent-state.json branch must run validation, and it must
+      // drive the CODEX cli — not unconditionally claude. Prove the codex stub
+      // ran and the claude stub did NOT.
+      rmSync(join(workdir, '.ralph', 'state.json'), { force: true })
+      const codexMarker = join(workdir, 'codex-ran.marker')
+      const claudeMarker = join(workdir, 'claude-ran.marker')
+      writeValidatingAgentStub('codex', codexMarker)
+      writeValidatingAgentStub('claude', claudeMarker)
+
+      const res = runLoop({ timeout: 20000, extraEnv: { RALPH_AGENT: 'codex' } })
+      expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+      expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+      expect(res.stdout).toContain('Validando ralph.config.sh')
+      // The validation pass went through CODEX, not Claude.
+      expect(existsSync(codexMarker), 'validation must run through the codex CLI').toBe(true)
+      expect(existsSync(claudeMarker), 'claude CLI must NOT be invoked when agent=codex').toBe(false)
+      // finalize-state.js records the resolved agent so state now carries codex.
+      const state = JSON.parse(readFileSync(join(workdir, '.ralph', 'state.json'), 'utf8'))
+      expect(state.agent).toBe('codex')
+    },
+  )
+
+  it.skipIf(!REAL_JQ)(
+    'QA: anti-churn — after a codex run records agent:"codex", a second codex run with matching hash/version SKIPS validation',
+    () => {
+      seedValidationStubs()
+      // Round-trip: run once (bootstrap) so finalize records agent=codex + the
+      // real config_hash + ralph_version. Then run AGAIN with the same resolved
+      // agent and unchanged config — the loop must NOT re-validate, or it would
+      // churn forever every cycle. This is the critical no-infinite-revalidation
+      // property implied by, but not directly asserted in, the "skips" test.
+      rmSync(join(workdir, '.ralph', 'state.json'), { force: true })
+      const codexMarker = join(workdir, 'codex-ran.marker')
+      writeValidatingAgentStub('codex', codexMarker)
+
+      // --- Run 1: bootstrap. Validation runs and produces a finalized state. ---
+      const res1 = runLoop({ timeout: 20000, extraEnv: { RALPH_AGENT: 'codex' } })
+      expect(res1.signal, `run1 hung. stdout:\n${res1.stdout}\nstderr:\n${res1.stderr}`).toBeNull()
+      expect(res1.status, `run1 stderr:\n${res1.stderr}`).toBe(0)
+      expect(res1.stdout).toContain('Validando ralph.config.sh')
+      const state1 = JSON.parse(readFileSync(join(workdir, '.ralph', 'state.json'), 'utf8'))
+      expect(state1.agent).toBe('codex')
+
+      // Reset the observable side effects so run 2 starts clean.
+      rmSync(codexMarker, { force: true })
+      rmSync(join(workdir, 'logs', 'ralph-validate.log'), { force: true })
+
+      // --- Run 2: same agent, unchanged config → must SKIP validation. --------
+      const res2 = runLoop({ timeout: 20000, extraEnv: { RALPH_AGENT: 'codex' } })
+      expect(res2.signal, `run2 hung. stdout:\n${res2.stdout}\nstderr:\n${res2.stderr}`).toBeNull()
+      expect(res2.status, `run2 stderr:\n${res2.stderr}`).toBe(0)
+
+      expect(res2.stdout, 'second run must not re-validate (anti-churn)').not.toContain(
+        'Validando ralph.config.sh',
+      )
+      expect(existsSync(codexMarker), 'agent CLI must not run for validation on the second pass').toBe(
+        false,
+      )
+      expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(false)
+      expect(res2.stdout).toContain('Fila vazia, encerrando.')
+    },
+  )
+
+  it.skipIf(!REAL_JQ)(
+    'QA: defensive default — an EMPTY RALPH_RESOLVED_AGENT collapses to "claude" and does NOT spuriously revalidate a claude-recorded state',
+    () => {
+      seedValidationStubs()
+      // Pin the `${RALPH_RESOLVED_AGENT:-claude}` bash default in the compare.
+      // Override the agent-invocation bridge so it emits an EMPTY
+      // RALPH_RESOLVED_AGENT (simulating a resolution that yields no explicit
+      // agent) while still giving the loop a working claude CLI/argv. State
+      // records agent:"claude"; the default must resolve the empty value to
+      // "claude" == stored "claude" → NO revalidation. A missing default here
+      // would make "" != "claude" and revalidate on every run.
+      const claudeMarker = join(workdir, 'claude-ran.marker')
+      writeValidatingAgentStub('claude', claudeMarker)
+      writeStub(
+        'node',
+        `#!/bin/bash
+case "$*" in
+  *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+  *finalize-state.js*) exec "${REAL_NODE}" "$@" ;;
+  *package.json*) exec "${REAL_NODE}" "$@" ;;
+  *agent-invocation.js*)
+    # Emit a working claude invocation but with an EMPTY resolved-agent name.
+    printf "RALPH_RESOLVED_AGENT=''\\n"
+    printf "RALPH_AGENT_CLI='claude'\\n"
+    printf "RALPH_AGENT_ARGS=('-p')\\n"
+    printf "RALPH_AGENT_STREAM_FILTER='.'\\n"
+    exit 0
+    ;;
+esac
+echo "PROMPT"
+exit 0
+`,
+      )
+      seedState({ agent: 'claude' })
+
+      const res = runLoop({ timeout: 20000 })
+      expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+      expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+      // The default resolved empty→claude, matching the stored agent: no re-check.
+      expect(res.stdout, 'empty resolved-agent must default to claude and skip').not.toContain(
+        'Validando ralph.config.sh',
+      )
+      expect(existsSync(claudeMarker), 'no validation pass should have run the agent').toBe(false)
+      expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(false)
+      expect(res.stdout).toContain('Fila vazia, encerrando.')
+    },
+  )
 })

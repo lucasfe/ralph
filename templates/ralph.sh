@@ -137,10 +137,14 @@ run_agent_for_issue() {
 # ---------------------------------------------------------------------------
 
 # --- Lazy config validation -------------------------------------------------
-# Run a one-shot Claude validation before the main loop when:
+# Run a one-shot validation via the configured agent before the main loop when:
 #   • .ralph/state.json is absent, OR
 #   • the sha256 of ralph.config.sh changed since last validation, OR
-#   • the installed @lucasfe/ralph version changed since last validation.
+#   • the installed @lucasfe/ralph version changed since last validation, OR
+#   • the resolved agent differs from the one recorded in state.json (#562) —
+#     the config must be re-checked under the agent that will actually run it,
+#     and this also catches an agent switch made via the RALPH_AGENT env var
+#     (which leaves config_hash unchanged).
 # This lets users edit ralph.config.sh and have Ralph self-correct it.
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
@@ -161,7 +165,14 @@ if [ -f ralph.config.sh ]; then
   else
     stored_hash=$(jq -r '.config_hash // ""' .ralph/state.json 2>/dev/null || echo "")
     stored_version=$(jq -r '.ralph_version // ""' .ralph/state.json 2>/dev/null || echo "")
-    if [ "$current_hash" != "$stored_hash" ] || [ "$RALPH_VERSION" != "$stored_version" ]; then
+    # #562: also compare the recorded agent against the one just resolved. A
+    # legacy state.json without an `agent` field yields stored_agent="", which
+    # differs from the resolved agent and triggers exactly one self-healing
+    # revalidation (after which finalize-state.js records the agent).
+    stored_agent=$(jq -r '.agent // ""' .ralph/state.json 2>/dev/null || echo "")
+    if [ "$current_hash" != "$stored_hash" ] \
+      || [ "$RALPH_VERSION" != "$stored_version" ] \
+      || [ "${RALPH_RESOLVED_AGENT:-claude}" != "$stored_agent" ]; then
       needs_validate="yes"
     fi
   fi
@@ -181,7 +192,7 @@ if [ -f ralph.config.sh ]; then
       exit 1
     fi
 
-    # Re-source the config in case Claude edited it during validation.
+    # Re-source the config in case the agent edited it during validation.
     set -a
     . ./ralph.config.sh
     set +a

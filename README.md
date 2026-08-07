@@ -205,7 +205,11 @@ stdin is **not** a TTY and no flag is passed, `ralph init` skips the prompt and
 defaults to `claude` silently, so an unattended run is never blocked.
 
 To switch an existing project, edit `RALPH_AGENT` in `ralph.config.sh` by hand
-(or delete the file and re-run `ralph init --agent <name>`). `ralph doctor`
+(or delete the file and re-run `ralph init --agent <name>`). The next
+`ralph start` detects that the resolved agent no longer matches the one recorded
+in `.ralph/state.json` and re-runs config validation once under the new agent —
+so the switch self-heals even though the rest of the config is unchanged.
+`ralph doctor`
 reports which agent it validated (`Ralph doctor — platform: … — agent: codex`)
 and checks that agent's CLI — Claude needs `claude`; Codex needs `codex`.
 
@@ -291,9 +295,16 @@ be committed. Re-running `ralph init` never overwrites it.
 | `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (Anthropic: `opus`/`sonnet`/`fable` = 1,000,000, `haiku` = 200,000; OpenAI/Codex: `gpt-5`/`gpt-4.1`/`gpt-4`/`o3`/`o4`/`codex` = 400,000, legacy `gpt-4o` = 128,000). An unknown model resolves to no window (`null` pct). A non-numeric or `<= 0` value is ignored. |
 
 The config is plain bash; edit it in any editor. On the next
-`ralph start` Ralph notices the change (sha256 mismatch in
-`.ralph/state.json`) and re-validates the config one-shot via the
-selected agent.
+`ralph start` Ralph re-validates the config one-shot via the selected
+agent whenever any of these differ from what `.ralph/state.json`
+recorded on the last validation:
+
+- the sha256 of `ralph.config.sh` (you edited the config),
+- the installed `@lucasfe/ralph` version, or
+- the resolved coding agent — `RALPH_AGENT` from `ralph.config.sh`, or
+  an override via the `RALPH_AGENT` env var. Switching agents re-checks
+  the config under the agent that will actually run it (so a Codex-only
+  machine can bootstrap), even when the config bytes are unchanged.
 
 ## Notification setup
 
@@ -419,7 +430,7 @@ reports `claude credentials missing` when absent.
 next `ralph start` detects orphans and asks whether to clear them and
 reprocess. Answer `y` to re-queue the issues.
 
-**Reset Claude's understanding of the config.** — Delete
+**Reset the agent's understanding of the config.** — Delete
 `.ralph/state.json` (or the whole `.ralph/` directory) and run
 `ralph start` again. Lazy validation re-runs and rewrites the state
 based on the current `ralph.config.sh` and project manifests.
