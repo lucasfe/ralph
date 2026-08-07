@@ -57,6 +57,25 @@ instead of shipping a skewed Codex prompt. The forked orchestrator prose is not
 asserted, so you are free to word each agent's delegation instructions
 differently — just keep the shared structure in lockstep.
 
+### Codex maturity, sandbox, and network — do not "tighten" these
+
+- **The Codex path is experimental.** It is unit- and stub-tested (registry,
+  stream parsing, invocation argv, auth probe, template parity, and the full
+  bash loop against a stubbed `codex`), but it has **not** been run end-to-end
+  against a live `codex` CLI. The default Claude path is unchanged and fully
+  exercised. Keep the README's experimental callout honest — do not upgrade the
+  claim until a real live run has happened.
+- **The `workspace-write` sandbox is a *partial* boundary.** In design testing
+  it did not block a write to the system temp directory, so the Codex
+  orchestrator's stay-inside-the-project rule — not the sandbox — is what
+  contains a run. The `## Absolute restrictions` note in
+  `prompt-team-codex.md` documents this deliberately; do not delete it.
+- **Network access is required and enabled on purpose.** `codex exec` runs with
+  `sandbox_workspace_write.network_access=true` (see `lib/agent-registry.js`)
+  because the loop must run `gh`, `npm`, and `git push` every iteration.
+  Disabling network access breaks the loop — no PR can be opened or merged. Do
+  not "harden" it away.
+
 ## Manual smoke test (pre-release recipe)
 
 The package is dogfooded against the host repo continuously, but

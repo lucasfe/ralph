@@ -218,6 +218,25 @@ the same team roles, triage tiers, PR flow, and telemetry; only the
 orchestrator template and the invoked CLI differ. For Codex you can also pin a
 model with `RALPH_CODEX_MODEL` (see [Configuration reference](#configuration-reference)).
 
+### Codex sandbox and network access
+
+Ralph runs `codex exec` with a **`workspace-write` sandbox** and network access
+left on (`sandbox_workspace_write.network_access=true`), with approvals disabled
+so the unattended loop never blocks on a prompt.
+
+- **The sandbox is a *partial* boundary, not a substitute for the prompt's
+  stay-inside-the-project rule.** During design the `workspace-write` sandbox did
+  **not** prevent a write to the system temp directory. Treat it as defense in
+  depth, not containment: the orchestrator's "never touch files outside the
+  project root" instruction — not the sandbox — is what keeps a run contained.
+  Do not over-trust the sandbox.
+- **Network access is mandatory.** Ralph's loop drives `gh`, `npm`, and
+  `git push` on every iteration, so with network access disabled those commands
+  fail and no PR can be opened or merged. This is why the Codex sandbox is
+  configured with network access enabled; if you tighten it, the loop stops
+  working. (Claude Code runs unsandboxed and likewise needs network — the
+  requirement is not Codex-specific.)
+
 ## Scheduling Ralph (macOS launchd)
 
 Beyond the manual `ralph start` flow, Ralph can run on a launchd
