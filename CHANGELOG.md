@@ -5,6 +5,14 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1](https://github.com/lucasfe/agenthub/compare/ralph-v0.15.0...ralph-v0.15.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* dev → main rollforward ([3f522dd](https://github.com/lucasfe/agenthub/commit/3f522dd6bf192f08d16b9463e9aadcbc5055a454))
+* **ralph:** strip ANSI in doctor.test so it passes under CI color ([89139ca](https://github.com/lucasfe/agenthub/commit/89139ca2efb4c2325bf33ca4fd8db25f19343d46))
+
 ## [0.15.0](https://github.com/lucasfe/agenthub/compare/ralph-v0.14.0...ralph-v0.15.0) (2026-08-07)
 
 
