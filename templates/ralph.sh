@@ -212,6 +212,30 @@ claude_failed=0
 
 SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge'
 
+# --- Task source dispatch (#565) --------------------------------------------
+# Ralph draws work from either GitHub issues (the default, unchanged) or a local
+# `.ralph/tasks/` folder tree (TASK_SOURCE=folder). The source is read from the
+# env sourced from ralph.config.sh. Any value other than an explicit `folder`
+# resolves to github, mirroring lib/task-source.js's resolveSource (an unset /
+# unknown value => github, the zero-regression path). The github branch of every
+# helper below is byte-for-byte the code the loop has always run.
+if [ "${TASK_SOURCE:-github}" = "folder" ]; then
+  TASK_SOURCE="folder"
+else
+  TASK_SOURCE="github"
+fi
+TASKS_ROOT="$PROJECT_ROOT/.ralph/tasks"
+
+# Number of items waiting in the queue.
+queue_count() {
+  if [ "$TASK_SOURCE" = "folder" ]; then
+    node "$RALPH_PKG_DIR/lib/folder-queue.js" count "$TASKS_ROOT" 2>/dev/null || echo 0
+  else
+    gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length'
+  fi
+}
+# ---------------------------------------------------------------------------
+
 # Track the previously-selected issue so we can detect a zero-progress spin:
 # if the same issue is re-selected without any exclusion-state changing
 # (claude crashed, no label applied, not closed), the queue can never drain
@@ -219,14 +243,28 @@ SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-no
 prev_num=""
 
 while :; do
-  count=$(gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length')
+  count=$(queue_count)
   if [ "$count" = "0" ]; then
     echo "Fila vazia, encerrando."
     break
   fi
 
-  num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
-  echo "==> Iteração para issue #$num ($count restantes) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
+  if [ "$TASK_SOURCE" = "folder" ]; then
+    # Folder mode: select the lowest-numbered task in afk/todo (id + path). The
+    # AGENT owns the happy-path moves (todo→in-progress→done) and commits
+    # directly to $DEV_BRANCH — no branch, no PR. Bash owns only the failure /
+    # no-op sweep + the zero-progress guard below.
+    pick=$(node "$RALPH_PKG_DIR/lib/folder-queue.js" pick "$TASKS_ROOT" 2>/dev/null)
+    num="${pick%%$'\t'*}"
+    if [ -z "$num" ]; then
+      echo "Fila vazia, encerrando."
+      break
+    fi
+    echo "==> Iteração para task #$num ($count restantes) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
+  else
+    num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
+    echo "==> Iteração para issue #$num ($count restantes) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
+  fi
 
   # Stream the agent's JSON to jq, but keep stderr OUT of the JSON pipe: any
   # non-JSON line the agent prints to stderr (auth/credit/rate-limit errors,
@@ -237,6 +275,53 @@ while :; do
   run_agent_for_issue "$num"
   issue_end_ms=$(date +%s000)
   issue_dur_ms=$(( issue_end_ms - issue_start_ms ))
+
+  if [ "$TASK_SOURCE" = "folder" ]; then
+    # Terminal directory decides the outcome: the agent moves a completed task
+    # to afk/done. Anything still sitting in afk/todo or afk/in-progress is a
+    # failure/no-op — bash sweeps it to afk/failed so the queue always drains
+    # (this is the folder-mode forward-progress guarantee).
+    outcome=$(node "$RALPH_PKG_DIR/lib/folder-queue.js" locate "$TASKS_ROOT" "$num" 2>/dev/null)
+    if [ "$outcome" != "done" ]; then
+      echo "⚠️  task #$num não foi concluída (dir: ${outcome:-desconhecido}). Movendo para failed." >&2
+      node "$RALPH_PKG_DIR/lib/folder-queue.js" fail "$TASKS_ROOT" "$num" >/dev/null 2>&1 || true
+      outcome="failed"
+    fi
+
+    # Best-effort per-task telemetry: capture one RALPH_ISSUE_EVENT line into
+    # .ralph/metrics/issues.jsonl. TASK_SOURCE=folder makes the sidecar read the
+    # task id (RALPH_TASK_ID) as the event number and the terminal directory
+    # (RALPH_TASK_OUTCOME: done=>pass, failed=>fail) as the verdict, and skip the
+    # gh PR-diff call entirely. Telemetry failure MUST NEVER abort the loop.
+    TASK_SOURCE="folder" \
+      RALPH_TASK_ID="$num" \
+      RALPH_TASK_OUTCOME="$outcome" \
+      RALPH_RUN_ID="$RALPH_RUN_ID" \
+      RALPH_CLAUDE_EXIT="$claude_failed" \
+      RALPH_DEV_BRANCH="${DEV_BRANCH:-}" \
+      RALPH_RAW_JSONL_PATH="logs/ralph-issue-$num.jsonl" \
+      RALPH_STDERR_LOG_PATH="logs/ralph-issue-$num.log" \
+      RALPH_AGENT="${RALPH_RESOLVED_AGENT:-claude}" \
+      RALPH_CODEX_MODEL="${RALPH_CODEX_MODEL:-}" \
+      RALPH_DURATION_MS="$issue_dur_ms" \
+      node "$RALPH_PKG_DIR/lib/capture-issue-event.js" || true
+
+    if [ "$outcome" = "done" ]; then
+      successes+=("$num")
+    else
+      failures+=("$num")
+    fi
+
+    # Zero-progress guard: the sweep above guarantees the task leaves afk/todo,
+    # so the queue must drain. If somehow the SAME task is re-selected (e.g. a
+    # sweep that could not move the file), abort rather than spin forever.
+    if [ "$num" = "$prev_num" ]; then
+      echo "❌ ralph.sh: sem progresso na task #$num (re-selecionada). Abortando o loop." >&2
+      break
+    fi
+    prev_num="$num"
+    continue
+  fi
 
   labels=$(gh issue view "$num" --json labels -q '[.labels[].name] | join(",")')
   state=$(gh issue view "$num" --json state -q '.state')

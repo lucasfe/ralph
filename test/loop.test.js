@@ -881,3 +881,123 @@ exit 0
     },
   )
 })
+
+// ---------------------------------------------------------------------------
+// Issue #565 — TASK_SOURCE=folder. The loop draws tasks from a local
+// `.ralph/tasks/afk/todo` tree instead of GitHub, shelling out to
+// lib/folder-queue.js for count/pick/locate/fail. It must NEVER touch gh in
+// folder mode. The happy-path agent moves the task todo→done itself; bash owns
+// the failure/no-op sweep (todo|in-progress → failed) and the zero-progress
+// guard. Telemetry records the task id as issue_number and the terminal
+// directory as the verdict. TASK_SOURCE is supplied via env here (no
+// ralph.config.sh) so the lazy-validation block stays skipped and the test
+// isolates the main loop's source dispatch.
+// ---------------------------------------------------------------------------
+describe('ralph.sh folder task source — issue #565', () => {
+  // node stub: delegate the real JS bridges (folder-queue.js, agent-invocation.js,
+  // capture-issue-event.js) to the real node; everything else echoes a prompt.
+  // jq: minimal no-op streamer. gh: records ANY invocation so the test can prove
+  // folder mode never touches it.
+  function seedFolderStubs() {
+    writeStub(
+      'node',
+      `#!/bin/bash
+case "$*" in
+  *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+  *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
+  *folder-queue.js*) exec "${REAL_NODE}" "$@" ;;
+esac
+echo "PROMPT"
+exit 0
+`,
+    )
+    writeStub('jq', `#!/bin/bash\ncat > /dev/null 2>/dev/null || true\nexit 0\n`)
+    writeStub(
+      'gh',
+      `#!/bin/bash\necho "$*" >> "${join(workdir, 'gh-called.log')}"\nexit 0\n`,
+    )
+  }
+
+  function writeTask(status, file, body = 'do the thing') {
+    const dir = join(workdir, '.ralph', 'tasks', 'afk', status)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, file), body)
+  }
+
+  it('drains the folder queue: completes tasks, records folder telemetry, never touches gh', () => {
+    seedFolderStubs()
+    // Happy-path agent: moves the lowest-numbered todo task to done (mirrors the
+    // git mv the folder orchestrator prompt instructs the real agent to perform).
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+TODO="$PROJECT_ROOT/.ralph/tasks/afk/todo"
+DONE="$PROJECT_ROOT/.ralph/tasks/afk/done"
+mkdir -p "$DONE"
+f=$(ls "$TODO"/*.md 2>/dev/null | sort | head -1)
+[ -n "$f" ] && mv "$f" "$DONE/"
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`,
+    )
+    writeTask('todo', '001-first.md')
+    writeTask('todo', '002-second.md')
+
+    const res = runLoop({ timeout: 20000, extraEnv: { TASK_SOURCE: 'folder' } })
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toMatch(/2 ok, 0 falharam/)
+
+    // Both tasks ended in done.
+    expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'done', '001-first.md'))).toBe(true)
+    expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'done', '002-second.md'))).toBe(true)
+
+    // gh must NEVER be invoked in folder mode (zero-regression the other way:
+    // folder mode is entirely gh-free).
+    expect(
+      existsSync(join(workdir, 'gh-called.log')),
+      `gh was invoked in folder mode:\n${existsSync(join(workdir, 'gh-called.log')) ? readFileSync(join(workdir, 'gh-called.log'), 'utf8') : ''}`,
+    ).toBe(false)
+
+    // Telemetry: one RALPH_ISSUE_EVENT per task; verdict pass; issue_number is
+    // the task id.
+    const metricsFile = join(workdir, '.ralph', 'metrics', 'issues.jsonl')
+    expect(existsSync(metricsFile), `no metrics. stderr:\n${res.stderr}`).toBe(true)
+    const events = readFileSync(metricsFile, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l.slice('RALPH_ISSUE_EVENT '.length)))
+    expect(events.length).toBe(2)
+    for (const ev of events) expect(ev.verdict).toBe('pass')
+    expect(events.map((e) => e.issue_number).sort((a, b) => a - b)).toEqual([1, 2])
+  })
+
+  it('sweeps an uncompleted task to failed and records it as a failure (no infinite spin)', () => {
+    seedFolderStubs()
+    // Agent fails without moving the task; bash must sweep it out of todo.
+    writeStub('claude', `#!/bin/bash\ncat > /dev/null\necho "boom" >&2\nexit 1\n`)
+    writeTask('todo', '007-broken.md')
+
+    const res = runLoop({ timeout: 20000, extraEnv: { TASK_SOURCE: 'folder' } })
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status).toBe(0)
+
+    // Swept out of todo into failed so the queue drains (no infinite spin).
+    expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'todo', '007-broken.md'))).toBe(false)
+    expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'failed', '007-broken.md'))).toBe(true)
+    expect(res.stdout).toMatch(/0 ok, 1 falharam/)
+
+    // Folder telemetry: verdict fail; issue_number is the task id.
+    const events = readFileSync(join(workdir, '.ralph', 'metrics', 'issues.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l.slice('RALPH_ISSUE_EVENT '.length)))
+    expect(events.length).toBe(1)
+    expect(events[0].verdict).toBe('fail')
+    expect(events[0].issue_number).toBe(7)
+  })
+})

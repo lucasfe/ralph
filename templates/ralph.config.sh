@@ -13,6 +13,11 @@ LINT_CMD="{{LINT_CMD}}"
 # else in this file changes between agents.
 RALPH_AGENT="{{RALPH_AGENT}}"
 
+# Task source Ralph pulls work from. "github" (default) resolves open GitHub
+# issues via `gh`; "folder" draws tasks from the local `.ralph/tasks/` tree and
+# commits straight to DEV_BRANCH (no PR/merge). Unset falls back to "github".
+TASK_SOURCE="{{TASK_SOURCE}}"
+
 # Model id for the Codex agent (ignored when RALPH_AGENT=claude). Leave
 # unset/commented to let Codex use its configured default. Example:
 # RALPH_CODEX_MODEL="gpt-5-codex"
