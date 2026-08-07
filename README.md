@@ -10,11 +10,12 @@ By default the coding agent is **Claude Code**. Ralph can also drive the
 **OpenAI Codex** CLI instead — see [Choosing the coding agent](#choosing-the-coding-agent).
 
 > **⚠️ Codex support is experimental.** The Codex path is unit- and
-> stub-tested (registry, stream parsing, invocation argv, auth probe, and
-> template parity all have coverage), but it has **not** been exercised in a
-> live end-to-end run against the real `codex` CLI. Expect rough edges and
-> report anything that misbehaves. Claude Code remains the fully-exercised
-> default.
+> stub-tested (registry, stream parsing, invocation argv, auth probe, template
+> parity, and the full bash loop driven against a stubbed `codex` emitting the
+> real `codex exec --json` event shape all have coverage), but it has **not**
+> been exercised in a live end-to-end run against the real `codex` CLI. Expect
+> rough edges and report anything that misbehaves. Claude Code remains the
+> fully-exercised default.
 
 The full design is captured in [issue #13][prd].
 
