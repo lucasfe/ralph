@@ -1,17 +1,16 @@
 # Contributing to `@lucasfe/ralph`
 
-Thanks for your interest. This package is developed inside the
-[`agenthub`](https://github.com/lucasfe/agenthub) monorepo under
-`packages/ralph/`. The roadmap, locked decisions, and per-slice
-breakdown live in [issue #13][prd].
-
-[prd]: https://github.com/lucasfe/agenthub/issues/13
+Thanks for your interest. Ralph is an autonomous GitHub-issue resolution
+loop packaged as a CLI. It was extracted from the
+[`agenthub`](https://github.com/lucasfe/agenthub) monorepo (where it was
+dogfooded into maturity) and now lives standalone at
+[`lucasfe/ralph`](https://github.com/lucasfe/ralph).
 
 ## Local development
 
 ```bash
-git clone https://github.com/lucasfe/agenthub.git
-cd agenthub/packages/ralph
+git clone https://github.com/lucasfe/ralph.git
+cd ralph
 npm install
 npm test            # vitest run
 npm run test:watch  # vitest watch mode
@@ -23,12 +22,16 @@ Three runtime deps (`commander`, `execa`, `picocolors`); tests use
 
 ## Pull requests
 
-- Branch off `dev` (the integration branch).
-- Keep PRs scoped to a single slice from the plan; aggressive dogfood
-  is the goal — every change should be reviewable on its own and
-  rollback-friendly via `git revert`.
-- Run `npm test` from `packages/ralph/` before pushing. CI runs
-  `npm ci && npm test` and will block the merge on failure.
+- Branch off `main` and open a PR against `main`.
+- Keep PRs scoped to a single change — every change should be reviewable
+  on its own and rollback-friendly via `git revert`.
+- Use [Conventional Commit](https://www.conventionalcommits.org/) titles
+  (`feat:`, `fix:`, `chore:`, `docs:`, …). release-please reads them to
+  compute the next version and generate the changelog, so the title is
+  load-bearing: `fix:` → patch, `feat:` → minor, `!`/`BREAKING CHANGE` →
+  major.
+- Run `npm test` before pushing. CI runs `npm ci && npm test` on every
+  push and pull request.
 - Follow strict semver: patch = bug fix, minor = additive feature,
   major = breaking with migration notes added to `CHANGELOG.md`.
 
@@ -90,13 +93,11 @@ lockstep.
 
 ## Manual smoke test (pre-release recipe)
 
-The package is dogfooded against the host repo continuously, but
-before each tag we also exercise it against an unrelated project to
-catch path/template bugs that the host repo can't surface.
+Before each release we exercise the package against an unrelated project
+to catch path/template bugs that unit tests can't surface.
 
-1. **Pack a tarball locally** from `packages/ralph/`:
+1. **Pack a tarball locally** from the repo root:
    ```bash
-   cd packages/ralph
    npm pack
    # → lucasfe-ralph-<version>.tgz
    ```
@@ -143,24 +144,25 @@ catch path/template bugs that the host repo can't surface.
    `.ralph/state.json` to a fake `ralph_version`. Next `ralph start`
    must re-validate.
 
-If any step misbehaves, file an issue under the `ralph-package` label
-on the host repo with the reproduction command and `logs/`.
+If any step misbehaves, [file an issue](https://github.com/lucasfe/ralph/issues)
+with the reproduction command and `logs/`.
 
 ## Releasing
 
-Releases ship via the
-[`ralph-publish.yml`](../../.github/workflows/ralph-publish.yml)
-workflow on push of a `ralph-v*` tag. The maintainer flow is:
+Releases are automated by
+[`.github/workflows/release.yml`](.github/workflows/release.yml) via
+[release-please](https://github.com/googleapis/release-please) and npm
+[Trusted Publishing (OIDC)](https://docs.npmjs.com/trusted-publishers).
+The maintainer flow is:
 
-1. Land all PRs for the slice on `dev`.
-2. Bump `package.json` version + move `## [Unreleased]` notes to a
-   new `## [X.Y.Z] - YYYY-MM-DD` section in `CHANGELOG.md`.
-3. Open a PR to `main`, get it merged.
-4. Tag the merge commit `ralph-vX.Y.Z` and push the tag.
-5. The workflow runs `npm ci`, `npm test`, and
-   `npm publish --access public` in `packages/ralph/`. On success the
-   release lands on the npm registry under `@lucasfe/ralph`.
+1. Land `feat:` / `fix:` PRs on `main`.
+2. release-please opens (or updates) a **Release PR** that bumps
+   `package.json` and prepends a `CHANGELOG.md` entry.
+3. Review and merge the Release PR. The merge tags `vX.Y.Z` and, on the
+   resulting `push: main`, the `publish` job publishes `@lucasfe/ralph`
+   to npm with provenance (prereleases go to the `rc` dist-tag; stable
+   to `latest`).
 
-The workflow uses `NODE_AUTH_TOKEN` populated from the repo secret
-`NPM_TOKEN`. Rotate that token via npm's "Access Tokens" page when
-needed.
+No long-lived npm token is stored — publishing authenticates via OIDC,
+so the npm Trusted Publisher for `@lucasfe/ralph` must point at this repo
+(`lucasfe/ralph`) and the `release.yml` workflow.

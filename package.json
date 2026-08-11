@@ -4,12 +4,11 @@
   "description": "Ralph — autonomous GitHub issue resolution loop, packaged as a CLI.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lucasfe/agenthub.git",
-    "directory": "packages/ralph"
+    "url": "git+https://github.com/lucasfe/ralph.git"
   },
-  "homepage": "https://github.com/lucasfe/agenthub/tree/main/packages/ralph#readme",
+  "homepage": "https://github.com/lucasfe/ralph#readme",
   "bugs": {
-    "url": "https://github.com/lucasfe/agenthub/issues"
+    "url": "https://github.com/lucasfe/ralph/issues"
   },
   "license": "MIT",
   "type": "module",

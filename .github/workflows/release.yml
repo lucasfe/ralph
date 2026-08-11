@@ -1,0 +1,91 @@
+name: Release
+
+# End-to-end automation for @lucasfe/ralph releases.
+#
+# Flow on every push to main:
+#   1. release-please inspects commits since the last release tag. If it
+#      finds user-facing CC types (`feat:` / `fix:`), it opens (or updates)
+#      a Release PR that bumps `package.json` and prepends a CHANGELOG entry.
+#   2. A maintainer reviews and merges the Release PR. The merge triggers
+#      another `push: main` event → this workflow runs again.
+#   3. publish (always-run, idempotent): reads `package.json`, asks npm if
+#      that exact version is already published, and publishes only if it
+#      isn't. If the Release PR merged and the new version isn't on npm yet,
+#      this job fills the gap. If the version is already there, it's a no-op.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    name: Publish @lucasfe/ralph to npm (match-publish safety net)
+    needs: release-please
+    # Run even when no Release PR was created — a previous run may have
+    # already merged a Release PR and bumped package.json; this run sees the
+    # new version and publishes. Idempotent: skips if already published.
+    if: always() && (needs.release-please.result == 'success' || needs.release-please.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 24 ships with npm >= 11, required for trusted publishing (OIDC).
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Check whether current package.json version is already on npm
+        id: check
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if npm view "@lucasfe/ralph@$VERSION" version 2>/dev/null | grep -q "^$VERSION$"; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "Version $VERSION already on npm — nothing to do."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "Version $VERSION not on npm — will publish."
+          fi
+
+      - name: Install dependencies
+        if: steps.check.outputs.already_published == 'false'
+        run: npm ci
+
+      - name: Run tests
+        if: steps.check.outputs.already_published == 'false'
+        run: npm test
+
+      - name: Publish to npm via OIDC (Trusted Publisher)
+        if: steps.check.outputs.already_published == 'false'
+        run: |
+          VERSION='${{ steps.check.outputs.version }}'
+          if [[ "$VERSION" == *-* ]]; then
+            # Prereleases (0.16.0-rc.1, …) go to the `rc` dist-tag so `latest`
+            # keeps pointing at the most recent stable.
+            npm publish --access public --provenance --tag rc
+          else
+            npm publish --access public --provenance
+          fi
