@@ -486,6 +486,35 @@ Failures sending the startup ping log a warning and never abort
 
 [callmebot]: https://www.callmebot.com/blog/free-api-whatsapp-messages/
 
+### Global config file (share creds across repos)
+
+If you run Ralph across several repos, you can set the notification
+credentials once in a global config file instead of copying them into
+each repo's `.env.local`. Ralph reads a generic dotenv file at
+`~/.config/ralph/.env` (or `$XDG_CONFIG_HOME/ralph/.env` when
+`XDG_CONFIG_HOME` is set):
+
+```bash
+# ~/.config/ralph/.env
+CALLMEBOT_KEY=<your-key>
+WHATSAPP_PHONE=<your-phone-with-country-code>
+```
+
+The file is optional — if it's absent, nothing happens. Any variable
+works; the keys Ralph looks up are `CALLMEBOT_KEY`, `WHATSAPP_PHONE`,
+`RALPH_STARTUP_MESSAGE`, `RALPH_DAILY_SUMMARY_TIME`, and
+`HEALTHCHECK_URL`, consulted by `ralph start`, `ralph cycle`, and
+`ralph schedule`.
+
+Each key resolves through this precedence chain, first match wins:
+
+1. Repo `.env.local`
+2. `process.env` (the environment Ralph runs in)
+3. Global `~/.config/ralph/.env`
+
+So a per-repo `.env.local` value always overrides the global file, which
+lets you keep shared defaults globally and override them per repo.
+
 ### Daily heartbeat (24h summary)
 
 When Ralph is scheduled via `ralph schedule install` (see
