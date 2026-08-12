@@ -22,7 +22,8 @@ branch with no PR. See [Choosing the task source](#choosing-the-task-source).
 > rough edges and report anything that misbehaves. Claude Code remains the
 > fully-exercised default.
 
-The full design is captured in [issue #13][prd].
+The full design is captured in [the original PRD][prd] (tracked in the
+`agenthub` repo, where Ralph was first built).
 
 [prd]: https://github.com/lucasfe/agenthub/issues/13
 
@@ -715,6 +716,6 @@ with `run_id` as the foreign key.
 
 ## Links
 
-- [PRD / decisions (issue #13)][prd]
+- [PRD / decisions (agenthub#13)][prd]
 - [CHANGELOG](./CHANGELOG.md)
 - [Contributing](./CONTRIBUTING.md)
