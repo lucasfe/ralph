@@ -883,6 +883,156 @@ exit 0
 })
 
 // ---------------------------------------------------------------------------
+// Issue #4 — the shell loop honors the global config (~/.config/ralph/.env) for
+// the end-of-run WhatsApp notification, which is sent from bash (not JS). With
+// NO repo .env.local and the CALLMEBOT_KEY/WHATSAPP_PHONE env vars UNSET, creds
+// placed in the global file must reach the notification. Precedence stays
+// repo → process.env → global: the global file only fills vars not already set.
+// ---------------------------------------------------------------------------
+describe('ralph.sh global config read path — issue #4', () => {
+  // Like runLoop(), but does NOT force CALLMEBOT_KEY/WHATSAPP_PHONE to '' — the
+  // point of this suite is that they are genuinely UNSET so the global file can
+  // fill them. curl is stubbed to record the URL it is called with so we can
+  // prove the notification fired with the global creds.
+  function runLoopNoCreds({ timeout = 15000, extraEnv = {} } = {}) {
+    const env = {
+      ...process.env,
+      PATH: `${bindir}:${process.env.PATH}`,
+      RALPH_TMUX_SESSION: 'ralph-test',
+    }
+    // Start from a genuinely-unset state, then let extraEnv opt back in so a
+    // test can pin one cred in the environment (process.env-wins precedence).
+    delete env.CALLMEBOT_KEY
+    delete env.WHATSAPP_PHONE
+    Object.assign(env, extraEnv)
+    return spawnSync('bash', [RALPH_TEMPLATE], {
+      cwd: workdir,
+      env,
+      timeout,
+      encoding: 'utf8',
+    })
+  }
+
+  function writeGlobalConfig(xdgHome, body) {
+    const dir = join(xdgHome, 'ralph')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.env'), body)
+  }
+
+  it('sends the end-of-run WhatsApp notification using global creds when .env.local is absent and the env vars are unset', () => {
+    seedHappyPath(2)
+    // curl stub records the URL it received so we can assert the creds used.
+    const curlLog = join(workdir, 'curl.log')
+    writeStub('curl', `#!/bin/bash\necho "$*" >> "${curlLog}"\nexit 0\n`)
+    // Real jq needed to @uri-encode the message in the notification block.
+    if (REAL_JQ) writeStub('jq', `#!/bin/bash\nexec "${REAL_JQ}" "$@"\n`)
+
+    const xdgHome = join(workdir, 'xdg')
+    writeGlobalConfig(xdgHome, 'CALLMEBOT_KEY=globalkey\nWHATSAPP_PHONE=+15550000\n')
+
+    const res = runLoopNoCreds({ extraEnv: { XDG_CONFIG_HOME: xdgHome } })
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    // The notification fired (bash echoes this only after the curl send).
+    expect(res.stdout).toContain('Notificação WhatsApp enviada')
+    // The curl call carried the global creds.
+    expect(existsSync(curlLog), `curl was never called. stdout:\n${res.stdout}`).toBe(true)
+    const url = readFileSync(curlLog, 'utf8')
+    expect(url).toContain('phone=+15550000')
+    expect(url).toContain('apikey=globalkey')
+  })
+
+  it('does NOT clobber an env-set credential with the global value (process.env wins over global)', () => {
+    seedHappyPath(2)
+    const curlLog = join(workdir, 'curl.log')
+    writeStub('curl', `#!/bin/bash\necho "$*" >> "${curlLog}"\nexit 0\n`)
+    if (REAL_JQ) writeStub('jq', `#!/bin/bash\nexec "${REAL_JQ}" "$@"\n`)
+
+    const xdgHome = join(workdir, 'xdg')
+    writeGlobalConfig(xdgHome, 'CALLMEBOT_KEY=globalkey\nWHATSAPP_PHONE=+15550000\n')
+
+    // WHATSAPP_PHONE is set in the environment → it must win over the global
+    // file; only the unset CALLMEBOT_KEY is filled from the global config.
+    const res = runLoopNoCreds({
+      extraEnv: { XDG_CONFIG_HOME: xdgHome, WHATSAPP_PHONE: '+19999999' },
+    })
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    const url = readFileSync(curlLog, 'utf8')
+    expect(url).toContain('phone=+19999999')
+    expect(url).not.toContain('phone=+15550000')
+    expect(url).toContain('apikey=globalkey')
+  })
+
+  // QA: the global file is a dotenv, not a fixed KEY=VALUE table — it may carry
+  // `export ` prefixes, quoted values, comments, and blank lines. The parser
+  // must handle them like lib/utils/env.js's parseEnvFile does.
+  it('QA: parses export prefixes, quotes, comments, and blank lines in the global file', () => {
+    seedHappyPath(1)
+    const curlLog = join(workdir, 'curl.log')
+    writeStub('curl', `#!/bin/bash\necho "$*" >> "${curlLog}"\nexit 0\n`)
+    if (REAL_JQ) writeStub('jq', `#!/bin/bash\nexec "${REAL_JQ}" "$@"\n`)
+
+    const xdgHome = join(workdir, 'xdg')
+    writeGlobalConfig(
+      xdgHome,
+      '# Ralph global creds\n\nexport CALLMEBOT_KEY="quoted-key"\nWHATSAPP_PHONE=\'+15551234\'\n',
+    )
+
+    const res = runLoopNoCreds({ extraEnv: { XDG_CONFIG_HOME: xdgHome } })
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    const url = readFileSync(curlLog, 'utf8')
+    // Quotes stripped, export prefix ignored, comment/blank lines skipped.
+    expect(url).toContain('apikey=quoted-key')
+    expect(url).toContain('phone=+15551234')
+  })
+
+  // QA: adversarial precedence — a set-but-EMPTY env credential must NOT be
+  // back-filled from the global file (matches the JS `??` resolver, where ''
+  // wins over the global value). The empty cred then correctly suppresses the
+  // notification, so the loop must NOT send.
+  it('QA: a set-but-empty env credential is not overridden by the global file', () => {
+    seedHappyPath(1)
+    const curlLog = join(workdir, 'curl.log')
+    writeStub('curl', `#!/bin/bash\necho "$*" >> "${curlLog}"\nexit 0\n`)
+    if (REAL_JQ) writeStub('jq', `#!/bin/bash\nexec "${REAL_JQ}" "$@"\n`)
+
+    const xdgHome = join(workdir, 'xdg')
+    writeGlobalConfig(xdgHome, 'CALLMEBOT_KEY=globalkey\nWHATSAPP_PHONE=+15550000\n')
+
+    // CALLMEBOT_KEY is present but empty → it stays empty (not filled), so the
+    // notification guard `[ -n "$CALLMEBOT_KEY" ]` is false and nothing sends.
+    const res = runLoopNoCreds({
+      extraEnv: { XDG_CONFIG_HOME: xdgHome, CALLMEBOT_KEY: '' },
+    })
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).not.toContain('Notificação WhatsApp enviada')
+    expect(existsSync(curlLog), 'curl must not be called when the cred is empty').toBe(false)
+  })
+
+  // QA: absent global file is a silent no-op — the loop still finishes cleanly
+  // and simply sends no notification (no error, no hang).
+  it('QA: a missing global file is a silent no-op (loop still exits cleanly)', () => {
+    seedHappyPath(1)
+    const curlLog = join(workdir, 'curl.log')
+    writeStub('curl', `#!/bin/bash\necho "$*" >> "${curlLog}"\nexit 0\n`)
+    if (REAL_JQ) writeStub('jq', `#!/bin/bash\nexec "${REAL_JQ}" "$@"\n`)
+
+    // XDG points at a dir with no ralph/.env inside.
+    const xdgHome = join(workdir, 'xdg-empty')
+    mkdirSync(xdgHome, { recursive: true })
+
+    const res = runLoopNoCreds({ extraEnv: { XDG_CONFIG_HOME: xdgHome } })
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(existsSync(curlLog)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Issue #565 — TASK_SOURCE=folder. The loop draws tasks from a local
 // `.ralph/tasks/afk/todo` tree instead of GitHub, shelling out to
 // lib/folder-queue.js for count/pick/locate/fail. It must NEVER touch gh in

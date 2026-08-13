@@ -513,7 +513,10 @@ Each key resolves through this precedence chain, first match wins:
 3. Global `~/.config/ralph/.env`
 
 So a per-repo `.env.local` value always overrides the global file, which
-lets you keep shared defaults globally and override them per repo.
+lets you keep shared defaults globally and override them per repo. This
+applies to the loop's own mid-run and end-of-run WhatsApp notifications
+(sent from the shell), so they fire from global creds even when a repo
+has no `.env.local`.
 
 ### Daily heartbeat (24h summary)
 

@@ -33,13 +33,55 @@ export PROJECT_ROOT
 RALPH_PKG_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export RALPH_PKG_DIR
 
+# --- Global config read path (#4) -------------------------------------------
+# Source ~/.config/ralph/.env for any variable NOT already set in the
+# environment. This mirrors lib/utils/global-config.js: the global file is the
+# lowest-priority credential source, so the loop's shell-sent WhatsApp
+# notifications work without a per-repo .env.local. Called BEFORE .env.local so
+# precedence stays repo → process.env → global (already-set vars, including the
+# process env, win; the global file only fills the gaps). Absent file is a
+# silent no-op. Set-but-empty counts as set, matching the JS `??` resolver.
+source_global_config() {
+  local global_config="${XDG_CONFIG_HOME:-$HOME/.config}/ralph/.env"
+  [ -f "$global_config" ] || return 0
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Trim leading whitespace, then skip blanks and comments.
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "$line" in ''|'#'*) continue ;; esac
+    # Require a KEY=VALUE shape; split on the first '='.
+    case "$line" in *=*) ;; *) continue ;; esac
+    key="${line%%=*}"
+    key="${key#export }"
+    # Trim whitespace around the key.
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    # Only fill vars not already set — repo/process.env keep priority.
+    [ -n "${!key+x}" ] && continue
+    value="${line#*=}"
+    # Trim surrounding whitespace before unquoting, matching parseEnvFile.
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    # Strip a single pair of surrounding matching quotes, like parseEnvFile.
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    export "$key=$value"
+  done < "$global_config"
+}
+# ---------------------------------------------------------------------------
+
 # Source ralph.config.sh first so commands/branches/merge config become env
-# vars visible to the prompt builder. Then source .env.local for credentials.
+# vars visible to the prompt builder. Then fill any unset creds from the global
+# config, and finally source .env.local so the repo's own values win.
 if [ -f ralph.config.sh ]; then
   set -a
   . ./ralph.config.sh
   set +a
 fi
+
+source_global_config
 
 if [ -f .env.local ]; then
   set -a
@@ -413,7 +455,10 @@ printf 'RALPH_CYCLE_EVENT {"ts":"%s","status":"%s","ok":%d,"failed":%d,"duration
   >> logs/ralph-cycle.out.log || true
 # ---------------------------------------------------------------------------
 
-# Re-source .env.local so credentials added mid-run are picked up.
+# Re-source creds so any added mid-run are picked up: global config fills unset
+# vars first (#4), then .env.local wins — same repo → process.env → global
+# precedence as the startup path.
+source_global_config
 if [ -f ./.env.local ]; then
   set -a
   . ./.env.local
