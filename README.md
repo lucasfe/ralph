@@ -463,18 +463,29 @@ always populated; the other channels are opt-in.
 
 1. Follow the [CallMeBot setup][callmebot] to get an API key linked to
    your WhatsApp number.
-2. Copy `.env.local.example` (created by `ralph init`) to `.env.local`
-   and fill in:
-   ```bash
-   CALLMEBOT_KEY=<your-key>
-   WHATSAPP_PHONE=<your-phone-with-country-code>
-   ```
-3. `.env.local` is added to `.gitignore` automatically. Done — the next
-   `ralph start` will message you when the loop boots, and again when
-   it finishes.
+2. Run `ralph init` in an interactive terminal. When no WhatsApp
+   credentials are configured yet, it asks `Set up WhatsApp
+   notifications globally? [y/N]` and, on yes, captures your phone (with
+   country code) and CallMeBot key and writes them to your **global**
+   config at `~/.config/ralph/.env` (or `$XDG_CONFIG_HOME/ralph/.env`),
+   creating the directory `0700` and the file `0600`. These credentials
+   are shared across every repo. Re-running `ralph init` shows the
+   current phone in full and the key masked, and offers to change them
+   (a blank answer keeps the existing value). When stdin is **not** a
+   TTY, the prompt is skipped silently and nothing is written.
+3. Done — the next `ralph start` will message you when the loop boots,
+   and again when it finishes.
+
+To scope credentials to a single repo instead, use the per-repo
+override in `.env.local` (see
+[Global config file](#global-config-file-share-creds-across-repos) for
+the full precedence chain). `.env.local` is added to `.gitignore`
+automatically and is never written by Ralph — copy `.env.local.example`
+and fill in just the keys you want to override for that repo.
 
 To customize the startup message body (e.g. include the host name or
-environment), set `RALPH_STARTUP_MESSAGE` in `.env.local`:
+environment), set `RALPH_STARTUP_MESSAGE` globally in
+`~/.config/ralph/.env` or per repo in `.env.local`:
 
 ```bash
 RALPH_STARTUP_MESSAGE=🟢 Ralph started on prod-runner-1
@@ -488,11 +499,13 @@ Failures sending the startup ping log a warning and never abort
 
 ### Global config file (share creds across repos)
 
-If you run Ralph across several repos, you can set the notification
-credentials once in a global config file instead of copying them into
-each repo's `.env.local`. Ralph reads a generic dotenv file at
-`~/.config/ralph/.env` (or `$XDG_CONFIG_HOME/ralph/.env` when
-`XDG_CONFIG_HOME` is set):
+The global config is where `ralph init` stores the WhatsApp credentials
+it captures interactively (see
+[WhatsApp via CallMeBot](#whatsapp-via-callmebot-built-in)), and it is
+the default source Ralph reads from — set it once and every repo picks
+it up, no per-repo `.env.local` needed. You can also create or edit it
+by hand. Ralph reads a generic dotenv file at `~/.config/ralph/.env`
+(or `$XDG_CONFIG_HOME/ralph/.env` when `XDG_CONFIG_HOME` is set):
 
 ```bash
 # ~/.config/ralph/.env
