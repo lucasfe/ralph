@@ -5,6 +5,14 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.4](https://github.com/lucasfe/ralph/compare/v0.15.3...v0.15.4) (2026-08-13)
+
+
+### Bug Fixes
+
+* interactive global WhatsApp config setup in ralph init ([#5](https://github.com/lucasfe/ralph/issues/5)) ([#10](https://github.com/lucasfe/ralph/issues/10)) ([0517941](https://github.com/lucasfe/ralph/commit/05179411160b61c20df6145222e1d6cefea0d868))
+* translate remaining Portuguese CLI/loop strings to English ([#6](https://github.com/lucasfe/ralph/issues/6)) ([#12](https://github.com/lucasfe/ralph/issues/12)) ([fc7bb7a](https://github.com/lucasfe/ralph/commit/fc7bb7a376a68f4467732218e6513420fb2e1aa2))
+
 ## [0.15.3](https://github.com/lucasfe/ralph/compare/v0.15.2...v0.15.3) (2026-08-13)
 
 
