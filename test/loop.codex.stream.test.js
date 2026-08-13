@@ -168,7 +168,7 @@ exit 0
     const res = runLoop({ timeout: 15000 })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
     expect(res.status).toBe(0)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toContain('Queue empty, exiting.')
     expect(existsSync(join(workdir, 'claude-calls.log'))).toBe(false)
 
     // (1) The per-issue log holds the REAL jq-rendered stream: the agent message

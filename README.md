@@ -595,7 +595,7 @@ the loop.
 
 ## Troubleshooting
 
-**"Sessão tmux 'ralph-…' já existe."** — A previous `ralph start`
+**"tmux session 'ralph-…' already exists."** — A previous `ralph start`
 already launched the loop for *this* project (the session name is
 per-project: `ralph-<repo>-<hash>`). Either attach and let it finish, or
 stop it (`ralph stop`) before starting again — `ralph start` prints the
@@ -639,7 +639,7 @@ errors, crashes) without otherwise resolving it, so the queue keeps
 advancing instead of stalling on the same issue — see the per-issue log
 to find out why.
 
-**An iteration prints `claude falhou na issue #N (exit não-zero)`.** —
+**An iteration prints `claude failed on issue #N (non-zero exit)`.** —
 Claude exited non-zero on that issue without opening a PR, closing it,
 or applying an exclusion label. Ralph adds the `claude-failed` label so
 the next iteration moves on. The cause (auth, credit balance,
@@ -648,7 +648,7 @@ Claude's stderr is now written there (and echoed to the terminal)
 rather than being merged into the JSON stream. Fix the underlying
 problem, clear the `claude-failed` label, and re-run.
 
-**The loop aborts with `sem progresso na issue #N`.** — A zero-progress
+**The loop aborts with `no progress on issue #N`.** — A zero-progress
 guard fired: the same issue was re-selected on consecutive iterations
 with no change to its exclusion state (no PR, not closed, no label),
 which means the loop could never drain the queue. Rather than burn API

@@ -38,7 +38,7 @@ describe('stopCommand', () => {
     })
     const result = await stopCommand({ cwd: '/repo', stdout, stderr, exec })
     expect(result).toEqual({ exitCode: 0, killed: false })
-    expect(stdout.output()).toContain(`Nenhuma sessão tmux '${SESSION}'`)
+    expect(stdout.output()).toContain(`No tmux session '${SESSION}'`)
   })
 
   it('kills the session when present', async () => {
@@ -50,7 +50,7 @@ describe('stopCommand', () => {
     })
     const result = await stopCommand({ cwd: '/repo', stdout, stderr, exec })
     expect(result).toEqual({ exitCode: 0, killed: true })
-    expect(stdout.output()).toContain(`Sessão tmux '${SESSION}' encerrada`)
+    expect(stdout.output()).toContain(`tmux session '${SESSION}' terminated`)
   })
 
   it('throws StopAbort when kill-session fails', async () => {
@@ -63,7 +63,7 @@ describe('stopCommand', () => {
     await expect(
       stopCommand({ cwd: '/repo', stdout, stderr, exec }),
     ).rejects.toBeInstanceOf(StopAbort)
-    expect(stderr.output()).toContain('Falha ao matar sessão tmux')
+    expect(stderr.output()).toContain('Failed to kill tmux session')
   })
 
   it('targets the cwd-derived session name, not the literal "ralph"', async () => {
@@ -91,7 +91,7 @@ describe('stopCommand', () => {
     })
     const result = await stopCommand({ cwd: '/work', stdout, stderr, exec })
     expect(result).toEqual({ exitCode: 0, killed: true })
-    expect(stdout.output()).toContain(`Sessão tmux '${workSession}' encerrada`)
+    expect(stdout.output()).toContain(`tmux session '${workSession}' terminated`)
     // Never touches another project's session.
     expect(exec.calls.some((c) => c.includes(otherSession))).toBe(false)
   })
@@ -193,7 +193,7 @@ describe('stopCommand', () => {
     expect(result).toEqual({ exitCode: 0, killed: false })
     expect(exec.calls).toEqual([`tmux has-session -t ${SESSION}`])
     expect(exec.calls.some((c) => c.startsWith('tmux kill-session'))).toBe(false)
-    expect(stdout.output()).toContain(`Nenhuma sessão tmux '${SESSION}'`)
+    expect(stdout.output()).toContain(`No tmux session '${SESSION}'`)
   })
 
   it('StopAbort on kill failure carries exitCode 1 and reports the stderr', async () => {
@@ -217,9 +217,9 @@ describe('stopCommand', () => {
     expect(caught.exitCode).toBe(1)
     // stderr surfaced to the user (trimmed).
     expect(stderr.output()).toContain('permission denied')
-    expect(stderr.output()).toContain('Falha ao matar sessão tmux')
+    expect(stderr.output()).toContain('Failed to kill tmux session')
     // No success message emitted.
-    expect(stdout.output()).not.toContain('encerrada')
+    expect(stdout.output()).not.toContain('terminated')
   })
 
   it('does not emit a kill message when kill-session fails', async () => {
@@ -233,6 +233,6 @@ describe('stopCommand', () => {
       stopCommand({ cwd: '/repo', stdout, stderr, exec }),
     ).rejects.toBeInstanceOf(StopAbort)
     // Even with empty stderr, the failure message is still printed.
-    expect(stderr.output()).toContain('Falha ao matar sessão tmux')
+    expect(stderr.output()).toContain('Failed to kill tmux session')
   })
 })

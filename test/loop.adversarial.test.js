@@ -196,7 +196,7 @@ exit 0
     expect(res.status).toBe(0)
     // No jq parse error must surface anywhere.
     expect(`${res.stdout}\n${res.stderr}`).not.toMatch(/parse error|Invalid numeric literal/i)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toContain('Queue empty, exiting.')
     // The valid JSON was still summarized through the tolerant filter.
     expect(res.stdout).toContain('==> result: success')
   })
@@ -285,10 +285,10 @@ exit 0
     expect(selected).toContain('50')
     expect(selected).toContain('51')
     // No zero-progress abort message — the queue drained normally.
-    expect(res.stderr).not.toMatch(/sem progresso/)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stderr).not.toMatch(/no progress/)
+    expect(res.stdout).toContain('Queue empty, exiting.')
     // #50 ends a failure, #51 a success.
-    expect(res.stdout).toMatch(/1 ok, 1 falharam|1 ok/)
+    expect(res.stdout).toMatch(/1 ok, 1 failed|1 ok/)
   })
 
   it('guard fires ONLY on consecutive identical re-selection (A, B, A does not trigger)', () => {
@@ -345,8 +345,8 @@ exit 0
     const selected = readFileSync(join(workdir, 'selected.log'), 'utf8').trim().split('\n')
     expect(selected).toEqual(['70', '71', '70'])
     // Guard must NOT have fired — no abort message.
-    expect(res.stderr).not.toMatch(/sem progresso/)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stderr).not.toMatch(/no progress/)
+    expect(res.stdout).toContain('Queue empty, exiting.')
   })
 
   it("writes claude's stderr line to the per-issue log (no empty-log signal loss)", () => {
@@ -511,7 +511,7 @@ exit 0
     expect(res.stderr).not.toMatch(/failed to resolve agent invocation/)
     // The loop resolved the agent and drained the queue normally.
     expect(res.stdout).toContain('==> result: success')
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toContain('Queue empty, exiting.')
   })
 
   it('empty queue: exits cleanly with 0 ok / 0 failed when count is "0" immediately', () => {
@@ -528,8 +528,8 @@ exit 0
     const res = runLoop()
     expect(res.signal).toBeNull()
     expect(res.status).toBe(0)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
-    expect(res.stdout).toMatch(/0 ok, 0 falharam|0 ok/)
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    expect(res.stdout).toMatch(/0 ok, 0 failed|0 ok/)
   })
 
   it('--once mode exits 0 and skips end-of-run notify/tmux teardown', () => {
@@ -554,7 +554,7 @@ exit 0
     const res = runLoop({ args: ['--once'] })
     expect(res.signal).toBeNull()
     expect(res.status).toBe(0)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toContain('Queue empty, exiting.')
     // --once must exit before the tmux kill-session teardown.
     const tmuxLog = existsSync(join(workdir, 'tmux.log'))
       ? readFileSync(join(workdir, 'tmux.log'), 'utf8')

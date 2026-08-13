@@ -220,17 +220,17 @@ if [ -f ralph.config.sh ]; then
   fi
 
   if [ "$needs_validate" = "yes" ]; then
-    echo "==> Validando ralph.config.sh contra os manifestos do projeto..."
+    echo "==> Validating ralph.config.sh against the project manifests..."
     claude_failed=0
     run_agent_stream "$RALPH_PKG_DIR/lib/build-validate-prompt.js" "logs/ralph-validate.log"
 
     if [ ! -f .ralph/state.json ]; then
-      echo "❌ Validação não produziu .ralph/state.json. Abortando." >&2
+      echo "❌ Validation did not produce .ralph/state.json. Aborting." >&2
       exit 1
     fi
 
     if ! node "$RALPH_PKG_DIR/lib/finalize-state.js"; then
-      echo "❌ Falha ao finalizar .ralph/state.json. Abortando." >&2
+      echo "❌ Failed to finalize .ralph/state.json. Aborting." >&2
       exit 1
     fi
 
@@ -238,7 +238,7 @@ if [ -f ralph.config.sh ]; then
     set -a
     . ./ralph.config.sh
     set +a
-    echo "==> Validação concluída."
+    echo "==> Validation complete."
   fi
 fi
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ prev_num=""
 while :; do
   count=$(queue_count)
   if [ "$count" = "0" ]; then
-    echo "Fila vazia, encerrando."
+    echo "Queue empty, exiting."
     break
   fi
 
@@ -299,13 +299,13 @@ while :; do
     pick=$(node "$RALPH_PKG_DIR/lib/folder-queue.js" pick "$TASKS_ROOT" 2>/dev/null)
     num="${pick%%$'\t'*}"
     if [ -z "$num" ]; then
-      echo "Fila vazia, encerrando."
+      echo "Queue empty, exiting."
       break
     fi
-    echo "==> Iteração para task #$num ($count restantes) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
+    echo "==> Iteration for task #$num ($count remaining) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
   else
     num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
-    echo "==> Iteração para issue #$num ($count restantes) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
+    echo "==> Iteration for issue #$num ($count remaining) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
   fi
 
   # Stream the agent's JSON to jq, but keep stderr OUT of the JSON pipe: any
@@ -325,7 +325,7 @@ while :; do
     # (this is the folder-mode forward-progress guarantee).
     outcome=$(node "$RALPH_PKG_DIR/lib/folder-queue.js" locate "$TASKS_ROOT" "$num" 2>/dev/null)
     if [ "$outcome" != "done" ]; then
-      echo "⚠️  task #$num não foi concluída (dir: ${outcome:-desconhecido}). Movendo para failed." >&2
+      echo "⚠️  task #$num was not completed (dir: ${outcome:-unknown}). Moving to failed." >&2
       node "$RALPH_PKG_DIR/lib/folder-queue.js" fail "$TASKS_ROOT" "$num" >/dev/null 2>&1 || true
       outcome="failed"
     fi
@@ -358,7 +358,7 @@ while :; do
     # so the queue must drain. If somehow the SAME task is re-selected (e.g. a
     # sweep that could not move the file), abort rather than spin forever.
     if [ "$num" = "$prev_num" ]; then
-      echo "❌ ralph.sh: sem progresso na task #$num (re-selecionada). Abortando o loop." >&2
+      echo "❌ ralph.sh: no progress on task #$num (re-selected). Aborting the loop." >&2
       break
     fi
     prev_num="$num"
@@ -392,7 +392,7 @@ while :; do
     # No exclusion label and still open. If claude failed (non-zero exit) mark
     # the issue claude-failed so the queue advances on the next iteration.
     if [ "$claude_failed" = "1" ]; then
-      echo "⚠️  claude falhou na issue #$num (exit não-zero). Marcando claude-failed." >&2
+      echo "⚠️  claude failed on issue #$num (non-zero exit). Marking claude-failed." >&2
       gh issue edit "$num" --add-label claude-failed >/dev/null 2>&1 || true
     fi
 
@@ -400,7 +400,7 @@ while :; do
     # last iteration and it still has no exclusion state, no progress was made.
     # Record it as a failure and abort rather than spinning forever.
     if [ "$num" = "$prev_num" ]; then
-      echo "❌ ralph.sh: sem progresso na issue #$num (re-selecionada sem mudar de estado). Abortando o loop." >&2
+      echo "❌ ralph.sh: no progress on issue #$num (re-selected without state change). Aborting the loop." >&2
       failures+=("$num")
       break
     fi
@@ -422,7 +422,7 @@ ok_count=${#successes[@]}
 fail_count=${#failures[@]}
 ok_list=$( [ "$ok_count" -gt 0 ] && printf '#%s ' "${successes[@]}" || echo "-" )
 fail_list=$( [ "$fail_count" -gt 0 ] && printf '#%s ' "${failures[@]}" || echo "-" )
-msg="Ralph finalizado: ${ok_count} ok, ${fail_count} falharam, ${duration_min}min. OK: ${ok_list}| FAIL: ${fail_list}"
+msg="Ralph finished: ${ok_count} ok, ${fail_count} failed, ${duration_min}min. OK: ${ok_list}| FAIL: ${fail_list}"
 
 if [ "$fail_count" -eq 0 ]; then
   status="success"
@@ -472,7 +472,7 @@ if [ -n "${CALLMEBOT_KEY:-}" ] && [ -n "${WHATSAPP_PHONE:-}" ]; then
     curl -s --connect-timeout 5 \
       "https://api.callmebot.com/whatsapp.php?phone=${WHATSAPP_PHONE}&text=${encoded}&apikey=${CALLMEBOT_KEY}" \
       > /dev/null || true
-    echo "==> Notificação WhatsApp enviada."
+    echo "==> WhatsApp notification sent."
   fi
 fi
 

@@ -136,7 +136,7 @@ to catch path/template bugs that unit tests can't surface.
    tmux ls   # must not list 'ralph'
    ```
 7. **Re-run `ralph start`** with no eligible issues and confirm it
-   exits with `ℹ️  Nenhuma issue na fila. Nada a fazer.`
+   exits with `ℹ️  No issues in the queue. Nothing to do.`
 8. **Edit `ralph.config.sh`** by hand (e.g. change `MERGE_STRATEGY`),
    then `ralph start` again. Lazy validation should re-run because
    the sha256 of the file changed.
