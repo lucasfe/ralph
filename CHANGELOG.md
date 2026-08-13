@@ -5,6 +5,14 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3](https://github.com/lucasfe/ralph/compare/v0.15.2...v0.15.3) (2026-08-13)
+
+
+### Bug Fixes
+
+* resolve WhatsApp creds from global config file ([#3](https://github.com/lucasfe/ralph/issues/3)) ([#7](https://github.com/lucasfe/ralph/issues/7)) ([8a0b885](https://github.com/lucasfe/ralph/commit/8a0b885f4fb0921fafd03d74bb1da57b11d86a4e))
+* shell loop honors global config for notifications + smarter schedule warning ([#4](https://github.com/lucasfe/ralph/issues/4)) ([#9](https://github.com/lucasfe/ralph/issues/9)) ([462fb6d](https://github.com/lucasfe/ralph/commit/462fb6d58cdcf1b65603b3e9b5d36873eb3bda8f))
+
 ## [0.15.2](https://github.com/lucasfe/ralph/compare/v0.15.1...v0.15.2) (2026-08-12)
 
 
