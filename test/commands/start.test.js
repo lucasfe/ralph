@@ -53,7 +53,7 @@ describe('startCommand', () => {
       [`tmux has-session -t ${SESSION}`]: { exitCode: 0, stdout: '', stderr: '' },
     })
     await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
-    expect(deps.stderr.output()).toContain(`Sessão tmux '${SESSION}' já existe.`)
+    expect(deps.stderr.output()).toContain(`tmux session '${SESSION}' already exists.`)
     // The error hint prints the per-project attach / kill commands.
     expect(deps.stdout.output()).toContain(`tmux attach -t ${SESSION}`)
     expect(deps.stdout.output()).toContain(`tmux kill-session -t ${SESSION}`)
@@ -93,7 +93,7 @@ describe('startCommand', () => {
     })
     const result = await startCommand(deps)
     expect(result.exitCode).toBe(0)
-    expect(deps.stderr.output()).not.toContain('já existe')
+    expect(deps.stderr.output()).not.toContain('already exists')
   })
 
   it('aborts when a critical command is missing', async () => {
@@ -103,7 +103,7 @@ describe('startCommand', () => {
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
     })
     await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
-    expect(deps.stderr.output()).toContain("❌ 'git' não encontrado no PATH")
+    expect(deps.stderr.output()).toContain("❌ 'git' not found in PATH")
   })
 
   it('warns but does not abort when a non-critical command is missing', async () => {
@@ -122,7 +122,7 @@ describe('startCommand', () => {
     })
     const result = await startCommand(deps)
     expect(result.exitCode).toBe(0)
-    expect(deps.stdout.output()).toContain("⚠️  'jq' não encontrado (opcional)")
+    expect(deps.stdout.output()).toContain("⚠️  'jq' not found (optional)")
   })
 
   it('aborts when gh auth status fails', async () => {
@@ -132,7 +132,7 @@ describe('startCommand', () => {
       'gh auth status': { exitCode: 1, stdout: '', stderr: '' },
     })
     await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
-    expect(deps.stderr.output()).toContain('gh não autenticado')
+    expect(deps.stderr.output()).toContain('gh not authenticated')
   })
 
   it('aborts when .mcp.json is invalid', async () => {
@@ -145,7 +145,7 @@ describe('startCommand', () => {
       'jq -e . /work/.mcp.json': { exitCode: 1, stdout: '', stderr: '' },
     })
     await expect(startCommand({ ...deps, cwd: '/work' })).rejects.toBeInstanceOf(StartAbort)
-    expect(deps.stderr.output()).toContain('.mcp.json com JSON inválido')
+    expect(deps.stderr.output()).toContain('.mcp.json has invalid JSON')
   })
 
   it('exits 0 without launching when queue is empty', async () => {
@@ -163,7 +163,7 @@ describe('startCommand', () => {
     })
     const result = await startCommand(deps)
     expect(result).toEqual({ exitCode: 0, started: false })
-    expect(deps.stdout.output()).toContain('Nenhuma issue na fila')
+    expect(deps.stdout.output()).toContain('No issues in the queue')
     expect(deps.exec.calls.some((c) => c.startsWith(`tmux new -d -s ${SESSION}`))).toBe(false)
   })
 
@@ -189,7 +189,7 @@ describe('startCommand', () => {
     })
     const result = await startCommand({ ...deps, cwd })
     expect(result).toEqual({ exitCode: 0, started: true, count: 3 })
-    expect(deps.stdout.output()).toContain('Ralph iniciado em background. 3 issues na fila.')
+    expect(deps.stdout.output()).toContain('Ralph started in background. 3 issues in the queue.')
     // The launch targets the derived name and injects RALPH_TMUX_SESSION into the loop env.
     expect(deps.exec.calls).toContain(launchKey)
     // Success message prints the per-project attach / kill commands.
@@ -234,8 +234,8 @@ describe('startCommand', () => {
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     await startCommand(deps)
-    expect(deps.stdout.output()).toContain("⚠️  Issues com label 'claude-working'")
-    expect(deps.stdout.output()).toContain('Mantendo labels')
+    expect(deps.stdout.output()).toContain("⚠️  Issues with the 'claude-working' label")
+    expect(deps.stdout.output()).toContain('Keeping labels')
     expect(deps.stdout.output()).toContain('gh issue edit <n> --remove-label claude-working')
     expect(deps.exec.calls.some((c) => c.includes('--remove-label'))).toBe(false)
   })
@@ -337,7 +337,7 @@ describe('startCommand', () => {
       apiKey: 'k',
       message: '🟢 Ralph started and is active.',
     })
-    expect(deps.stdout.output()).toContain('Notificação WhatsApp de startup enviada.')
+    expect(deps.stdout.output()).toContain('Startup WhatsApp notification sent.')
   })
 
   it('uses RALPH_STARTUP_MESSAGE override from .env.local when provided', async () => {
@@ -411,7 +411,7 @@ describe('startCommand', () => {
       if (savedPhone !== undefined) process.env.WHATSAPP_PHONE = savedPhone
     }
     expect(waCalled).toBe(false)
-    expect(deps.stdout.output()).toContain('notificações WhatsApp serão puladas')
+    expect(deps.stdout.output()).toContain('WhatsApp notifications will be skipped')
   })
 
   it('logs a warning but does not abort when WhatsApp startup notification fails', async () => {
@@ -439,7 +439,7 @@ describe('startCommand', () => {
     })
     const result = await startCommand({ ...deps, cwd })
     expect(result.started).toBe(true)
-    expect(deps.stdout.output()).toContain('Notificação WhatsApp de startup falhou: http_500')
+    expect(deps.stdout.output()).toContain('Startup WhatsApp notification failed: http_500')
   })
 
   it('does not print warning or write state when remote version is not newer', async () => {

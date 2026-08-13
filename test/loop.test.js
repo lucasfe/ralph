@@ -318,9 +318,9 @@ exit 0
     const res = runLoop({ timeout: 15000 })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
     expect(res.status).toBe(0)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toContain('Queue empty, exiting.')
     // All resolved -> reported as successes, none failed.
-    expect(res.stdout).toMatch(/3 ok, 0 falharam|Ralph finalizado: 3 ok/)
+    expect(res.stdout).toMatch(/3 ok, 0 failed|Ralph finished: 3 ok/)
 
     // #529: per-issue telemetry — the capture sidecar must have appended a
     // RALPH_ISSUE_EVENT line per resolved issue to .ralph/metrics/issues.jsonl.
@@ -555,7 +555,7 @@ exit 0
     expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
     expect(res.status).toBe(0)
     // Queue still drains in once mode.
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toContain('Queue empty, exiting.')
 
     // No run event — the automated path (ralph cycle) is the sole emitter, so
     // ralph.sh must not double-count.
@@ -628,7 +628,7 @@ echo '{"type":"result","subtype":"success"}'
 exit 0
 `
     )
-    // Empty queue: the count query returns 0, so the loop prints "Fila vazia"
+    // Empty queue: the count query returns 0, so the loop prints "Queue empty"
     // and exits right after validation.
     writeStub(
       'gh',
@@ -680,10 +680,10 @@ exit 0
       expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
 
       // The validation pass ran: banner printed and its log was produced.
-      expect(res.stdout).toContain('Validando ralph.config.sh')
+      expect(res.stdout).toContain('Validating ralph.config.sh')
       expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(true)
       // Queue then drains cleanly.
-      expect(res.stdout).toContain('Fila vazia, encerrando.')
+      expect(res.stdout).toContain('Queue empty, exiting.')
     },
   )
 
@@ -700,9 +700,9 @@ exit 0
       expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
 
       // Validation must NOT run.
-      expect(res.stdout).not.toContain('Validando ralph.config.sh')
+      expect(res.stdout).not.toContain('Validating ralph.config.sh')
       expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(false)
-      expect(res.stdout).toContain('Fila vazia, encerrando.')
+      expect(res.stdout).toContain('Queue empty, exiting.')
     },
   )
 
@@ -719,7 +719,7 @@ exit 0
       expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
       expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
 
-      expect(res.stdout).toContain('Validando ralph.config.sh')
+      expect(res.stdout).toContain('Validating ralph.config.sh')
       expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(true)
       // finalize-state.js (run for real) records the resolved agent, so the
       // healed state now carries agent: "claude".
@@ -753,7 +753,7 @@ exit 0
       expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
 
       // Revalidation fired (safe self-heal), and it went through the agent CLI.
-      expect(res.stdout).toContain('Validando ralph.config.sh')
+      expect(res.stdout).toContain('Validating ralph.config.sh')
       expect(existsSync(marker), 'validation pass must have invoked the agent CLI').toBe(true)
       expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(true)
       // The garbage was replaced with a well-formed, finalized state.json.
@@ -781,7 +781,7 @@ exit 0
       expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
       expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
 
-      expect(res.stdout).toContain('Validando ralph.config.sh')
+      expect(res.stdout).toContain('Validating ralph.config.sh')
       // The validation pass went through CODEX, not Claude.
       expect(existsSync(codexMarker), 'validation must run through the codex CLI').toBe(true)
       expect(existsSync(claudeMarker), 'claude CLI must NOT be invoked when agent=codex').toBe(false)
@@ -808,7 +808,7 @@ exit 0
       const res1 = runLoop({ timeout: 20000, extraEnv: { RALPH_AGENT: 'codex' } })
       expect(res1.signal, `run1 hung. stdout:\n${res1.stdout}\nstderr:\n${res1.stderr}`).toBeNull()
       expect(res1.status, `run1 stderr:\n${res1.stderr}`).toBe(0)
-      expect(res1.stdout).toContain('Validando ralph.config.sh')
+      expect(res1.stdout).toContain('Validating ralph.config.sh')
       const state1 = JSON.parse(readFileSync(join(workdir, '.ralph', 'state.json'), 'utf8'))
       expect(state1.agent).toBe('codex')
 
@@ -822,13 +822,13 @@ exit 0
       expect(res2.status, `run2 stderr:\n${res2.stderr}`).toBe(0)
 
       expect(res2.stdout, 'second run must not re-validate (anti-churn)').not.toContain(
-        'Validando ralph.config.sh',
+        'Validating ralph.config.sh',
       )
       expect(existsSync(codexMarker), 'agent CLI must not run for validation on the second pass').toBe(
         false,
       )
       expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(false)
-      expect(res2.stdout).toContain('Fila vazia, encerrando.')
+      expect(res2.stdout).toContain('Queue empty, exiting.')
     },
   )
 
@@ -873,11 +873,11 @@ exit 0
 
       // The default resolved empty→claude, matching the stored agent: no re-check.
       expect(res.stdout, 'empty resolved-agent must default to claude and skip').not.toContain(
-        'Validando ralph.config.sh',
+        'Validating ralph.config.sh',
       )
       expect(existsSync(claudeMarker), 'no validation pass should have run the agent').toBe(false)
       expect(existsSync(join(workdir, 'logs', 'ralph-validate.log'))).toBe(false)
-      expect(res.stdout).toContain('Fila vazia, encerrando.')
+      expect(res.stdout).toContain('Queue empty, exiting.')
     },
   )
 })
@@ -934,7 +934,7 @@ describe('ralph.sh global config read path — issue #4', () => {
     expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
     expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
     // The notification fired (bash echoes this only after the curl send).
-    expect(res.stdout).toContain('Notificação WhatsApp enviada')
+    expect(res.stdout).toContain('WhatsApp notification sent')
     // The curl call carried the global creds.
     expect(existsSync(curlLog), `curl was never called. stdout:\n${res.stdout}`).toBe(true)
     const url = readFileSync(curlLog, 'utf8')
@@ -1008,7 +1008,7 @@ describe('ralph.sh global config read path — issue #4', () => {
     })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
     expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
-    expect(res.stdout).not.toContain('Notificação WhatsApp enviada')
+    expect(res.stdout).not.toContain('WhatsApp notification sent')
     expect(existsSync(curlLog), 'curl must not be called when the cred is empty').toBe(false)
   })
 
@@ -1027,7 +1027,7 @@ describe('ralph.sh global config read path — issue #4', () => {
     const res = runLoopNoCreds({ extraEnv: { XDG_CONFIG_HOME: xdgHome } })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
     expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
+    expect(res.stdout).toContain('Queue empty, exiting.')
     expect(existsSync(curlLog)).toBe(false)
   })
 })
@@ -1097,8 +1097,8 @@ exit 0
     const res = runLoop({ timeout: 20000, extraEnv: { TASK_SOURCE: 'folder' } })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
     expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
-    expect(res.stdout).toContain('Fila vazia, encerrando.')
-    expect(res.stdout).toMatch(/2 ok, 0 falharam/)
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    expect(res.stdout).toMatch(/2 ok, 0 failed/)
 
     // Both tasks ended in done.
     expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'done', '001-first.md'))).toBe(true)
@@ -1138,7 +1138,7 @@ exit 0
     // Swept out of todo into failed so the queue drains (no infinite spin).
     expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'todo', '007-broken.md'))).toBe(false)
     expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'failed', '007-broken.md'))).toBe(true)
-    expect(res.stdout).toMatch(/0 ok, 1 falharam/)
+    expect(res.stdout).toMatch(/0 ok, 1 failed/)
 
     // Folder telemetry: verdict fail; issue_number is the task id.
     const events = readFileSync(join(workdir, '.ralph', 'metrics', 'issues.jsonl'), 'utf8')
