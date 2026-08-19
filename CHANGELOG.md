@@ -5,6 +5,14 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.6](https://github.com/lucasfe/ralph/compare/v0.15.5...v0.15.6) (2026-08-19)
+
+
+### Bug Fixes
+
+* make `ralph init` fail outside a git repository ([#16](https://github.com/lucasfe/ralph/issues/16)) ([#19](https://github.com/lucasfe/ralph/issues/19)) ([0282971](https://github.com/lucasfe/ralph/commit/028297140f74144580f55905ccfd24163c17a2be))
+* replace contentless tool_result flood with informative tool_use lines ([#15](https://github.com/lucasfe/ralph/issues/15)) ([#17](https://github.com/lucasfe/ralph/issues/17)) ([13b957f](https://github.com/lucasfe/ralph/commit/13b957f9b16d0b32208ee7df52f83f7dd1f87525))
+
 ## [0.15.5](https://github.com/lucasfe/ralph/compare/v0.15.4...v0.15.5) (2026-08-19)
 
 
