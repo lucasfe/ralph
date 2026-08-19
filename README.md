@@ -63,6 +63,11 @@ ralph start    # launch the loop in a detached tmux session
 ralph stop     # kill this project's tmux session when you want Ralph to halt
 ```
 
+`ralph init` must be run **inside a git repository**. It checks this first and,
+if you are outside a git work tree, aborts (exit code 1) before any prompt or
+file write with `❌ ralph init must be run inside a git repository. Run 'git
+init' first (or cd into your repo).`
+
 `ralph init` inspects the manifests in your repo
 (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `Gemfile`,
 `composer.json`, lockfiles) and writes a `ralph.config.sh` with the
