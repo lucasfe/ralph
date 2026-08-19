@@ -5,6 +5,13 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.5](https://github.com/lucasfe/ralph/compare/v0.15.4...v0.15.5) (2026-08-19)
+
+
+### Bug Fixes
+
+* make `ralph start` folder-aware in TASK_SOURCE=folder mode ([#13](https://github.com/lucasfe/ralph/issues/13)) ([410ef9a](https://github.com/lucasfe/ralph/commit/410ef9a8aa3918c9300fcac18888445ca4aa93ad))
+
 ## [0.15.4](https://github.com/lucasfe/ralph/compare/v0.15.3...v0.15.4) (2026-08-13)
 
 
