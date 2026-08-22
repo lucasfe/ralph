@@ -5,6 +5,13 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0](https://github.com/lucasfe/ralph/compare/v0.15.6...v0.16.0) (2026-08-22)
+
+
+### Features
+
+* add `ralph update` for npm-global installs ([#21](https://github.com/lucasfe/ralph/issues/21)) ([#29](https://github.com/lucasfe/ralph/issues/29)) ([9d80afe](https://github.com/lucasfe/ralph/commit/9d80afe9c39fa2b168dc36b4947a8444fbe151c4))
+
 ## [0.15.6](https://github.com/lucasfe/ralph/compare/v0.15.5...v0.15.6) (2026-08-19)
 
 
