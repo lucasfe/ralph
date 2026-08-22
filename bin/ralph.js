@@ -8,6 +8,7 @@ import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
+import { updateCommand, UpdateAbort } from '../lib/commands/update.js'
 import {
   scheduleHeartbeatCommand,
   scheduleInstallCommand,
@@ -198,6 +199,25 @@ schedule
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof ScheduleAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('update')
+  .description('Update Ralph itself to the latest published version')
+  .option('--force', 'Reinstall even when already on the latest version')
+  .action(async (opts) => {
+    try {
+      const result = await updateCommand({
+        force: Boolean(opts.force),
+        currentVersion: pkg.version,
+      })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof UpdateAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e

@@ -61,6 +61,7 @@ ralph init     # one-time: detect stack, write config, slash command, gitignore
 ralph doctor   # verify required deps are on PATH
 ralph start    # launch the loop in a detached tmux session
 ralph stop     # kill this project's tmux session when you want Ralph to halt
+ralph update   # update Ralph itself to the latest published version (any directory)
 ```
 
 `ralph init` must be run **inside a git repository**. It checks this first and,
@@ -89,6 +90,20 @@ the agent's raw JSON stream (Claude's `stream-json`, or Codex's
 `codex exec --json` JSONL) to `logs/ralph-issue-*.jsonl` and appends one
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
 [Monitoring data model](#monitoring-data-model)).
+
+`ralph update` updates the Ralph CLI itself — it is the one command that needs
+neither a git repository nor an initialized Ralph project, so you can run it
+from any directory. It asks the npm registry for the latest published version
+and updates **only** when this copy of Ralph lives under `npm root -g`, running
+`npm install -g @lucasfe/ralph@latest` and reporting both the version it came
+from and the version it moved to. When you are already current it prints
+`✅ Ralph is already up to date (<version>)` and installs nothing; pass
+`--force` to reinstall anyway (handy for repairing a broken install). Every
+other install layout — a git/dev checkout, a pnpm/yarn/bun global, `npx` — is
+**not** updated for you: Ralph refuses to guess, explains what it found, and
+prints the `npm install -g @lucasfe/ralph@latest` command to run by hand (exit
+code 1). A failed registry query is likewise reported and attempts no install
+(exit code 1).
 
 ## How Ralph resolves issues
 
