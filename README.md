@@ -58,7 +58,7 @@ In a git repo on the branch you want Ralph to work from:
 
 ```bash
 ralph init     # one-time: detect stack, write config, slash command, gitignore
-ralph doctor   # verify required deps are on PATH
+ralph doctor   # verify required deps are on PATH, and report installed vs cached latest
 ralph start    # launch the loop in a detached tmux session
 ralph stop     # kill this project's tmux session when you want Ralph to halt
 ralph update   # update Ralph itself to the latest published version (any directory)
@@ -77,6 +77,24 @@ the values are left empty and the agent is instructed to figure them out
 at runtime. The stack detection is non-interactive; the only prompt is the
 coding-agent picker (see below), and even that is skipped when a
 `--agent` flag is passed or stdin is not a TTY (it defaults to `claude`).
+
+`ralph doctor` checks the deps required by the agent and task source you
+configured, and prints one version line directly under its header:
+`version: 0.17.0 — cached latest: 0.18.0 — update available (run npm i -g
+@lucasfe/ralph)` when the cache holds something newer, `version: 0.17.0 —
+cached latest: 0.17.0 — up to date` when it holds the version you already have
+(or an older one — a local build ahead of the registry is not stale), and
+`version: 0.17.0 — cached latest: unknown (no update check cached yet)` when
+nothing usable is cached. The "latest" half is **read** from the same global
+`update-check.json` that `ralph start`'s weekly check writes (see
+[Troubleshooting](#troubleshooting)): `doctor` never queries the registry,
+never writes that file, and applies no 7-day window — it reports whatever the
+last check left behind, however old. That keeps it usable offline and on a
+half-broken install, which is when you reach for it. The line is **additive
+output only** — `doctor`'s exit code still answers for the deps alone, so a
+wrapper or CI step gating on `ralph doctor` does not start failing the day a
+release lands — and it is printed **above** the dep report, so it survives the
+early exit on a missing required dep.
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
@@ -555,7 +573,7 @@ line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
 
 **The value parse is permissive, which is a footgun on a
 negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -785,12 +803,29 @@ one file for your whole machine, so five Ralph repos cost one check a
 week between them rather than one each. It is a separate file from the
 credential dotenv (`ralph/.env`) in that same directory, which the check
 never reads or writes. Deleting `.ralph/state.json` does **not** reset
-the window: the update logic no longer reads that file.
+the window: the update logic no longer reads that file. `ralph doctor`
+reads that same file for its `cached latest:` line, and only reads it: it
+makes no registry query and never stamps the window, so running `doctor`
+neither refreshes nor consumes the weekly check.
 
 Run `ralph update` to update — it picks the right command for a global
 npm, pnpm, yarn, or bun install (see [Quick start](#quick-start)) — or
 `npm i -g @lucasfe/ralph` by hand. To silence the check and the question
 together instead, set [`RALPH_NO_UPDATE_CHECK`](#environment-variables).
+
+**`ralph doctor` reports `cached latest: unknown`.** — Nothing usable is
+in the update-check cache yet, which is the normal state on a fresh
+install: only `ralph start` writes that file, and `doctor` deliberately
+makes no registry query of its own. Run `ralph start` once and the line
+fills in on the next `doctor`; to learn the latest version right now,
+`ralph update` asks the registry directly (and installs nothing when you
+are already current). The line also reads `unknown` when the cache file
+is unreadable or hand-mangled into something that is not a version, and
+it stays `unknown` for as long as
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables) is set, because the
+check that would populate it never runs. Either way it is a missing
+answer, never a failure: `doctor`'s exit code is decided by the dep
+report alone.
 
 **No issues are picked up.** — Check the queue filter Ralph uses:
 `state:open -label:claude-working -label:claude-failed -label:do-not-ralph`.
