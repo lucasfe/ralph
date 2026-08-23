@@ -93,17 +93,36 @@ telemetry event line to `.ralph/metrics/issues.jsonl` (see
 
 `ralph update` updates the Ralph CLI itself — it is the one command that needs
 neither a git repository nor an initialized Ralph project, so you can run it
-from any directory. It asks the npm registry for the latest published version
-and updates **only** when this copy of Ralph lives under `npm root -g`, running
-`npm install -g @lucasfe/ralph@latest` and reporting both the version it came
-from and the version it moved to. When you are already current it prints
+from any directory. It asks the npm registry for the latest published version,
+works out how this copy of Ralph was installed, and runs **that** package
+manager's own global-install command, reporting both the version it came from
+and the version it moved to. When you are already current it prints
 `✅ Ralph is already up to date (<version>)` and installs nothing; pass
-`--force` to reinstall anyway (handy for repairing a broken install). Every
-other install layout — a git/dev checkout, a pnpm/yarn/bun global, `npx` — is
-**not** updated for you: Ralph refuses to guess, explains what it found, and
-prints the `npm install -g @lucasfe/ralph@latest` command to run by hand (exit
-code 1). A failed registry query is likewise reported and attempts no install
-(exit code 1).
+`--force` to reinstall anyway (handy for repairing a broken install). A failed
+registry query is reported and attempts no install (exit code 1).
+
+The layout is worked out from where this copy of Ralph lives:
+
+| Install layout | What `ralph update` does | Exit code |
+| --- | --- | --- |
+| Global npm — under `npm root -g` | `npm install -g @lucasfe/ralph@latest` | 0 |
+| Global pnpm | `pnpm add -g @lucasfe/ralph@latest` | 0 |
+| Global yarn | `yarn global add @lucasfe/ralph@latest` | 0 |
+| Global bun | `bun add -g @lucasfe/ralph@latest` | 0 |
+| `npx` — running out of the npx cache | Nothing to do: npx always fetches the latest published version. | 0 |
+| Linked — the package root is a symlink, or holds a `.git` entry | Nothing: Ralph will not write a published tarball over a linked install or a working tree. A `.git` entry means a dev checkout, so it points you at `git pull`; a bare symlink gets the linking manager's own global-add command instead (or, when that is unclear, "update it with whichever package manager created it"). | 0 |
+| Unrecognized, or ambiguous — the path matches two managers at once | Refuses to guess, explains what it found, and prints `npm install -g @lucasfe/ralph@latest` to run by hand. | 1 |
+
+The two refusals — `npx` and linked — print `ℹ️ Nothing for Ralph to update
+here.` followed by what was found and what to do instead, and **exit 0**:
+nothing failed, there is simply nothing for Ralph to install. They are decided
+from the package root alone, before any package-manager guess, so a dev
+checkout linked into a pnpm or yarn store is still treated as linked rather
+than reinstalled over. An ambiguous path deliberately falls into the last row
+instead of picking a manager at random. One gap worth knowing: a pnpm global
+directory with no `pnpm` path segment (pnpm 6's `~/.pnpm-global`, a hand-set
+`global-dir`, or `PNPM_HOME=/opt/pnpm-home`) is not recognized and lands in
+that last row too.
 
 ## How Ralph resolves issues
 
@@ -648,7 +667,9 @@ based on the current `ralph.config.sh` and project manifests.
 
 **Update notice keeps appearing.** — `ralph start` warns once per
 release. The reminder is deduped via `last_seen_release` in
-`.ralph/state.json`. Run `npm i -g @lucasfe/ralph` to update.
+`.ralph/state.json`. Run `ralph update` to update — it picks the right
+command for a global npm, pnpm, yarn, or bun install (see
+[Quick start](#quick-start)) — or `npm i -g @lucasfe/ralph` by hand.
 
 **No issues are picked up.** — Check the queue filter Ralph uses:
 `state:open -label:claude-working -label:claude-failed -label:do-not-ralph`.
