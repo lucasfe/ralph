@@ -521,6 +521,47 @@ recorded on the last validation:
   the config under the agent that will actually run it (so a Codex-only
   machine can bootstrap), even when the config bytes are unchanged.
 
+### Environment variables
+
+Not every setting lives in `ralph.config.sh`. The variable below is read
+from the **process environment** only. Putting it in `ralph.config.sh`
+has no effect: the Node CLI never sources that file (it text-parses
+individual assignments out of it), and this variable is not resolved
+through `.env.local` or the global `~/.config/ralph/.env` either — those
+feed a fixed set of notification credentials (see
+[Global config file](#global-config-file-share-creds-across-repos)).
+Export it in your shell, your shell profile, or prefix it on the command
+line.
+
+| Variable                | Default               | Purpose                                                                                                                                                                                   |
+| ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice. |
+
+**The value parse is permissive, which is a footgun on a
+negatively-named flag.** Only `0` and `false` keep the check **on**
+(case-insensitive, surrounding whitespace ignored); unset or empty also
+keeps it on. **Every other value disables the check** — including the
+ones that read as a refusal:
+
+```bash
+RALPH_NO_UPDATE_CHECK=1          # disabled
+RALPH_NO_UPDATE_CHECK=true       # disabled
+RALPH_NO_UPDATE_CHECK=yes        # disabled
+RALPH_NO_UPDATE_CHECK=no         # DISABLED — not "no, keep checking"
+RALPH_NO_UPDATE_CHECK=off        # DISABLED
+RALPH_NO_UPDATE_CHECK=disabled   # DISABLED
+RALPH_NO_UPDATE_CHECK=0          # enabled
+RALPH_NO_UPDATE_CHECK=false      # enabled
+RALPH_NO_UPDATE_CHECK=           # enabled (empty is treated as unset)
+```
+
+To turn the check back on, unset the variable (or set it to `0`) rather
+than assigning it something that looks negative.
+
+This table is not the only environment-sensitive setting: `RALPH_AGENT`
+is honored as an env override on top of its `ralph.config.sh` value, as
+described in the re-validation list above.
+
 ## Notification setup
 
 Ralph posts a one-line summary at the end of every run, and a startup
@@ -695,11 +736,26 @@ reprocess. Answer `y` to re-queue the issues.
 `ralph start` again. Lazy validation re-runs and rewrites the state
 based on the current `ralph.config.sh` and project manifests.
 
-**Update notice keeps appearing.** — `ralph start` warns once per
-release. The reminder is deduped via `last_seen_release` in
-`.ralph/state.json`. Run `ralph update` to update — it picks the right
-command for a global npm, pnpm, yarn, or bun install (see
-[Quick start](#quick-start)) — or `npm i -g @lucasfe/ralph` by hand.
+**Update notice keeps appearing.** — There is no per-release dedupe. What
+is throttled is the **registry query**, not the notice: `ralph start`
+asks npm for the latest version at most **once every 7 days**, then keeps
+printing the notice on *every* run for as long as the version it cached
+is newer than the one you have. So the notice is expected to repeat until
+you actually update (or a later check finds nothing newer).
+
+That 7-day window is **global, not per-repo**. It lives in
+`$XDG_CONFIG_HOME/ralph/update-check.json`, or
+`~/.config/ralph/update-check.json` when `XDG_CONFIG_HOME` is unset —
+one file for your whole machine, so five Ralph repos cost one check a
+week between them rather than one each. It is a separate file from the
+credential dotenv (`ralph/.env`) in that same directory, which the check
+never reads or writes. Deleting `.ralph/state.json` does **not** reset
+the window: the update logic no longer reads that file.
+
+Run `ralph update` to update — it picks the right command for a global
+npm, pnpm, yarn, or bun install (see [Quick start](#quick-start)) — or
+`npm i -g @lucasfe/ralph` by hand. To silence the check instead, set
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables).
 
 **No issues are picked up.** — Check the queue filter Ralph uses:
 `state:open -label:claude-working -label:claude-failed -label:do-not-ralph`.
