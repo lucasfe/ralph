@@ -124,6 +124,36 @@ directory with no `pnpm` path segment (pnpm 6's `~/.pnpm-global`, a hand-set
 `global-dir`, or `PNPM_HOME=/opt/pnpm-home`) is not recognized and lands in
 that last row too.
 
+When the install command itself fails, `ralph update` exits with **that command's
+own exit code** (1, 127, 243 — whatever it returned) and prints the diagnosis
+under the headline instead of an opaque `exited 1`: a bounded tail of what the
+package manager wrote, then a hint when the failure names a permission problem.
+The tail is the **last** 12 non-blank lines — npm prints its error code at the
+*end* of a log — each clipped to 200 columns, with every clip marked `…` and any
+dropped lines counted in a `… N earlier lines omitted` line, so a multi-megabyte
+npm log cannot flood the terminal and a truncated tail never reads as complete.
+
+The hint fires on `EACCES`, `EPERM`, `errno -13`, `permission denied` or
+`operation not permitted` appearing anywhere the failure carries text — both
+streams, the error message, the error code — and it is matched **before** the
+tail is clipped, so it still appears when the code itself was clipped away. It
+names the two fixes that work, for the manager that actually ran: point the
+global install directory somewhere you own (`npm config set prefix
+~/.npm-global`, `pnpm setup`, `yarn config set prefix ~/.yarn`, `BUN_INSTALL=…`,
+or, for a manager Ralph has no knob for, that manager's own global-prefix
+setting), or re-run that one install with elevated privileges. The hint is
+additive: the raw output above it is what tells a root-owned prefix apart from,
+say, a manager binary that is not executable.
+
+When both streams are empty — which is what a command that could not be spawned
+at all looks like — the failure's own message is reported instead, bounded the
+same way, so `spawn npm ENOENT` (npm is not on your `PATH`) is never swallowed;
+only a failure that says nothing anywhere falls back to naming the command for
+you to run yourself. Nothing ran in that case, so there is no exit code to pass
+through and it exits 1. All of it goes to stderr, one whole line per write, and a
+successful update writes nothing there at all — so a wrapper or CI step that
+captures only stderr keeps the whole diagnosis and nothing else.
+
 ## How Ralph resolves issues
 
 Each iteration runs a **team** of context-isolated specialists,
