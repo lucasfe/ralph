@@ -116,9 +116,15 @@ to catch path/template bugs that unit tests can't surface.
      `DEV_BRANCH`, `PR_TARGET` match the project's stack.
    - `.gitignore` gets `.ralph/`, `ralph-notify.sh`, `.env.local`
      appended (idempotent — re-running init must not duplicate).
-4. **Run `ralph doctor`** and confirm the dep summary is correct for
-   the OS (`brew install ...` on macOS, `apt install ...` on
-   Linux/WSL).
+4. **Run `ralph doctor`** and confirm that:
+   - The dep summary is correct for the OS (`brew install ...` on
+     macOS, `apt install ...` on Linux/WSL).
+   - The version line under the header names the tarball version you
+     just installed. Its `cached latest:` half comes from the global
+     update-check cache that only `ralph start` writes, so on a machine
+     that has never run `ralph start` it reads `unknown (no update check
+     cached yet)` — expected here, not a failure. `doctor` must return
+     immediately either way: it makes no registry query.
 5. **Pick a real open issue** in the project and run `ralph start`.
    Watch via `tmux attach -t ralph`. Verify that:
    - Lazy validation runs on first start (`.ralph/state.json` did not

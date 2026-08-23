@@ -229,7 +229,10 @@ program
   .description('Check required system deps and print install commands for missing ones')
   .action(async () => {
     try {
-      const result = await doctorCommand()
+      // #27: currentVersion feeds doctor's cached installed-vs-latest line. Same
+      // pkg.version the other commands get — one source of truth for "what is
+      // running", and doctor still makes no network call to learn the other half.
+      const result = await doctorCommand({ currentVersion: pkg.version })
       process.exit(result.exitCode)
     } catch (e) {
       if (e instanceof DoctorAbort) {
