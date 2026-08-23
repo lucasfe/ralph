@@ -80,16 +80,36 @@ coding-agent picker (see below), and even that is skipped when a
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
-optionally prints an upgrade notice, and launches the bash loop inside
-a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
-project path, so multiple repos can run Ralph concurrently without
-colliding). The exact attach / kill commands for your session are
-printed by `ralph start`; detach with `Ctrl+B` then `D`, or tail
-per-issue logs in `logs/ralph-issue-*.log`. Each iteration also tees
+optionally prints an upgrade notice (and, on an interactive terminal,
+offers to install it), and launches the bash loop inside a per-project
+tmux session named `ralph-<repo>-<hash>` (derived from the project path,
+so multiple repos can run Ralph concurrently without colliding). The
+exact attach / kill commands for your session are printed by
+`ralph start`; detach with `Ctrl+B` then `D`, or tail per-issue logs in
+`logs/ralph-issue-*.log`. Each iteration also tees
 the agent's raw JSON stream (Claude's `stream-json`, or Codex's
 `codex exec --json` JSONL) to `logs/ralph-issue-*.jsonl` and appends one
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
 [Monitoring data model](#monitoring-data-model)).
+
+When that upgrade notice fires **and** stdin is a terminal, `ralph start`
+asks `Update now? [y/N]:` — before the `gh` checks and before the tmux
+session, so nothing has been launched yet when you answer. Answering **y**
+runs the same update `ralph update` does (described below), prints
+``✅ Updated to <version> — run `ralph start` again.``, and **exits 0
+without starting the loop**: the running process still holds pre-update code
+and the old install's copy of the loop script, so re-launching by hand is the
+only way to be sure the loop runs one version rather than a mixture of two.
+Declining costs nothing — the loop starts immediately, with no extra output.
+An update that does not complete is not fatal either: a failed install, or an
+`npx` run / linked dev checkout with nothing for Ralph to install, prints
+`⚠️  Update did not complete — starting Ralph on <version>.` and the loop
+runs on the version you already have. Without a TTY — cron, launchd, CI, a
+piped stdin — nothing is ever asked and the loop always starts, and
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables) suppresses the question
+together with the check. Declining is not remembered, so the question returns
+on the next run that still finds a newer version (see
+[Troubleshooting](#troubleshooting)).
 
 `ralph update` updates the Ralph CLI itself — it is the one command that needs
 neither a git repository nor an initialized Ralph project, so you can run it
@@ -535,7 +555,7 @@ line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice. |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. |
 
 **The value parse is permissive, which is a footgun on a
 negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -743,6 +763,21 @@ printing the notice on *every* run for as long as the version it cached
 is newer than the one you have. So the notice is expected to repeat until
 you actually update (or a later check finds nothing newer).
 
+On an interactive terminal the question that follows the notice —
+`Update now? [y/N]:` — repeats with it, because declining is not recorded
+anywhere: every run that still finds a newer version asks again. An empty
+answer declines, and so does anything that is not `y` — the answer is
+trimmed and lowercased first, so `Y` and ` y ` accept too. Accepting runs
+the same update `ralph update` would, then **exits without starting the
+loop** and asks you to run `ralph start` again: the running process already
+holds pre-update code and a `templates/ralph.sh` path belonging to the old
+install, so re-launching is the only way to be certain the loop runs one
+version rather than a mixture of two. Declining, or an update that fails
+or finds nothing to install here (an `npx` run, a linked dev checkout),
+starts the loop on the version you already have — see
+[Quick start](#quick-start). Without a TTY (cron, launchd, CI) nothing is
+ever asked: you get the notice and the loop starts.
+
 That 7-day window is **global, not per-repo**. It lives in
 `$XDG_CONFIG_HOME/ralph/update-check.json`, or
 `~/.config/ralph/update-check.json` when `XDG_CONFIG_HOME` is unset —
@@ -754,8 +789,8 @@ the window: the update logic no longer reads that file.
 
 Run `ralph update` to update — it picks the right command for a global
 npm, pnpm, yarn, or bun install (see [Quick start](#quick-start)) — or
-`npm i -g @lucasfe/ralph` by hand. To silence the check instead, set
-[`RALPH_NO_UPDATE_CHECK`](#environment-variables).
+`npm i -g @lucasfe/ralph` by hand. To silence the check and the question
+together instead, set [`RALPH_NO_UPDATE_CHECK`](#environment-variables).
 
 **No issues are picked up.** — Check the queue filter Ralph uses:
 `state:open -label:claude-working -label:claude-failed -label:do-not-ralph`.

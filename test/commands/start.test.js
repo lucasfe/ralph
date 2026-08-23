@@ -58,6 +58,38 @@ const baseDeps = () => ({
   cacheFs: new Volume(),
 })
 
+// #24/#25: the shared update-flow harness. A full github-source preflight that
+// gets all the way to the tmux launch, with a newer version (0.2.0) published on
+// the registry, plus the deps every update test starts from. Hoisted to module
+// scope so the #24 notice block and the #25 prompt block drive one identical
+// preflight — a divergence between them would hide a regression in either.
+const ORPHAN_KEY =
+  'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"'
+const QUEUE_KEY =
+  'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length'
+const NPM_VIEW = 'npm view @lucasfe/ralph version'
+const LAUNCH_KEY = `tmux new -d -s ${SESSION} cd '/repo' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
+const T0 = Date.parse('2026-08-22T12:00:00.000Z')
+const DAY = 24 * 60 * 60 * 1000
+
+const preflight = (overrides = {}) => ({
+  [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
+  'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+  [ORPHAN_KEY]: { exitCode: 0, stdout: '', stderr: '' },
+  [QUEUE_KEY]: { exitCode: 0, stdout: '1', stderr: '' },
+  [NPM_VIEW]: { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
+  [LAUNCH_KEY]: { exitCode: 0, stdout: '', stderr: '' },
+  ...overrides,
+})
+
+const updateDeps = (overrides = {}) => {
+  const deps = baseDeps()
+  deps.currentVersion = '0.1.0'
+  deps.now = () => T0
+  Object.assign(deps, overrides)
+  return deps
+}
+
 describe('startCommand', () => {
   it('aborts when this project tmux session already exists', async () => {
     const deps = baseDeps()
@@ -257,35 +289,7 @@ describe('startCommand', () => {
   // queue never saw it) and after every gh call. It now runs once, right after
   // the dependency guard and before the first gh invocation.
   describe('weekly update check (#24)', () => {
-    const ORPHAN_KEY =
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"'
-    const QUEUE_KEY =
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length'
-    const NPM_VIEW = 'npm view @lucasfe/ralph version'
-    const LAUNCH_KEY = `tmux new -d -s ${SESSION} cd '/repo' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
-    const T0 = Date.parse('2026-08-22T12:00:00.000Z')
-    const DAY = 24 * 60 * 60 * 1000
     const CACHE_PATH = versionCachePath({ processEnv: {}, home: HOME })
-
-    // A full github-source preflight that gets all the way to the tmux launch,
-    // with a newer version published on the registry.
-    const preflight = (overrides = {}) => ({
-      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
-      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      [ORPHAN_KEY]: { exitCode: 0, stdout: '', stderr: '' },
-      [QUEUE_KEY]: { exitCode: 0, stdout: '1', stderr: '' },
-      [NPM_VIEW]: { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
-      [LAUNCH_KEY]: { exitCode: 0, stdout: '', stderr: '' },
-      ...overrides,
-    })
-
-    const updateDeps = (overrides = {}) => {
-      const deps = baseDeps()
-      deps.currentVersion = '0.1.0'
-      deps.now = () => T0
-      Object.assign(deps, overrides)
-      return deps
-    }
 
     it('prints a notice on stdout when a newer version is published', async () => {
       const deps = updateDeps()
@@ -464,6 +468,186 @@ describe('startCommand', () => {
       expect(seen[0].processEnv).toBe(deps.processEnv)
       expect(seen[0].home).toBe(HOME)
       expect(seen[0].fs).toBe(deps.cacheFs)
+    })
+  })
+
+  // #25: #24's passive notice becomes a question when stdin is interactive.
+  // Yes delegates to the `ralph update` machinery and returns WITHOUT starting
+  // the loop (the running process holds pre-update module state and an old
+  // templates/ralph.sh path, so a half-swapped loop is never launched); no
+  // starts the loop immediately; an accepted update that fails warns and still
+  // starts the loop on the current version.
+  //
+  // isTTY is passed EXPLICITLY in every test here so the ambient terminal can
+  // never decide the outcome — the suite must behave identically under a TTY,
+  // under CI, and under a piped `npm test`.
+  describe('TTY-gated update prompt (#25)', () => {
+    const PROMPT = 'Update now? [y/N]: '
+
+    // Records what was asked and what runUpdate was handed, so the wiring is
+    // asserted rather than inferred from output.
+    const promptDeps = (overrides = {}) => {
+      const asked = []
+      const updates = []
+      const deps = updateDeps({
+        isTTY: true,
+        ask: async (question, options) => {
+          asked.push({ question, options })
+          return true
+        },
+        runUpdate: async (args) => {
+          updates.push(args)
+          return { exitCode: 0, updated: true, from: '0.1.0', to: '0.2.0' }
+        },
+        ...overrides,
+      })
+      deps.asked = asked
+      deps.updates = updates
+      deps.exec = makeExec(preflight())
+      return deps
+    }
+
+    it('asks whether to update when stdin is a TTY and a newer version is published', async () => {
+      const deps = promptDeps()
+      await startCommand(deps)
+      expect(deps.asked).toHaveLength(1)
+      expect(deps.asked[0].question).toBe(PROMPT)
+      // #25: the first real use of the already-declared `stdin` param.
+      expect(deps.asked[0].options.input).toBe(deps.stdin)
+      expect(deps.asked[0].options.output).toBe(deps.stdout)
+    })
+
+    it('keeps #24’s notice on the TTY path and asks after it', async () => {
+      // The ordering half of the name is asserted, not assumed: `ask` records
+      // whether the notice was already on stdout at the moment it was called.
+      let asks = 0
+      let noticeAlreadyPrinted = null
+      const deps = promptDeps({
+        ask: async () => {
+          asks += 1
+          noticeAlreadyPrinted = deps.stdout.output().includes('New version available: 0.2.0')
+          return true
+        },
+      })
+      await startCommand(deps)
+      const lines = deps.stdout.output().split('\n').filter(Boolean)
+      const notices = lines.filter((l) => l.includes('New version available: 0.2.0'))
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toContain('npm i -g @lucasfe/ralph')
+      expect(asks).toBe(1)
+      expect(noticeAlreadyPrinted).toBe(true)
+    })
+
+    it('accepting runs the update and returns without starting the loop', async () => {
+      const deps = promptDeps()
+      const result = await startCommand(deps)
+      expect(result).toEqual({ exitCode: 0, started: false })
+      expect(deps.updates).toHaveLength(1)
+      expect(deps.updates[0].currentVersion).toBe('0.1.0')
+      expect(deps.updates[0].exec).toBe(deps.exec)
+      expect(deps.updates[0].stdout).toBe(deps.stdout)
+      expect(deps.updates[0].stderr).toBe(deps.stderr)
+      const out = deps.stdout.output()
+      expect(out).toContain('Updated to 0.2.0')
+      expect(out).toContain('run `ralph start` again')
+      // The loop was never launched — no half-swapped mixture of two versions.
+      expect(deps.exec.calls).not.toContain(LAUNCH_KEY)
+      expect(deps.exec.calls.some((c) => c.startsWith('tmux new '))).toBe(false)
+    })
+
+    it('never re-execs and never spawns a background install on the accept path', async () => {
+      const deps = promptDeps()
+      await startCommand(deps)
+      // Only the tmux uniqueness guard and the version check ran: the update
+      // itself goes through the injected runUpdate, not a spawn from here.
+      expect(deps.exec.calls).toEqual([`tmux has-session -t ${SESSION}`, NPM_VIEW])
+    })
+
+    it('asks before the first gh invocation, so accepting discards no completed work', async () => {
+      const deps = promptDeps()
+      await startCommand(deps)
+      expect(deps.asked).toHaveLength(1)
+      expect(deps.exec.calls.some((c) => c.startsWith('gh '))).toBe(false)
+    })
+
+    it('declining starts the loop immediately with no further update output', async () => {
+      const deps = promptDeps({ ask: async () => false })
+      const result = await startCommand(deps)
+      expect(result).toEqual({ exitCode: 0, started: true, count: 1 })
+      expect(deps.updates).toHaveLength(0)
+      expect(deps.exec.calls).toContain(LAUNCH_KEY)
+      const out = deps.stdout.output()
+      expect(out).toContain('New version available: 0.2.0')
+      expect(out).not.toContain('Updated to')
+      expect(out).not.toContain('Update did not complete')
+      expect(deps.stderr.output()).toBe('')
+    })
+
+    it('warns and still launches the loop when an accepted update fails', async () => {
+      const deps = promptDeps({
+        runUpdate: async () => ({ exitCode: 1, updated: false, from: '0.1.0', to: '0.2.0' }),
+      })
+      const result = await startCommand(deps)
+      expect(result).toEqual({ exitCode: 0, started: true, count: 1 })
+      expect(deps.stdout.output()).toContain('Update did not complete')
+      expect(deps.stdout.output()).toContain('0.1.0')
+      expect(deps.exec.calls).toContain(LAUNCH_KEY)
+    })
+
+    it('warns and still launches when there is nothing to update here (npx / linked checkout)', async () => {
+      // updateCommand's advice path exits 0 with updated:false — gating on `to`
+      // instead of `updated` would wrongly report a successful update.
+      const deps = promptDeps({
+        runUpdate: async () => ({ exitCode: 0, updated: false, from: '0.1.0', to: '0.2.0' }),
+      })
+      const result = await startCommand(deps)
+      expect(result.started).toBe(true)
+      expect(deps.stdout.output()).toContain('Update did not complete')
+      expect(deps.stdout.output()).not.toContain('Updated to 0.2.0')
+    })
+
+    it('warns and still launches when the update throws', async () => {
+      const deps = promptDeps({
+        runUpdate: async () => {
+          throw new Error('npm exploded')
+        },
+      })
+      const result = await startCommand(deps)
+      expect(result.started).toBe(true)
+      expect(deps.stdout.output()).toContain('Update did not complete')
+      expect(deps.exec.calls).toContain(LAUNCH_KEY)
+    })
+
+    it('prints the notice, never calls confirm, and launches when stdin is not a TTY', async () => {
+      const deps = promptDeps({
+        isTTY: false,
+        ask: async () => {
+          throw new Error('confirm must never be called without a TTY')
+        },
+      })
+      const result = await startCommand(deps)
+      expect(result).toEqual({ exitCode: 0, started: true, count: 1 })
+      expect(deps.updates).toHaveLength(0)
+      expect(deps.stdout.output()).toContain('New version available: 0.2.0')
+      expect(deps.exec.calls).toContain(LAUNCH_KEY)
+    })
+
+    it('does not prompt when the published version is not newer, even on a TTY', async () => {
+      const deps = promptDeps({ currentVersion: '0.2.0' })
+      const result = await startCommand(deps)
+      expect(result.started).toBe(true)
+      expect(deps.asked).toHaveLength(0)
+      expect(deps.updates).toHaveLength(0)
+    })
+
+    it('suppresses the prompt along with the check when RALPH_NO_UPDATE_CHECK=1', async () => {
+      const deps = promptDeps({ processEnv: { RALPH_NO_UPDATE_CHECK: '1' } })
+      const result = await startCommand(deps)
+      expect(result).toEqual({ exitCode: 0, started: true, count: 1 })
+      expect(deps.asked).toHaveLength(0)
+      expect(deps.updates).toHaveLength(0)
+      expect(deps.exec.calls).not.toContain(NPM_VIEW)
+      expect(deps.stdout.output()).not.toContain('New version available')
     })
   })
 
