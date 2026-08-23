@@ -5,6 +5,19 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0](https://github.com/lucasfe/ralph/compare/v0.16.0...v0.17.0) (2026-08-23)
+
+
+### Features
+
+* weekly cache-backed update check + notice in `ralph start` ([#24](https://github.com/lucasfe/ralph/issues/24)) ([#34](https://github.com/lucasfe/ralph/issues/34)) ([1dfe663](https://github.com/lucasfe/ralph/commit/1dfe663cb8df3da07db40d18c52086b93a827802))
+
+
+### Bug Fixes
+
+* classify pnpm/yarn/bun global, npx cache, and linked installs ([#22](https://github.com/lucasfe/ralph/issues/22)) ([#31](https://github.com/lucasfe/ralph/issues/31)) ([d499528](https://github.com/lucasfe/ralph/commit/d4995284ab9c6b92e354c6c54f9f7b8057f409d7))
+* install-failure diagnostics for `ralph update` ([#23](https://github.com/lucasfe/ralph/issues/23)) ([#33](https://github.com/lucasfe/ralph/issues/33)) ([15b3cfb](https://github.com/lucasfe/ralph/commit/15b3cfb6302974e3ccdaf94838e3274a6a718dbd))
+
 ## [0.16.0](https://github.com/lucasfe/ralph/compare/v0.15.6...v0.16.0) (2026-08-22)
 
 
