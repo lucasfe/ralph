@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { Volume } from 'memfs'
+import { join } from 'node:path'
 import { startCommand, StartAbort } from '../../lib/commands/start.js'
 import { templatePath } from '../../lib/paths.js'
 import { sessionNameFor } from '../../lib/lock.js'
+import { globalConfigPath } from '../../lib/utils/global-config.js'
+import { readVersionCache, versionCachePath } from '../../lib/version-cache.js'
 
 const RALPH_TEMPLATE = templatePath('ralph.sh')
 
@@ -35,6 +39,11 @@ function makeExec(handlers) {
   return exec
 }
 
+// #24: home/processEnv/cacheFs are injected on every run so the weekly update
+// check resolves its global cache inside memfs and never reads or writes the
+// developer's real ~/.config/ralph.
+const HOME = '/home/me'
+
 const baseDeps = () => ({
   cwd: '/repo',
   stdout: makeStream(),
@@ -44,6 +53,9 @@ const baseDeps = () => ({
   loadEnv: () => ({}),
   hasCommand: () => true,
   ask: async () => false,
+  home: HOME,
+  processEnv: {},
+  cacheFs: new Volume(),
 })
 
 describe('startCommand', () => {
@@ -240,67 +252,219 @@ describe('startCommand', () => {
     expect(deps.exec.calls.some((c) => c.includes('--remove-label'))).toBe(false)
   })
 
-  it('prints update warning and persists last_seen_release when newer version is available', async () => {
-    const deps = baseDeps()
-    const cwd = '/repo'
-    const writes = []
-    deps.currentVersion = '0.1.0'
-    deps.readSt = () => ({ last_seen_release: '', detected_stack: 'npm' })
-    deps.writeSt = (root, obj) => writes.push({ root, obj })
-    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
-    deps.exec = makeExec({
-      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
-      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
-        { exitCode: 0, stdout: '1', stderr: '' },
-      'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
-      [launchKey]: {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
-    })
-    await startCommand({ ...deps, cwd })
-    expect(deps.stdout.output()).toContain('New version available: 0.2.0')
-    expect(writes).toHaveLength(1)
-    expect(writes[0]).toEqual({
-      root: cwd,
-      obj: { last_seen_release: '0.2.0', detected_stack: 'npm' },
-    })
-  })
+  // #24: the weekly, cache-backed update notice. It replaced the old step-8.5
+  // block, which sat AFTER the empty-queue early return (so a user with an empty
+  // queue never saw it) and after every gh call. It now runs once, right after
+  // the dependency guard and before the first gh invocation.
+  describe('weekly update check (#24)', () => {
+    const ORPHAN_KEY =
+      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"'
+    const QUEUE_KEY =
+      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length'
+    const NPM_VIEW = 'npm view @lucasfe/ralph version'
+    const LAUNCH_KEY = `tmux new -d -s ${SESSION} cd '/repo' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
+    const T0 = Date.parse('2026-08-22T12:00:00.000Z')
+    const DAY = 24 * 60 * 60 * 1000
+    const CACHE_PATH = versionCachePath({ processEnv: {}, home: HOME })
 
-  it('skips update check entirely when state.json is missing', async () => {
-    const deps = baseDeps()
-    const cwd = '/repo'
-    const writes = []
-    deps.currentVersion = '0.1.0'
-    deps.readSt = () => null
-    deps.writeSt = (root, obj) => writes.push({ root, obj })
-    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
-    deps.exec = makeExec({
+    // A full github-source preflight that gets all the way to the tmux launch,
+    // with a newer version published on the registry.
+    const preflight = (overrides = {}) => ({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
-        { exitCode: 0, stdout: '1', stderr: '' },
-      [launchKey]: {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
+      [ORPHAN_KEY]: { exitCode: 0, stdout: '', stderr: '' },
+      [QUEUE_KEY]: { exitCode: 0, stdout: '1', stderr: '' },
+      [NPM_VIEW]: { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
+      [LAUNCH_KEY]: { exitCode: 0, stdout: '', stderr: '' },
+      ...overrides,
     })
-    await startCommand({ ...deps, cwd })
-    expect(writes).toHaveLength(0)
-    expect(deps.exec.calls.some((c) => c.startsWith('npm view'))).toBe(false)
+
+    const updateDeps = (overrides = {}) => {
+      const deps = baseDeps()
+      deps.currentVersion = '0.1.0'
+      deps.now = () => T0
+      Object.assign(deps, overrides)
+      return deps
+    }
+
+    it('prints a notice on stdout when a newer version is published', async () => {
+      const deps = updateDeps()
+      deps.exec = makeExec(preflight())
+      const result = await startCommand(deps)
+      expect(result.started).toBe(true)
+      expect(deps.stdout.output()).toContain('New version available: 0.2.0')
+    })
+
+    it('prints the notice even when the issue queue is empty', async () => {
+      const deps = updateDeps()
+      deps.exec = makeExec(preflight({ [QUEUE_KEY]: { exitCode: 0, stdout: '0', stderr: '' } }))
+      const result = await startCommand(deps)
+      expect(result).toEqual({ exitCode: 0, started: false })
+      expect(deps.stdout.output()).toContain('No issues in the queue')
+      expect(deps.stdout.output()).toContain('New version available: 0.2.0')
+    })
+
+    it('prints nothing when the published version is not newer', async () => {
+      const deps = updateDeps({ currentVersion: '0.2.0' })
+      deps.exec = makeExec(preflight())
+      await startCommand(deps)
+      expect(deps.stdout.output()).not.toContain('New version available')
+    })
+
+    it('runs the check before the first gh invocation', async () => {
+      const deps = updateDeps()
+      deps.exec = makeExec(preflight())
+      await startCommand(deps)
+      const npmIdx = deps.exec.calls.indexOf(NPM_VIEW)
+      const firstGh = deps.exec.calls.findIndex((c) => c.startsWith('gh '))
+      expect(npmIdx).toBeGreaterThanOrEqual(0)
+      expect(firstGh).toBeGreaterThanOrEqual(0)
+      expect(npmIdx).toBeLessThan(firstGh)
+    })
+
+    it('does not check when this project already has a tmux session', async () => {
+      const deps = updateDeps()
+      deps.exec = makeExec(
+        preflight({ [`tmux has-session -t ${SESSION}`]: { exitCode: 0, stdout: '', stderr: '' } }),
+      )
+      await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
+      expect(deps.exec.calls).not.toContain(NPM_VIEW)
+    })
+
+    it('does not check when an alive cycle lock is held', async () => {
+      const deps = updateDeps()
+      deps.peekLock = () => ({
+        holder: { pid: 99, startedAt: '2026-08-22T10:00:00.000Z', repoPath: '/repo' },
+        alive: true,
+      })
+      deps.exec = makeExec(preflight())
+      await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
+      expect(deps.exec.calls).not.toContain(NPM_VIEW)
+    })
+
+    it('does not check when a critical dependency is missing', async () => {
+      const deps = updateDeps()
+      deps.hasCommand = (cmd) => cmd !== 'git'
+      deps.exec = makeExec(preflight())
+      await expect(startCommand(deps)).rejects.toBeInstanceOf(StartAbort)
+      expect(deps.exec.calls).not.toContain(NPM_VIEW)
+    })
+
+    it('makes only one npm view call across two runs inside 7 days', async () => {
+      const cacheFs = new Volume()
+      const first = updateDeps({ cacheFs })
+      first.exec = makeExec(preflight())
+      await startCommand(first)
+      const second = updateDeps({ cacheFs, now: () => T0 + 3 * DAY })
+      second.exec = makeExec(preflight())
+      await startCommand(second)
+      expect(first.exec.calls.filter((c) => c === NPM_VIEW)).toHaveLength(1)
+      expect(second.exec.calls.filter((c) => c === NPM_VIEW)).toHaveLength(0)
+      // The notice still fires on the throttled run — from the cached version.
+      expect(second.stdout.output()).toContain('New version available: 0.2.0')
+    })
+
+    it('makes a fresh npm view call and re-stamps last_check_at after 7 days', async () => {
+      const cacheFs = new Volume()
+      const first = updateDeps({ cacheFs })
+      first.exec = makeExec(preflight())
+      await startCommand(first)
+      const later = T0 + 8 * DAY
+      const second = updateDeps({ cacheFs, now: () => later })
+      second.exec = makeExec(preflight())
+      await startCommand(second)
+      expect(second.exec.calls.filter((c) => c === NPM_VIEW)).toHaveLength(1)
+      expect(readVersionCache({ fs: cacheFs, home: HOME, processEnv: {} })).toEqual({
+        last_check_at: new Date(later).toISOString(),
+        last_prompted_at: null,
+        latest_version: '0.2.0',
+      })
+    })
+
+    it('writes the cache under $XDG_CONFIG_HOME when it is set', async () => {
+      const cacheFs = new Volume()
+      const deps = updateDeps({ cacheFs, processEnv: { XDG_CONFIG_HOME: '/xdg' } })
+      deps.exec = makeExec(preflight())
+      await startCommand(deps)
+      expect(cacheFs.existsSync(join('/xdg', 'ralph', 'update-check.json'))).toBe(true)
+      expect(cacheFs.existsSync(CACHE_PATH)).toBe(false)
+    })
+
+    it('writes the cache under ~/.config when XDG_CONFIG_HOME is unset', async () => {
+      const cacheFs = new Volume()
+      const deps = updateDeps({ cacheFs })
+      deps.exec = makeExec(preflight())
+      await startCommand(deps)
+      expect(cacheFs.existsSync(CACHE_PATH)).toBe(true)
+    })
+
+    it('leaves the existing global .env untouched', async () => {
+      const envPath = globalConfigPath({ processEnv: {}, home: HOME })
+      const envContent = 'CALLMEBOT_KEY=secret\nWHATSAPP_PHONE=+1\n'
+      const cacheFs = Volume.fromJSON({ [envPath]: envContent }, '/')
+      const deps = updateDeps({ cacheFs })
+      deps.exec = makeExec(preflight())
+      await startCommand(deps)
+      expect(cacheFs.readFileSync(envPath, 'utf8')).toBe(envContent)
+      expect(cacheFs.readFileSync(CACHE_PATH, 'utf8')).not.toContain('CALLMEBOT_KEY')
+    })
+
+    it('suppresses the check with no npm call and no output when RALPH_NO_UPDATE_CHECK=1', async () => {
+      const cacheFs = new Volume()
+      const deps = updateDeps({ cacheFs, processEnv: { RALPH_NO_UPDATE_CHECK: '1' } })
+      deps.exec = makeExec(preflight())
+      const result = await startCommand(deps)
+      expect(result.started).toBe(true)
+      expect(deps.exec.calls).not.toContain(NPM_VIEW)
+      expect(deps.stdout.output()).not.toContain('New version available')
+      expect(cacheFs.existsSync(CACHE_PATH)).toBe(false)
+    })
+
+    it('survives a corrupt cache file and still notices the new version', async () => {
+      const cacheFs = Volume.fromJSON({ [CACHE_PATH]: '{ not json at all' }, '/')
+      const deps = updateDeps({ cacheFs })
+      deps.exec = makeExec(preflight())
+      const result = await startCommand(deps)
+      expect(result.started).toBe(true)
+      expect(deps.stdout.output()).toContain('New version available: 0.2.0')
+    })
+
+    it('is silent and non-blocking when the version check fails', async () => {
+      const deps = updateDeps()
+      deps.exec = makeExec(
+        preflight({ [NPM_VIEW]: { exitCode: 1, stdout: '', stderr: 'offline' } }),
+      )
+      const result = await startCommand(deps)
+      expect(result.started).toBe(true)
+      expect(deps.stdout.output()).not.toContain('New version available')
+      expect(deps.stderr.output()).toBe('')
+    })
+
+    it('passes currentVersion, exec, now, processEnv, home and fs to the decision', async () => {
+      const seen = []
+      const deps = updateDeps({
+        processEnv: { FOO: 'bar' },
+        update: async (args) => {
+          seen.push(args)
+          return {
+            latestVersion: null,
+            isNewer: false,
+            shouldPrompt: false,
+            source: 'network',
+            updatedCache: null,
+          }
+        },
+      })
+      deps.exec = makeExec(preflight())
+      await startCommand(deps)
+      expect(seen).toHaveLength(1)
+      expect(seen[0].currentVersion).toBe('0.1.0')
+      expect(seen[0].exec).toBe(deps.exec)
+      expect(seen[0].now).toBe(deps.now)
+      expect(seen[0].processEnv).toBe(deps.processEnv)
+      expect(seen[0].home).toBe(HOME)
+      expect(seen[0].fs).toBe(deps.cacheFs)
+    })
   })
 
   it('sends WhatsApp startup notification with default message when credentials are present', async () => {
@@ -440,36 +604,6 @@ describe('startCommand', () => {
     const result = await startCommand({ ...deps, cwd })
     expect(result.started).toBe(true)
     expect(deps.stdout.output()).toContain('Startup WhatsApp notification failed: http_500')
-  })
-
-  it('does not print warning or write state when remote version is not newer', async () => {
-    const deps = baseDeps()
-    const cwd = '/repo'
-    const writes = []
-    deps.currentVersion = '0.2.0'
-    deps.readSt = () => ({ last_seen_release: '' })
-    deps.writeSt = (root, obj) => writes.push({ root, obj })
-    const launchKey = `tmux new -d -s ${SESSION} cd '${cwd}' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
-    deps.exec = makeExec({
-      [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
-      'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
-        { exitCode: 0, stdout: '1', stderr: '' },
-      'npm view @lucasfe/ralph version': { exitCode: 0, stdout: '0.1.0\n', stderr: '' },
-      [launchKey]: {
-        exitCode: 0,
-        stdout: '',
-        stderr: '',
-      },
-    })
-    await startCommand({ ...deps, cwd })
-    expect(deps.stdout.output()).not.toContain('New version available')
-    expect(writes).toHaveLength(0)
   })
 
   describe('cycle-lock coexistence', () => {
