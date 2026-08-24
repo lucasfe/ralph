@@ -901,6 +901,27 @@ errors, crashes) without otherwise resolving it, so the queue keeps
 advancing instead of stalling on the same issue — see the per-issue log
 to find out why.
 
+`claude-working` is not left behind on a resolved issue. The loop clears
+it as soon as an iteration leaves the issue in a state the filter already
+excludes — a PR opened (`pending-merge`), the issue **closed** (including
+closed indirectly by a merged PR's `Closes #N`), or `claude-failed`
+applied — so `claude-working` keeps meaning "Ralph is working on this
+right now", and an issue that is later **reopened** comes back into the
+queue instead of being silently skipped for a label left over from the
+run that resolved it. The one case where the label is kept deliberately
+is an issue that is still **open** after an iteration made no progress:
+there the sticky label is what keeps a stuck issue from being re-selected
+forever, and it is cleared later by the sweep below.
+
+Leftovers are swept per pass by `ralph cycle` (see
+[Scheduling Ralph](#scheduling-ralph-macos-launchd)), which clears
+`claude-working` from **both open and closed** issues and prints/notifies
+what it cleared (`🧹 ralph cycle: cleaned N orphan(s)`). Expect that line
+to be busy on the first pass in a repo that accumulated stale labels
+before this behavior existed. The sweep reads one page of up to 100
+labelled issues per pass, newest first, so a backlog larger than that
+drains over several cycles rather than all at once.
+
 **An iteration prints `claude failed on issue #N (non-zero exit)`.** —
 Claude exited non-zero on that issue without opening a PR, closing it,
 or applying an exclusion label. Ralph adds the `claude-failed` label so

@@ -276,6 +276,24 @@ queue_count() {
     gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length'
   fi
 }
+
+# --- Stale `claude-working` sweep (#40) -------------------------------------
+# A merged PR that closes its issue (`Closes #N`) runs neither of the agent's
+# label-removal paths, so `claude-working` survives on an issue this loop counts
+# as a SUCCESS — and if that issue is ever reopened it is silently dropped from
+# the queue (`-label:claude-working`).
+#
+# Called ONLY from the outcome branches that leave the issue in a terminal
+# exclusion state (closed, pending-merge, claude-failed), never from the
+# zero-progress branch: there the sticky label is what keeps a stuck issue out
+# of the queue, and clearing it would make the loop re-select the same issue and
+# `break` on the re-selection guard, abandoning everything still queued — so
+# that residue is left to the cycle-level sweep in `lib/orphan-cleanup.js`.
+#
+# No "does it have the label?" pre-check: gh no-ops on an absent label.
+clear_working_label() {
+  gh issue edit "$1" --remove-label claude-working >/dev/null 2>&1 || true
+}
 # ---------------------------------------------------------------------------
 
 # Track the previously-selected issue so we can detect a zero-progress spin:
@@ -384,9 +402,14 @@ while :; do
     RALPH_DURATION_MS="$issue_dur_ms" \
     node "$RALPH_PKG_DIR/lib/capture-issue-event.js" || true
 
+  # Classify from what the AGENT left behind: $labels/$state were read ABOVE, so
+  # neither this nor the telemetry capture can observe our own label edits. The
+  # terminal-exclusion branches also call clear_working_label (see its header).
   if echo ",$labels," | grep -q ",claude-failed,"; then
+    clear_working_label "$num"
     failures+=("$num")
   elif [ "$state" = "CLOSED" ] || echo ",$labels," | grep -q ",pending-merge,"; then
+    clear_working_label "$num"
     successes+=("$num")
   else
     # No exclusion label and still open. If claude failed (non-zero exit) mark
@@ -394,6 +417,8 @@ while :; do
     if [ "$claude_failed" = "1" ]; then
       echo "⚠️  claude failed on issue #$num (non-zero exit). Marking claude-failed." >&2
       gh issue edit "$num" --add-label claude-failed >/dev/null 2>&1 || true
+      # claude-failed now excludes the issue, so claude-working is stale.
+      clear_working_label "$num"
     fi
 
     # Zero-progress guard: if we just re-selected the SAME issue we worked on
