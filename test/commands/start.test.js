@@ -651,6 +651,317 @@ describe('startCommand', () => {
     })
   })
 
+  // #26: the SECOND weekly window. #24's last_check_at throttles the network
+  // call; last_prompted_at throttles the QUESTION, independently, off the same
+  // interval. Net behaviour: at most one prompt per 7 days however many times
+  // `ralph start` runs and however many repos are involved, while #24's notice
+  // keeps printing on every isNewer run. Declining is remembered only until the
+  // window rolls over — there is deliberately no declined_version field.
+  //
+  // isTTY is passed EXPLICITLY here too: the stamp is written when a prompt is
+  // SHOWN, so a suite that let the ambient terminal decide would write the cache
+  // on some machines and not others.
+  describe('weekly prompt throttle + offline prompt-from-cache (#26)', () => {
+    const CACHE_PATH = versionCachePath({ processEnv: {}, home: HOME })
+    const NOTICE = 'New version available: 0.2.0'
+    const OFFLINE = { exitCode: 1, stdout: '', stderr: 'offline' }
+
+    // The whole preflight for an arbitrary cwd — needed because the tmux guard
+    // and launch keys are derived from the per-project session name, so a
+    // second-repo run cannot reuse /repo's handlers.
+    const preflightFor = (cwd, overrides = {}) => {
+      const session = sessionNameFor(cwd)
+      return {
+        [`tmux has-session -t ${session}`]: { exitCode: 1, stdout: '', stderr: '' },
+        'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
+        [ORPHAN_KEY]: { exitCode: 0, stdout: '', stderr: '' },
+        [QUEUE_KEY]: { exitCode: 0, stdout: '1', stderr: '' },
+        [NPM_VIEW]: { exitCode: 0, stdout: '0.2.0\n', stderr: '' },
+        [`tmux new -d -s ${session} cd '${cwd}' && RALPH_TMUX_SESSION='${session}' bash '${RALPH_TEMPLATE}'`]:
+          { exitCode: 0, stdout: '', stderr: '' },
+        ...overrides,
+      }
+    }
+
+    // One interactive run. `answer` is what the user types at the prompt; every
+    // ask is recorded so "at most one prompt" is counted, not inferred.
+    const run = async ({ answer = false, cwd = '/repo', execOverrides, ...overrides } = {}) => {
+      const asked = []
+      const updates = []
+      const deps = updateDeps({
+        cwd,
+        isTTY: true,
+        ask: async (question, options) => {
+          asked.push({ question, options })
+          return answer
+        },
+        runUpdate: async (args) => {
+          updates.push(args)
+          return { exitCode: 0, updated: false, from: '0.1.0', to: '0.2.0' }
+        },
+        ...overrides,
+      })
+      deps.exec = makeExec(preflightFor(cwd, execOverrides))
+      deps.asked = asked
+      deps.updates = updates
+      const result = await startCommand(deps)
+      return { deps, result, asked, updates, npmViews: deps.exec.calls.filter((c) => c === NPM_VIEW) }
+    }
+
+    const cacheOf = (cacheFs, processEnv = {}) =>
+      readVersionCache({ fs: cacheFs, home: HOME, processEnv })
+
+    const seededCache = (cache) => Volume.fromJSON({ [CACHE_PATH]: JSON.stringify(cache) }, '/')
+
+    it('being prompted writes last_prompted_at to the global cache', async () => {
+      const cacheFs = new Volume()
+      const { asked } = await run({ cacheFs })
+      expect(asked).toHaveLength(1)
+      expect(cacheOf(cacheFs)).toEqual({
+        last_check_at: new Date(T0).toISOString(),
+        last_prompted_at: new Date(T0).toISOString(),
+        latest_version: '0.2.0',
+      })
+    })
+
+    it('a DECLINED prompt is not repeated inside the window, but the notice still prints', async () => {
+      const cacheFs = new Volume()
+      const first = await run({ cacheFs, answer: false })
+      const second = await run({ cacheFs, answer: false, now: () => T0 + 3 * DAY })
+      expect(first.asked).toHaveLength(1)
+      expect(second.asked).toHaveLength(0)
+      expect(second.result).toEqual({ exitCode: 0, started: true, count: 1 })
+      // #24's contract survives the throttle: the notice is not the question.
+      expect(second.deps.stdout.output()).toContain(NOTICE)
+    })
+
+    it('an ACCEPTED prompt is not repeated inside the window either', async () => {
+      // The install did not take (npx run / linked checkout), so the same version
+      // is still newer on the next run — and is still not re-asked.
+      const cacheFs = new Volume()
+      const first = await run({ cacheFs, answer: true })
+      expect(first.updates).toHaveLength(1)
+      const second = await run({ cacheFs, answer: true, now: () => T0 + DAY })
+      expect(second.asked).toHaveLength(0)
+      expect(second.updates).toHaveLength(0)
+      expect(second.result).toEqual({ exitCode: 0, started: true, count: 1 })
+    })
+
+    it('runs inside the window ask exactly once however many times start is run', async () => {
+      const cacheFs = new Volume()
+      const asks = []
+      for (const now of [T0, T0 + 60_000, T0 + DAY, T0 + 6 * DAY]) {
+        const { asked } = await run({ cacheFs, answer: false, now: () => now })
+        asks.push(asked.length)
+      }
+      expect(asks).toEqual([1, 0, 0, 0])
+    })
+
+    it('offers the same still-newer version again once the prompt window elapses', async () => {
+      const cacheFs = new Volume()
+      await run({ cacheFs, answer: false })
+      const later = T0 + 8 * DAY
+      const second = await run({ cacheFs, answer: false, now: () => later })
+      expect(second.asked).toHaveLength(1)
+      expect(second.deps.stdout.output()).toContain(NOTICE)
+      expect(cacheOf(cacheFs).last_prompted_at).toBe(new Date(later).toISOString())
+    })
+
+    it('checks the registry WITHOUT prompting when only the check window is open', async () => {
+      const cacheFs = seededCache({
+        last_check_at: new Date(T0 - 8 * DAY).toISOString(),
+        last_prompted_at: new Date(T0 - DAY).toISOString(),
+        latest_version: '0.1.5',
+      })
+      const { asked, npmViews, deps, result } = await run({ cacheFs })
+      expect(npmViews).toHaveLength(1)
+      expect(asked).toHaveLength(0)
+      expect(deps.stdout.output()).toContain(NOTICE)
+      expect(result.started).toBe(true)
+      // The check window was re-stamped; the prompt window was left alone.
+      expect(cacheOf(cacheFs)).toEqual({
+        last_check_at: new Date(T0).toISOString(),
+        last_prompted_at: new Date(T0 - DAY).toISOString(),
+        latest_version: '0.2.0',
+      })
+    })
+
+    it('prompts WITHOUT checking the registry when only the prompt window is open', async () => {
+      const cacheFs = seededCache({
+        last_check_at: new Date(T0 - DAY).toISOString(),
+        last_prompted_at: new Date(T0 - 8 * DAY).toISOString(),
+        latest_version: '0.2.0',
+      })
+      const { asked, npmViews, deps } = await run({ cacheFs })
+      expect(npmViews).toHaveLength(0)
+      expect(asked).toHaveLength(1)
+      expect(deps.stdout.output()).toContain(NOTICE)
+      expect(cacheOf(cacheFs)).toEqual({
+        last_check_at: new Date(T0 - DAY).toISOString(),
+        last_prompted_at: new Date(T0).toISOString(),
+        latest_version: '0.2.0',
+      })
+    })
+
+    it('still prompts with the network unavailable and a cached newer version', async () => {
+      const cacheFs = seededCache({
+        last_check_at: new Date(T0 - 30 * DAY).toISOString(),
+        last_prompted_at: null,
+        latest_version: '0.2.0',
+      })
+      const { asked, npmViews, deps, result } = await run({
+        cacheFs,
+        answer: false,
+        execOverrides: { [NPM_VIEW]: OFFLINE },
+      })
+      expect(npmViews).toHaveLength(1)
+      expect(asked).toHaveLength(1)
+      expect(deps.stdout.output()).toContain(NOTICE)
+      expect(result).toEqual({ exitCode: 0, started: true, count: 1 })
+    })
+
+    it('is silent and starts the loop with the network unavailable and no useful cache', async () => {
+      for (const cacheFs of [
+        new Volume(),
+        seededCache({
+          last_check_at: new Date(T0 - DAY).toISOString(),
+          last_prompted_at: null,
+          latest_version: null,
+        }),
+        seededCache({
+          last_check_at: new Date(T0 - DAY).toISOString(),
+          last_prompted_at: null,
+          latest_version: '0.1.0',
+        }),
+      ]) {
+        const { asked, deps, result } = await run({
+          cacheFs,
+          execOverrides: { [NPM_VIEW]: OFFLINE },
+        })
+        expect(asked).toHaveLength(0)
+        expect(result).toEqual({ exitCode: 0, started: true, count: 1 })
+        expect(deps.stdout.output()).not.toContain('New version available')
+        expect(deps.stderr.output()).toBe('')
+        // Nothing was prompted, so the prompt window stays open for a run that
+        // does have something to offer.
+        expect(cacheOf(cacheFs).last_prompted_at).toBeNull()
+      }
+    })
+
+    it('shares the prompt window across repos', async () => {
+      const cacheFs = new Volume()
+      const a = await run({ cacheFs, cwd: '/repo-a', answer: false })
+      const b = await run({ cacheFs, cwd: '/repo-b', answer: false, now: () => T0 + 2 * DAY })
+      expect(a.asked).toHaveLength(1)
+      expect(b.asked).toHaveLength(0)
+      expect(b.npmViews).toHaveLength(0)
+      // Both really were different projects (per-project tmux session names)...
+      expect(a.deps.exec.calls[0]).toContain(sessionNameFor('/repo-a'))
+      expect(b.deps.exec.calls[0]).toContain(sessionNameFor('/repo-b'))
+      // ...and the second one still got the notice, just not the question.
+      expect(b.deps.stdout.output()).toContain(NOTICE)
+    })
+
+    it('writes no declined_version field — declining is remembered only by the window', async () => {
+      const cacheFs = new Volume()
+      await run({ cacheFs, answer: false })
+      const raw = JSON.parse(cacheFs.readFileSync(CACHE_PATH, 'utf8').toString())
+      expect(Object.keys(raw).sort()).toEqual([
+        'last_check_at',
+        'last_prompted_at',
+        'latest_version',
+      ])
+      expect(raw.declined_version).toBeUndefined()
+    })
+
+    it('treats a last_prompted_at in the future as prompt due (clock skew)', async () => {
+      const cacheFs = seededCache({
+        last_check_at: new Date(T0 - DAY).toISOString(),
+        last_prompted_at: new Date(T0 + 90 * DAY).toISOString(),
+        latest_version: '0.2.0',
+      })
+      const { asked } = await run({ cacheFs, answer: false })
+      expect(asked).toHaveLength(1)
+      // The skewed stamp is corrected, never left to outlive every window.
+      expect(cacheOf(cacheFs).last_prompted_at).toBe(new Date(T0).toISOString())
+    })
+
+    it('a NON-TTY run never stamps the window, so the next interactive run still prompts', async () => {
+      // The headless case (cron, launchd, CI): the notice is printed, no question
+      // is ever displayed, and the prompt window must survive intact.
+      const cacheFs = new Volume()
+      const headless = await run({
+        cacheFs,
+        isTTY: false,
+        ask: async () => {
+          throw new Error('confirm must never be called without a TTY')
+        },
+      })
+      expect(headless.deps.stdout.output()).toContain(NOTICE)
+      expect(cacheOf(cacheFs).last_prompted_at).toBeNull()
+      const interactive = await run({ cacheFs, answer: false, now: () => T0 + DAY })
+      expect(interactive.asked).toHaveLength(1)
+      expect(cacheOf(cacheFs).last_prompted_at).toBe(new Date(T0 + DAY).toISOString())
+    })
+
+    it('a run whose prompt is throttled still stamps nothing new in the cache', async () => {
+      const stamped = new Date(T0 - 2 * DAY).toISOString()
+      const cacheFs = seededCache({
+        last_check_at: new Date(T0 - DAY).toISOString(),
+        last_prompted_at: stamped,
+        latest_version: '0.2.0',
+      })
+      const before = cacheFs.readFileSync(CACHE_PATH, 'utf8').toString()
+      const { asked, npmViews } = await run({ cacheFs })
+      expect(asked).toHaveLength(0)
+      expect(npmViews).toHaveLength(0)
+      expect(cacheFs.readFileSync(CACHE_PATH, 'utf8').toString()).toBe(before)
+    })
+
+    it('an unwritable cache still prompts — the stamp is best-effort', async () => {
+      const cacheFs = {
+        readFileSync: () => {
+          const e = new Error('ENOENT')
+          e.code = 'ENOENT'
+          throw e
+        },
+        mkdirSync: () => {
+          const e = new Error('EACCES: permission denied')
+          e.code = 'EACCES'
+          throw e
+        },
+        writeFileSync: () => undefined,
+      }
+      const { asked, result, deps } = await run({ cacheFs, answer: false })
+      expect(asked).toHaveLength(1)
+      expect(result).toEqual({ exitCode: 0, started: true, count: 1 })
+      expect(deps.stderr.output()).toBe('')
+    })
+
+    it('hands the stamp the same clock, env, home and fs as the decision', async () => {
+      const stamps = []
+      const cacheFs = new Volume()
+      const { deps } = await run({ cacheFs, recordPrompt: (args) => stamps.push(args) })
+      expect(stamps).toHaveLength(1)
+      expect(stamps[0].now).toBe(deps.now)
+      expect(stamps[0].processEnv).toBe(deps.processEnv)
+      expect(stamps[0].home).toBe(HOME)
+      expect(stamps[0].fs).toBe(cacheFs)
+    })
+
+    it('suppresses both windows on the RALPH_NO_UPDATE_CHECK opt-out', async () => {
+      const cacheFs = new Volume()
+      const { asked, npmViews, deps } = await run({
+        cacheFs,
+        processEnv: { RALPH_NO_UPDATE_CHECK: '1' },
+      })
+      expect(asked).toHaveLength(0)
+      expect(npmViews).toHaveLength(0)
+      expect(deps.stdout.output()).not.toContain('New version available')
+      expect(cacheFs.existsSync(CACHE_PATH)).toBe(false)
+    })
+  })
+
   it('sends WhatsApp startup notification with default message when credentials are present', async () => {
     const deps = baseDeps()
     const cwd = '/repo'
