@@ -5,6 +5,14 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0](https://github.com/lucasfe/ralph/compare/v0.17.0...v0.18.0) (2026-08-23)
+
+
+### Features
+
+* cached installed-vs-latest version line in `ralph doctor` ([#27](https://github.com/lucasfe/ralph/issues/27)) ([#38](https://github.com/lucasfe/ralph/issues/38)) ([325c31e](https://github.com/lucasfe/ralph/commit/325c31ef2f4e443f6ee1c1a3fbec05f37728c30d))
+* TTY-gated update prompt in `ralph start` ([#25](https://github.com/lucasfe/ralph/issues/25)) ([#36](https://github.com/lucasfe/ralph/issues/36)) ([c594f6e](https://github.com/lucasfe/ralph/commit/c594f6e5f000071f2055c4eee2885d76f0c08cb0))
+
 ## [0.17.0](https://github.com/lucasfe/ralph/compare/v0.16.0...v0.17.0) (2026-08-23)
 
 
