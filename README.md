@@ -87,7 +87,7 @@ cached latest: 0.17.0 — up to date` when it holds the version you already have
 `version: 0.17.0 — cached latest: unknown (no update check cached yet)` when
 nothing usable is cached. The "latest" half is **read** from the same global
 `update-check.json` that `ralph start`'s weekly check writes (see
-[Troubleshooting](#troubleshooting)): `doctor` never queries the registry,
+[Updating Ralph](#updating-ralph)): `doctor` never queries the registry,
 never writes that file, and applies neither of the two 7-day windows it holds —
 it reports whatever the last check left behind, however old, and running it
 neither refreshes the check nor spends the week's update question. That keeps
@@ -99,8 +99,9 @@ report, so it survives the early exit on a missing required dep.
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
-optionally prints an upgrade notice (and, on an interactive terminal, at
-most once a week, offers to install it), and launches the bash loop inside
+optionally prints an update notice (and, on an interactive terminal, at
+most once a week, offers to install it — see
+[Updating Ralph](#updating-ralph)), and launches the bash loop inside
 a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are printed by
@@ -111,94 +112,10 @@ the agent's raw JSON stream (Claude's `stream-json`, or Codex's
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
 [Monitoring data model](#monitoring-data-model)).
 
-When that upgrade notice fires, stdin is a terminal, **and** you have not
-already been asked in the last 7 days, `ralph start` asks
-`Update now? [y/N]:` — before the `gh` checks and before the tmux
-session, so nothing has been launched yet when you answer. Answering **y**
-runs the same update `ralph update` does (described below), prints
-``✅ Updated to <version> — run `ralph start` again.``, and **exits 0
-without starting the loop**: the running process still holds pre-update code
-and the old install's copy of the loop script, so re-launching by hand is the
-only way to be sure the loop runs one version rather than a mixture of two.
-Declining costs nothing — the loop starts immediately, with no extra output.
-An update that does not complete is not fatal either: a failed install, or an
-`npx` run / linked dev checkout with nothing for Ralph to install, prints
-`⚠️  Update did not complete — starting Ralph on <version>.` and the loop
-runs on the version you already have. Without a TTY — cron, launchd, CI, a
-piped stdin — nothing is ever asked and the loop always starts, and
-[`RALPH_NO_UPDATE_CHECK`](#environment-variables) suppresses the question
-together with the check. The question is asked **at most once every 7 days**,
-throttled by its own `last_prompted_at` stamp in the global update-check cache
-— a window independent of the weekly registry query, so declining *is*
-remembered, but only until that window rolls over. There is deliberately no
-per-release dedupe and nothing records *which* version you turned down: once
-the week is up the same still-newer version is offered again, so a release you
-deferred is never permanently forgotten. The notice itself is not throttled and
-keeps printing on every run that finds something newer (see
-[Troubleshooting](#troubleshooting)).
-
-`ralph update` updates the Ralph CLI itself — it is the one command that needs
-neither a git repository nor an initialized Ralph project, so you can run it
-from any directory. It asks the npm registry for the latest published version,
-works out how this copy of Ralph was installed, and runs **that** package
-manager's own global-install command, reporting both the version it came from
-and the version it moved to. When you are already current it prints
-`✅ Ralph is already up to date (<version>)` and installs nothing; pass
-`--force` to reinstall anyway (handy for repairing a broken install). A failed
-registry query is reported and attempts no install (exit code 1).
-
-The layout is worked out from where this copy of Ralph lives:
-
-| Install layout | What `ralph update` does | Exit code |
-| --- | --- | --- |
-| Global npm — under `npm root -g` | `npm install -g @lucasfe/ralph@latest` | 0 |
-| Global pnpm | `pnpm add -g @lucasfe/ralph@latest` | 0 |
-| Global yarn | `yarn global add @lucasfe/ralph@latest` | 0 |
-| Global bun | `bun add -g @lucasfe/ralph@latest` | 0 |
-| `npx` — running out of the npx cache | Nothing to do: npx always fetches the latest published version. | 0 |
-| Linked — the package root is a symlink, or holds a `.git` entry | Nothing: Ralph will not write a published tarball over a linked install or a working tree. A `.git` entry means a dev checkout, so it points you at `git pull`; a bare symlink gets the linking manager's own global-add command instead (or, when that is unclear, "update it with whichever package manager created it"). | 0 |
-| Unrecognized, or ambiguous — the path matches two managers at once | Refuses to guess, explains what it found, and prints `npm install -g @lucasfe/ralph@latest` to run by hand. | 1 |
-
-The two refusals — `npx` and linked — print `ℹ️ Nothing for Ralph to update
-here.` followed by what was found and what to do instead, and **exit 0**:
-nothing failed, there is simply nothing for Ralph to install. They are decided
-from the package root alone, before any package-manager guess, so a dev
-checkout linked into a pnpm or yarn store is still treated as linked rather
-than reinstalled over. An ambiguous path deliberately falls into the last row
-instead of picking a manager at random. One gap worth knowing: a pnpm global
-directory with no `pnpm` path segment (pnpm 6's `~/.pnpm-global`, a hand-set
-`global-dir`, or `PNPM_HOME=/opt/pnpm-home`) is not recognized and lands in
-that last row too.
-
-When the install command itself fails, `ralph update` exits with **that command's
-own exit code** (1, 127, 243 — whatever it returned) and prints the diagnosis
-under the headline instead of an opaque `exited 1`: a bounded tail of what the
-package manager wrote, then a hint when the failure names a permission problem.
-The tail is the **last** 12 non-blank lines — npm prints its error code at the
-*end* of a log — each clipped to 200 columns, with every clip marked `…` and any
-dropped lines counted in a `… N earlier lines omitted` line, so a multi-megabyte
-npm log cannot flood the terminal and a truncated tail never reads as complete.
-
-The hint fires on `EACCES`, `EPERM`, `errno -13`, `permission denied` or
-`operation not permitted` appearing anywhere the failure carries text — both
-streams, the error message, the error code — and it is matched **before** the
-tail is clipped, so it still appears when the code itself was clipped away. It
-names the two fixes that work, for the manager that actually ran: point the
-global install directory somewhere you own (`npm config set prefix
-~/.npm-global`, `pnpm setup`, `yarn config set prefix ~/.yarn`, `BUN_INSTALL=…`,
-or, for a manager Ralph has no knob for, that manager's own global-prefix
-setting), or re-run that one install with elevated privileges. The hint is
-additive: the raw output above it is what tells a root-owned prefix apart from,
-say, a manager binary that is not executable.
-
-When both streams are empty — which is what a command that could not be spawned
-at all looks like — the failure's own message is reported instead, bounded the
-same way, so `spawn npm ENOENT` (npm is not on your `PATH`) is never swallowed;
-only a failure that says nothing anywhere falls back to naming the command for
-you to run yourself. Nothing ran in that case, so there is no exit code to pass
-through and it exits 1. All of it goes to stderr, one whole line per write, and a
-successful update writes nothing there at all — so a wrapper or CI step that
-captures only stderr keeps the whole diagnosis and nothing else.
+`ralph update` updates the Ralph CLI itself, from any directory. It, the
+`--force` flag, the install layouts it can and cannot update, and the weekly
+check `ralph start` runs are all covered in
+[Updating Ralph](#updating-ralph).
 
 ## How Ralph resolves issues
 
@@ -510,12 +427,168 @@ install`. The `ralph schedule heartbeat` subcommand exists, but it is
 the entry point launchd invokes when the heartbeat plist fires; you
 will not normally call it by hand.
 
+## Updating Ralph
+
+Ralph ships one update command, `ralph update`, and `ralph start` offers to
+run it for you roughly once a week. There is no `ralph upgrade` and no alias
+for one.
+
+### `ralph update`
+
+`ralph update` updates the Ralph CLI itself — it is the one command that needs
+neither a git repository nor an initialized Ralph project, so you can run it
+from any directory. It asks the npm registry for the latest published version,
+works out how this copy of Ralph was installed, and runs **that** package
+manager's own global-install command, reporting both the version it came from
+and the version it moved to. When you are already current it prints
+`✅ Ralph is already up to date (<version>).` and installs nothing; pass
+`--force` to reinstall the latest anyway (handy for repairing a broken
+install). A failed registry query is reported and attempts no install (exit
+code 1) — it never installs a version it could not confirm exists.
+
+It only ever runs a package manager's global-install command, so it touches
+the **installed package alone** and writes no file in your project — see
+[What survives an update](#what-survives-an-update).
+
+The layout is worked out from where this copy of Ralph lives:
+
+| Install layout | What `ralph update` does | Exit code |
+| --- | --- | --- |
+| Global npm — under `npm root -g` | `npm install -g @lucasfe/ralph@latest` | 0 |
+| Global pnpm | `pnpm add -g @lucasfe/ralph@latest` | 0 |
+| Global yarn | `yarn global add @lucasfe/ralph@latest` | 0 |
+| Global bun | `bun add -g @lucasfe/ralph@latest` | 0 |
+| `npx` — running out of the npx cache | Nothing to do: npx always fetches the latest published version. | 0 |
+| Linked — the package root is a symlink, or holds a `.git` entry | Nothing: Ralph will not write a published tarball over a linked install or a working tree. A `.git` entry means a dev checkout, so it points you at `git pull`; a bare symlink gets the linking manager's own global-add command instead (or, when that is unclear, "update it with whichever package manager created it"). | 0 |
+| Unrecognized, or ambiguous — the path matches two managers at once | Refuses to guess, explains what it found, and prints `npm install -g @lucasfe/ralph@latest` to run by hand. | 1 |
+
+The two refusals — `npx` and linked — print `ℹ️  Nothing for Ralph to update
+here.` followed by what was found and what to do instead, and **exit 0**:
+nothing failed, there is simply nothing for Ralph to install. They are decided
+from the package root alone, before any package-manager guess, so a dev
+checkout linked into a pnpm or yarn store is still treated as linked rather
+than reinstalled over. An ambiguous path deliberately falls into the last row
+instead of picking a manager at random. One gap worth knowing: a pnpm global
+directory with no `pnpm` path segment (pnpm 6's `~/.pnpm-global`, a hand-set
+`global-dir`, or `PNPM_HOME=/opt/pnpm-home`) is not recognized and lands in
+that last row too.
+
+#### When the install command fails
+
+When the install command itself fails, `ralph update` exits with **that command's
+own exit code** (1, 127, 243 — whatever it returned) and prints the diagnosis
+under the headline instead of an opaque `exited 1`: a bounded tail of what the
+package manager wrote, then a hint when the failure names a permission problem.
+The tail is the **last** 12 non-blank lines — npm prints its error code at the
+*end* of a log — each clipped to 200 columns, with every clip marked `…` and any
+dropped lines counted in a `… N earlier lines omitted` line, so a multi-megabyte
+npm log cannot flood the terminal and a truncated tail never reads as complete.
+
+The hint fires on `EACCES`, `EPERM`, `errno -13`, `permission denied` or
+`operation not permitted` appearing anywhere the failure carries text — both
+streams, the error message, the error code — and it is matched **before** the
+tail is clipped, so it still appears when the code itself was clipped away. It
+names the two fixes that work, for the manager that actually ran: point the
+global install directory somewhere you own (`npm config set prefix
+~/.npm-global`, `pnpm setup`, `yarn config set prefix ~/.yarn`, `BUN_INSTALL=…`,
+or, for a manager Ralph has no knob for, that manager's own global-prefix
+setting), or re-run that one install with elevated privileges. The hint is
+additive: the raw output above it is what tells a root-owned prefix apart from,
+say, a manager binary that is not executable.
+
+When both streams are empty — which is what a command that could not be spawned
+at all looks like — the failure's own message is reported instead, bounded the
+same way, so `spawn npm ENOENT` (npm is not on your `PATH`) is never swallowed;
+only a failure that says nothing anywhere falls back to naming the command for
+you to run yourself. Nothing ran in that case, so there is no exit code to pass
+through and it exits 1. All of it goes to stderr, one whole line per write, and a
+successful update writes nothing there at all — so a wrapper or CI step that
+captures only stderr keeps the whole diagnosis and nothing else.
+
+### The weekly check in `ralph start`
+
+Before the loop launches, `ralph start` asks npm for the latest published
+version — **at most once every 7 days** — and prints
+`New version available: <version> (run npm i -g @lucasfe/ralph to update)`
+when what it knows about is newer than what you have. The notice itself is not
+throttled and keeps printing on every run that finds something newer (see
+[Troubleshooting](#troubleshooting)).
+
+When that notice fires, stdin is a terminal, **and** you have not already been
+asked in the last 7 days, `ralph start` asks `Update now? [y/N]:` — before the
+`gh` checks and before the tmux session, so nothing has been launched yet when
+you answer. An empty answer declines, and so does anything that is not `y`;
+the answer is trimmed and lowercased first, so `Y` and ` y ` accept too.
+
+Answering **y** runs the same update `ralph update` does, prints
+``✅ Updated to <version> — run `ralph start` again.``, and **exits 0 without
+starting the loop**: the running process still holds pre-update code and the
+old install's copy of the loop script, so re-launching by hand is the only way
+to be sure the loop runs one version rather than a mixture of two. Declining
+costs nothing — the loop starts immediately, with no extra output. An update
+that does not complete is not fatal either: a failed install, or an `npx` run /
+linked dev checkout with nothing for Ralph to install, prints
+`⚠️  Update did not complete — starting Ralph on <version>.` and the loop runs
+on the version you already have.
+
+Without a TTY — cron, launchd, CI, a piped stdin — nothing is ever asked and
+the loop always starts. Because no question was displayed, the prompt window is
+left untouched, so a nightly headless run cannot spend the week's question on
+nobody.
+
+The question is asked **at most once every 7 days**, throttled by its own
+`last_prompted_at` stamp in the global update-check cache — a window
+independent of the weekly registry query, so declining *is* remembered, but
+only until that window rolls over. Being *shown* the question is what consumes
+the window, and the stamp is written before your answer is read, so
+interrupting at the prompt (`Ctrl+C`) still counts as having been asked and you
+are not asked again on the next run seconds later. There is deliberately no
+per-release dedupe and nothing records *which* version you turned down: once
+the week is up the same still-newer version is offered again, so a release you
+deferred is never permanently forgotten.
+
+To silence the check, the notice, and the question together, set
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables).
+
+### Where the check keeps its state
+
+Both 7-day windows are **global, not per-repo**. They live in
+`$XDG_CONFIG_HOME/ralph/update-check.json`, or
+`~/.config/ralph/update-check.json` when `XDG_CONFIG_HOME` is unset or blank
+(the value is trimmed before it is used) — one file for your whole machine, so
+five Ralph repos cost one check a week between them rather than one each, and
+one question a week between them rather than five.
+The file holds **two independent windows**: `last_check_at` gates the registry
+query, `last_prompted_at` gates the question. Neither gates the other, so a run
+can query the registry without asking you anything, and can ask without
+querying. The prompt is always served from the *cached* `latest_version`, so a
+query that was skipped or that failed outright still gets you the question as
+long as what is cached is newer than what you have — which is the point: a
+flaky network no longer hides an update Ralph already knows about. With the
+network down and nothing useful cached there is simply nothing to say, and
+`ralph start` goes quiet and launches the loop. A stamp that is missing,
+unparseable, or somehow in the *future* counts as an open window rather than
+one that never expires.
+
+The file is separate from the credential dotenv (`ralph/.env`) in that same
+directory, which the check never reads or writes — and it lives outside your
+project entirely, so deleting `.ralph/state.json` or the whole `.ralph/`
+directory resets **neither** window. `.ralph/state.json` does still carry a
+`last_seen_release` field (the state writer requires it), but nothing in the
+update path reads it any more: it is a leftover of the old per-release dedupe,
+not a knob. `ralph doctor` reads the update-check file for its `cached latest:`
+line, and only reads it: it makes no registry query and stamps neither window,
+so running `doctor` neither refreshes the weekly check nor consumes the week's
+question.
+
 ## What survives an update
 
-`ralph init` and any future Ralph update mechanism (`npm i -g
-@lucasfe/ralph@latest`, re-run of `ralph init`, future `ralph upgrade`)
-treat user-authored config files as read-only. Running an update will
+`ralph update`, a manual `npm i -g @lucasfe/ralph@latest`, and a re-run of
+`ralph init` all treat user-authored config files as read-only. Updating will
 never silently overwrite credentials, secrets, or your project notes.
+`ralph update` is the strongest case of the three: it runs a package manager's
+global-install command and nothing else, so it writes **no project file at
+all** — the table below is about what a re-run of `ralph init` leaves alone.
 
 | File | Status on re-run | How to overwrite |
 | --- | --- | --- |
@@ -528,9 +601,8 @@ never silently overwrite credentials, secrets, or your project notes.
 | `ralph-notify.sh.example` | Overwritten on every run (template). | n/a |
 | `.gitignore` | Ralph appends missing entries idempotently; existing lines are untouched. | n/a |
 
-The split is enforced by automated tests in
-`packages/ralph/lib/init.test.js`, so a future template-management
-refactor cannot silently break the invariant.
+The split is enforced by automated tests in `lib/init.test.js`, so a
+future template-management refactor cannot silently break the invariant.
 
 ## Configuration reference
 
@@ -780,70 +852,31 @@ reprocess. Answer `y` to re-queue the issues.
 **Reset the agent's understanding of the config.** — Delete
 `.ralph/state.json` (or the whole `.ralph/` directory) and run
 `ralph start` again. Lazy validation re-runs and rewrites the state
-based on the current `ralph.config.sh` and project manifests.
+based on the current `ralph.config.sh` and project manifests. It does
+**not** reset the update check: both of its 7-day windows live in a
+global cache outside the project (see
+[Where the check keeps its state](#where-the-check-keeps-its-state)).
 
 **Update notice keeps appearing — but the question after it does not.** —
-The notice is the one part of the update check with no throttle on it at
-all. What *is* throttled is the **registry query**: `ralph start` asks npm for
-the latest version at most **once every 7 days**, then keeps printing the notice
-on *every* run for as long as the version it cached is newer than the one you
-have. So the notice is expected to repeat until you actually update (or a later
-check finds nothing newer).
-
-The question that can follow the notice on an interactive terminal —
-`Update now? [y/N]:` — does **not** repeat with it. It has a second 7-day
-window of its own, stamped as `last_prompted_at` in the same cache, so the
-question reaches you **at most once a week** however many times `ralph start`
-runs and however many repos are involved. Declining is therefore remembered —
-but only until that window rolls over. There is still no per-release dedupe and
-nothing records *which* version you declined: on the far side of the week the
-same still-newer version is offered again, so a release you deferred is never
-permanently forgotten. Being *shown* the question is what consumes the window,
-and the stamp is written before your answer is read — interrupting at the prompt
-(`Ctrl+C`) still counts as having been asked, so you are not asked again on the
-next run seconds later.
-
-An empty answer declines, and so does anything that is not `y` — the answer is
-trimmed and lowercased first, so `Y` and ` y ` accept too. Accepting runs
-the same update `ralph update` would, then **exits without starting the
-loop** and asks you to run `ralph start` again: the running process already
-holds pre-update code and a `templates/ralph.sh` path belonging to the old
-install, so re-launching is the only way to be certain the loop runs one
-version rather than a mixture of two. Declining, or an update that fails
-or finds nothing to install here (an `npx` run, a linked dev checkout),
-starts the loop on the version you already have — see
-[Quick start](#quick-start). Without a TTY (cron, launchd, CI) nothing is
-ever asked: you get the notice and the loop starts, and because no question was
-displayed the prompt window is left untouched — a nightly headless run cannot
-spend the week's question on nobody.
-
-Both 7-day windows are **global, not per-repo**. They live in
-`$XDG_CONFIG_HOME/ralph/update-check.json`, or
-`~/.config/ralph/update-check.json` when `XDG_CONFIG_HOME` is unset —
-one file for your whole machine, so five Ralph repos cost one check a
-week between them rather than one each, and one question a week between
-them rather than five. The file holds **two independent windows**:
-`last_check_at` gates the registry query, `last_prompted_at` gates the
-question. Neither gates the other, so a run can query the registry without
-asking you anything, and can ask without querying. The prompt is always served
-from the *cached* `latest_version`, so a query that was skipped or that failed
-outright still gets you the question as long as what is cached is newer than
-what you have — which is the point: a flaky network no longer hides an update
-Ralph already knows about. With the network down and nothing useful cached there is
-simply nothing to say, and `ralph start` goes quiet and launches the loop. A
-stamp that is missing, unparseable, or somehow in the *future* counts as an open
-window rather than one that never expires. The file is separate from the
-credential dotenv (`ralph/.env`) in that same directory, which the check
-never reads or writes. Deleting `.ralph/state.json` does **not** reset
-either window: the update logic no longer reads that file. `ralph doctor`
-reads this same file for its `cached latest:` line, and only reads it: it
-makes no registry query and stamps neither window, so running `doctor`
-neither refreshes the weekly check nor consumes the week's question.
+Working as intended. The notice is the one part of the update check with no
+throttle on it at all: `ralph start` prints it on *every* run for as long as
+the version it has cached is newer than the one you have, so expect it to
+repeat until you actually update (or a later check finds nothing newer). The
+question that can follow it on an interactive terminal — `Update now? [y/N]:` —
+has a **7-day window of its own** in the global update-check cache, so it
+reaches you at most once a week however many times `ralph start` runs and
+however many repos are involved; declining is remembered until that window
+rolls over. See [Updating Ralph](#updating-ralph) for the full behavior — both
+windows, the prompt-from-cache rule, and the headless path.
 
 Run `ralph update` to update — it picks the right command for a global
-npm, pnpm, yarn, or bun install (see [Quick start](#quick-start)) — or
-`npm i -g @lucasfe/ralph` by hand. To silence the check and the question
-together instead, set [`RALPH_NO_UPDATE_CHECK`](#environment-variables).
+npm, pnpm, yarn, or bun install (see [`ralph update`](#ralph-update)) — or
+`npm i -g @lucasfe/ralph` by hand. To silence the check, the notice, and the
+question together instead, set
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables). Deleting `.ralph/state.json`
+silences nothing: the windows live in the global cache, and the
+`last_seen_release` field still present in that state file no longer drives
+update notices — it is not a knob to reach for.
 
 **`ralph doctor` reports `cached latest: unknown`.** — Nothing usable is
 in the update-check cache yet, which is the normal state on a fresh
