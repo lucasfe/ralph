@@ -88,21 +88,22 @@ cached latest: 0.17.0 — up to date` when it holds the version you already have
 nothing usable is cached. The "latest" half is **read** from the same global
 `update-check.json` that `ralph start`'s weekly check writes (see
 [Troubleshooting](#troubleshooting)): `doctor` never queries the registry,
-never writes that file, and applies no 7-day window — it reports whatever the
-last check left behind, however old. That keeps it usable offline and on a
-half-broken install, which is when you reach for it. The line is **additive
-output only** — `doctor`'s exit code still answers for the deps alone, so a
-wrapper or CI step gating on `ralph doctor` does not start failing the day a
-release lands — and it is printed **above** the dep report, so it survives the
-early exit on a missing required dep.
+never writes that file, and applies neither of the two 7-day windows it holds —
+it reports whatever the last check left behind, however old, and running it
+neither refreshes the check nor spends the week's update question. That keeps
+it usable offline and on a half-broken install, which is when you reach for
+it. The line is **additive output only** — `doctor`'s exit code still answers
+for the deps alone, so a wrapper or CI step gating on `ralph doctor` does not
+start failing the day a release lands — and it is printed **above** the dep
+report, so it survives the early exit on a missing required dep.
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
-optionally prints an upgrade notice (and, on an interactive terminal,
-offers to install it), and launches the bash loop inside a per-project
-tmux session named `ralph-<repo>-<hash>` (derived from the project path,
-so multiple repos can run Ralph concurrently without colliding). The
-exact attach / kill commands for your session are printed by
+optionally prints an upgrade notice (and, on an interactive terminal, at
+most once a week, offers to install it), and launches the bash loop inside
+a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
+project path, so multiple repos can run Ralph concurrently without
+colliding). The exact attach / kill commands for your session are printed by
 `ralph start`; detach with `Ctrl+B` then `D`, or tail per-issue logs in
 `logs/ralph-issue-*.log`. Each iteration also tees
 the agent's raw JSON stream (Claude's `stream-json`, or Codex's
@@ -110,8 +111,9 @@ the agent's raw JSON stream (Claude's `stream-json`, or Codex's
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
 [Monitoring data model](#monitoring-data-model)).
 
-When that upgrade notice fires **and** stdin is a terminal, `ralph start`
-asks `Update now? [y/N]:` — before the `gh` checks and before the tmux
+When that upgrade notice fires, stdin is a terminal, **and** you have not
+already been asked in the last 7 days, `ralph start` asks
+`Update now? [y/N]:` — before the `gh` checks and before the tmux
 session, so nothing has been launched yet when you answer. Answering **y**
 runs the same update `ralph update` does (described below), prints
 ``✅ Updated to <version> — run `ralph start` again.``, and **exits 0
@@ -125,8 +127,14 @@ An update that does not complete is not fatal either: a failed install, or an
 runs on the version you already have. Without a TTY — cron, launchd, CI, a
 piped stdin — nothing is ever asked and the loop always starts, and
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables) suppresses the question
-together with the check. Declining is not remembered, so the question returns
-on the next run that still finds a newer version (see
+together with the check. The question is asked **at most once every 7 days**,
+throttled by its own `last_prompted_at` stamp in the global update-check cache
+— a window independent of the weekly registry query, so declining *is*
+remembered, but only until that window rolls over. There is deliberately no
+per-release dedupe and nothing records *which* version you turned down: once
+the week is up the same still-newer version is offered again, so a release you
+deferred is never permanently forgotten. The notice itself is not throttled and
+keeps printing on every run that finds something newer (see
 [Troubleshooting](#troubleshooting)).
 
 `ralph update` updates the Ralph CLI itself — it is the one command that needs
@@ -573,7 +581,7 @@ line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
 
 **The value parse is permissive, which is a footgun on a
 negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -774,17 +782,28 @@ reprocess. Answer `y` to re-queue the issues.
 `ralph start` again. Lazy validation re-runs and rewrites the state
 based on the current `ralph.config.sh` and project manifests.
 
-**Update notice keeps appearing.** — There is no per-release dedupe. What
-is throttled is the **registry query**, not the notice: `ralph start`
-asks npm for the latest version at most **once every 7 days**, then keeps
-printing the notice on *every* run for as long as the version it cached
-is newer than the one you have. So the notice is expected to repeat until
-you actually update (or a later check finds nothing newer).
+**Update notice keeps appearing — but the question after it does not.** —
+The notice is the one part of the update check with no throttle on it at
+all. What *is* throttled is the **registry query**: `ralph start` asks npm for
+the latest version at most **once every 7 days**, then keeps printing the notice
+on *every* run for as long as the version it cached is newer than the one you
+have. So the notice is expected to repeat until you actually update (or a later
+check finds nothing newer).
 
-On an interactive terminal the question that follows the notice —
-`Update now? [y/N]:` — repeats with it, because declining is not recorded
-anywhere: every run that still finds a newer version asks again. An empty
-answer declines, and so does anything that is not `y` — the answer is
+The question that can follow the notice on an interactive terminal —
+`Update now? [y/N]:` — does **not** repeat with it. It has a second 7-day
+window of its own, stamped as `last_prompted_at` in the same cache, so the
+question reaches you **at most once a week** however many times `ralph start`
+runs and however many repos are involved. Declining is therefore remembered —
+but only until that window rolls over. There is still no per-release dedupe and
+nothing records *which* version you declined: on the far side of the week the
+same still-newer version is offered again, so a release you deferred is never
+permanently forgotten. Being *shown* the question is what consumes the window,
+and the stamp is written before your answer is read — interrupting at the prompt
+(`Ctrl+C`) still counts as having been asked, so you are not asked again on the
+next run seconds later.
+
+An empty answer declines, and so does anything that is not `y` — the answer is
 trimmed and lowercased first, so `Y` and ` y ` accept too. Accepting runs
 the same update `ralph update` would, then **exits without starting the
 loop** and asks you to run `ralph start` again: the running process already
@@ -794,19 +813,32 @@ version rather than a mixture of two. Declining, or an update that fails
 or finds nothing to install here (an `npx` run, a linked dev checkout),
 starts the loop on the version you already have — see
 [Quick start](#quick-start). Without a TTY (cron, launchd, CI) nothing is
-ever asked: you get the notice and the loop starts.
+ever asked: you get the notice and the loop starts, and because no question was
+displayed the prompt window is left untouched — a nightly headless run cannot
+spend the week's question on nobody.
 
-That 7-day window is **global, not per-repo**. It lives in
+Both 7-day windows are **global, not per-repo**. They live in
 `$XDG_CONFIG_HOME/ralph/update-check.json`, or
 `~/.config/ralph/update-check.json` when `XDG_CONFIG_HOME` is unset —
 one file for your whole machine, so five Ralph repos cost one check a
-week between them rather than one each. It is a separate file from the
+week between them rather than one each, and one question a week between
+them rather than five. The file holds **two independent windows**:
+`last_check_at` gates the registry query, `last_prompted_at` gates the
+question. Neither gates the other, so a run can query the registry without
+asking you anything, and can ask without querying. The prompt is always served
+from the *cached* `latest_version`, so a query that was skipped or that failed
+outright still gets you the question as long as what is cached is newer than
+what you have — which is the point: a flaky network no longer hides an update
+Ralph already knows about. With the network down and nothing useful cached there is
+simply nothing to say, and `ralph start` goes quiet and launches the loop. A
+stamp that is missing, unparseable, or somehow in the *future* counts as an open
+window rather than one that never expires. The file is separate from the
 credential dotenv (`ralph/.env`) in that same directory, which the check
 never reads or writes. Deleting `.ralph/state.json` does **not** reset
-the window: the update logic no longer reads that file. `ralph doctor`
-reads that same file for its `cached latest:` line, and only reads it: it
-makes no registry query and never stamps the window, so running `doctor`
-neither refreshes nor consumes the weekly check.
+either window: the update logic no longer reads that file. `ralph doctor`
+reads this same file for its `cached latest:` line, and only reads it: it
+makes no registry query and stamps neither window, so running `doctor`
+neither refreshes the weekly check nor consumes the week's question.
 
 Run `ralph update` to update — it picks the right command for a global
 npm, pnpm, yarn, or bun install (see [Quick start](#quick-start)) — or
