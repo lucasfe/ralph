@@ -910,6 +910,22 @@ Claude's stderr is now written there (and echoed to the terminal)
 rather than being merged into the JSON stream. Fix the underlying
 problem, clear the `claude-failed` label, and re-run.
 
+**The per-issue log says `==> result: error`, but the raw `.jsonl`
+for that issue says `"subtype":"success"`.** — Working as intended;
+the log line is the one to trust. Claude's `result` event carries two
+outcome fields that contradict each other on a hard failure — an auth
+failure emits `{"subtype":"success","is_error":true,"num_turns":1}` —
+and Ralph treats `is_error` as authoritative, so a flagged result is
+never rendered as a success. The `==> result:` line prints the
+reconciled outcome (the subtype's own name when it already names the
+error, otherwise `error`), and the per-issue telemetry records that
+same reconciled value in
+[`subtype`](#per-issue-stream--ralphmetricsissuesjsonl). Note that
+`verdict` is decided separately, from the issue's labels and state, so
+`subtype: error` alongside `verdict: pass` is legitimate — the agent's
+run failed, but the issue still ended up resolved. Codex names its
+failures outright, so its `==> result:` rendering is unchanged.
+
 **The loop aborts with `no progress on issue #N`.** — A zero-progress
 guard fired: the same issue was re-selected on consecutive iterations
 with no change to its exclusion state (no PR, not closed, no label),
@@ -951,7 +967,7 @@ with these fields:
 | `run_id` | The [join key](#run_id-the-join-key) — ties every issue event from one loop invocation to its run. |
 | `ts` | Event timestamp (epoch milliseconds). |
 | `agent` | The **resolved** coding agent that produced the event: `claude` or `codex`. A `RALPH_AGENT` typo records the fallback (`claude`), so a misconfiguration stays auditable. |
-| `subtype` | The result subtype (e.g. `success`, `error`), or `null` if absent. |
+| `subtype` | The result subtype (e.g. `success`, `error`), or `null` if absent — **reconciled** with the stream's error flag, not copied verbatim. Claude's `result` event carries **both** `subtype` and `is_error`, and on a hard failure the two contradict each other (an auth failure reports `{"subtype":"success","is_error":true}`). `is_error` decides pass/fail; `subtype` only *names* the outcome. So a flagged result never records `success`: it keeps its own subtype when that already names the error (`error_max_turns` stays `error_max_turns`) and records `error` otherwise. The flag is **not** a field of its own — it is folded into this one, so the event's key set is unchanged. |
 | `total_cost_usd` | The agent's reported cost for the iteration. **Codex always reports `0`** — the Codex stream carries no price and Ralph never fabricates one. |
 | `num_turns` | Number of turns in the iteration. |
 | `duration_ms` | Wall-clock duration for the iteration. Claude self-reports it in its `result` line; **Codex's stream carries no duration**, so the loop supplies its own measured wall-clock time (`RALPH_DURATION_MS`). |
