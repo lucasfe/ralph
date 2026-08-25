@@ -20,6 +20,32 @@ The package has no build step — the published artefact is the source.
 Three runtime deps (`commander`, `execa`, `picocolors`); tests use
 `vitest` + `memfs` for hermetic filesystem assertions.
 
+### Test hermeticity (#41)
+
+`vitest.config.js` loads exactly one setup file — `test/setup/hermetic-env.js` —
+in every worker. It deletes the ambient ralph-domain variables, repoints `HOME` at
+a throwaway sandbox under the OS temp dir, and restores `process.env` between
+tests. So `npm test` gives the same answer on a laptop and on CI, and a new test
+file inherits that with no opt-in.
+
+The name set is **derived from the sources**, not hand-maintained: `RALPH_*` by
+prefix, every key passed to `resolveCred()` in `lib/`, and every variable declared
+by `templates/ralph.config.sh` / `templates/env.local.example`, plus a short list
+of names no file declares (`XDG_CONFIG_HOME`, `PROJECT_ROOT`, …). Add a new
+credential or config knob and it is neutralized automatically. `pool: 'forks'` is
+pinned in the same config for a reason documented there: the `HOME` sandbox
+travels through `process.env`, which only reaches `os.homedir()` when each worker
+is its own process.
+
+To assert environment resolution, opt in **explicitly**: inject the bag
+(`processEnv: { XDG_CONFIG_HOME: '/xdg' }`, `home: '/home/me'`) for unit tests, or
+set the variable on the child env / `process.env` inside a test that spawns a
+process — it is reverted before the next test. Mutate in a `beforeEach`, not a
+`beforeAll`: the per-test snapshot is taken after `beforeAll`, so a value set there
+is sticky for the rest of the file. Never rely on a variable the invoking shell
+happens to export. The contract is asserted by `test/hermetic-env.test.js`,
+`test/hermetic-env.qa.test.js` and `test/hermetic-env.idempotence.qa.test.js`.
+
 ## Pull requests
 
 - Branch off `main` and open a PR against `main`.
