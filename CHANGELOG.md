@@ -5,6 +5,19 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0](https://github.com/lucasfe/ralph/compare/v0.18.0...v0.19.0) (2026-08-24)
+
+
+### Features
+
+* weekly prompt throttle + prompt-from-cache when offline ([#26](https://github.com/lucasfe/ralph/issues/26)) ([#42](https://github.com/lucasfe/ralph/issues/42)) ([85c8bc8](https://github.com/lucasfe/ralph/commit/85c8bc8670802ea042896c6f533b0bebf655fd6f))
+
+
+### Bug Fixes
+
+* clear stale claude-working label on every terminal outcome ([#40](https://github.com/lucasfe/ralph/issues/40)) ([#46](https://github.com/lucasfe/ralph/issues/46)) ([2b804de](https://github.com/lucasfe/ralph/commit/2b804de02501e8c9201dbe17d4616b3fbf472f6b))
+* honor is_error so a failed run is never reported as success ([#39](https://github.com/lucasfe/ralph/issues/39)) ([#45](https://github.com/lucasfe/ralph/issues/45)) ([aa3fc33](https://github.com/lucasfe/ralph/commit/aa3fc33cb49da439a62b52f2a3c7f0f59ce73a4f))
+
 ## [0.18.0](https://github.com/lucasfe/ralph/compare/v0.17.0...v0.18.0) (2026-08-23)
 
 
