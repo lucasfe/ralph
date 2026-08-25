@@ -12,6 +12,11 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 * release 0.19.1 ([28fabbe](https://github.com/lucasfe/ralph/commit/28fabbeb27f6da29a853e0adcd306e0aac7c951b))
 
+
+### Notes
+
+* **No change to the published package** — the tarball is identical to 0.19.0. The only work since v0.19.0 is test infrastructure: the suite is now hermetic against the ambient environment, so a local `npm test` and a CI `npm test` agree ([#41](https://github.com/lucasfe/ralph/issues/41)) ([#47](https://github.com/lucasfe/ralph/issues/47)). It touches `test/`, `vitest.config.js` and `CONTRIBUTING.md`, none of which ship in `bin`/`lib`/`templates`. Released for the tag and changelog record only.
+
 ## [0.19.0](https://github.com/lucasfe/ralph/compare/v0.18.0...v0.19.0) (2026-08-24)
 
 
