@@ -186,20 +186,51 @@ describe('QA #41 AC1/AC2 — the suite result does not depend on the invoking sh
   })
 })
 
-describe('QA #41 the sandbox leaves nothing behind in the OS temp dir', () => {
-  const sandboxes = () =>
-    new Set(readdirSync(tmpdir()).filter((name) => name.startsWith('ralph-test-home-')))
+// A private temp dir for a nested run, so the sandboxes it creates can be
+// attributed to it EXACTLY.
+//
+// Watching the shared tmpdir() and diffing before/after does not work: the outer
+// suite's ~89 spec files are running in sibling workers the whole time, each
+// creating and removing a `ralph-test-home-<pid>-<worker>` of its own. Any sibling
+// that starts a file during the nested run leaves a NEW entry that the diff
+// attributes to the child — green on a fast laptop where the window is small, red
+// on a 2-core CI runner where it is not (the leftover that failed CI was worker
+// 78, and a nested run over two specs only ever numbers its workers 1-2).
+//
+// `os.tmpdir()` resolves TMPDIR/TEMP/TMP from the environment in JS, so pointing
+// the child at its own directory relocates every sandbox it makes. All three names
+// are set for the win32 branch, and the setup file keeps them (they are in its
+// TOOLCHAIN_NAMES) so the child does not delete its own temp root.
+function withNestedTmp(fn) {
+  const tmp = mkdtempSync(join(tmpdir(), 'qa-nested-tmp-'))
+  try {
+    return fn({ tmp, env: { TMPDIR: tmp, TEMP: tmp, TMP: tmp } })
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+}
 
+const sandboxesIn = (dir) => readdirSync(dir).filter((name) => name.startsWith('ralph-test-home-'))
+
+describe('QA #41 the sandbox leaves nothing behind in the OS temp dir', () => {
   it('creates no sandbox that outlives the run that made it', () => {
-    // The current worker's own sandbox is present in both snapshots; only NEW
-    // entries — the nested run's — are the subject here.
-    const before = sandboxes()
-    runNested({ env: CLEAN_ENV })
-    const leftOver = [...sandboxes()].filter((name) => !before.has(name))
-    expect(
-      leftOver,
-      `these sandboxes survived the nested run: ${leftOver.join(', ')} under ${tmpdir()}`,
-    ).toEqual([])
+    withNestedTmp(({ tmp, env }) => {
+      const run = runNested({ env: { ...CLEAN_ENV, ...env } })
+      // The run has to have PROVED something first: a child that aborted on load
+      // leaves an empty temp dir too, which would satisfy the assertion below
+      // without a single sandbox ever having been created. Being green also proves
+      // the relocation took — test/hermetic-env.test.js asserts HOME is under
+      // tmpdir(), and in the child tmpdir() IS `tmp`, so a sandbox that stayed in
+      // the shared /tmp would fail the nested run rather than quietly make the
+      // emptiness check below vacuous.
+      expectSameResultAs(run, getBaseline())
+      expect(run.total).toBeGreaterThan(20)
+      const leftOver = sandboxesIn(tmp)
+      expect(
+        leftOver,
+        `these sandboxes survived the nested run: ${leftOver.join(', ')} under ${tmp}`,
+      ).toEqual([])
+    })
   })
 })
 
@@ -216,16 +247,13 @@ describe('QA #41 a pool that cannot be made hermetic is REFUSED, not silently to
   let newSandboxes
 
   beforeAll(() => {
-    // Other workers of THIS suite are running concurrently and own sandboxes of
-    // their own, so only entries that appear across the nested run can be
-    // attributed to it.
-    const before = new Set(
-      readdirSync(tmpdir()).filter((name) => name.startsWith('ralph-test-home-')),
-    )
-    threaded = runNested({ args: ['--pool=threads'], env: CLEAN_ENV })
-    newSandboxes = readdirSync(tmpdir()).filter(
-      (name) => name.startsWith('ralph-test-home-') && !before.has(name),
-    )
+    withNestedTmp(({ tmp, env }) => {
+      threaded = runNested({ args: ['--pool=threads'], env: { ...CLEAN_ENV, ...env } })
+      // Read from a temp root only this child could write to, so a sandbox found
+      // here IS the refused run's — see withNestedTmp for why diffing the shared
+      // tmpdir() against sibling workers cannot make that attribution.
+      newSandboxes = sandboxesIn(tmp)
+    })
   })
 
   it('exits non-zero and reports the run as unsuccessful', () => {
@@ -269,7 +297,7 @@ describe('QA #41 a pool that cannot be made hermetic is REFUSED, not silently to
     // `--pool=threads` invocation drops a directory in the temp dir forever.
     expect(
       newSandboxes,
-      `the refused run left these behind under ${tmpdir()}: ${newSandboxes.join(', ')}`,
+      `the refused run left these behind in its private temp root: ${newSandboxes.join(', ')}`,
     ).toEqual([])
   })
 })
