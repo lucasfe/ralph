@@ -61,6 +61,7 @@ ralph init     # one-time: detect stack, write config, slash command, gitignore
 ralph doctor   # verify required deps are on PATH, and report installed vs cached latest
 ralph start    # launch the loop in a detached tmux session
 ralph status   # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend
+ralph digest   # narrate in prose what the loop is doing, and log it to .ralph/digest.log
 ralph stop     # kill this project's tmux session when you want Ralph to halt
 ralph update   # update Ralph itself to the latest published version (any directory)
 ```
@@ -134,6 +135,28 @@ happened. See
 stdout instead, so a shell prompt, a status line, or a notifier can read it
 without re-parsing the metrics file — see
 [Machine-readable output](#machine-readable-output--ralph-status---json).
+
+`ralph digest` answers the same question one resolution coarser: it asks a
+cheap model for a few sentences of plain prose about what the run is doing —
+which task is in flight, which file it appears to be editing, which phase of
+the TDD cycle it looks to be in, and anything that looks wrong. Ralph
+assembles the context itself (the in-flight log tail, bounded by both lines
+and bytes; `git status` and `git log`; and the same snapshot
+`ralph status --json` prints) and hands it over inline in the prompt, so
+**the model gets no tools at all** — it cannot read a file, run a command, or
+touch the run, and that is structural rather than a setting it was asked to
+respect. It is one turn rather than an agent session, which is what makes it
+cheap enough to ask for repeatedly; the model it asks defaults to a cheap
+per-agent one (`haiku` for Claude, `gpt-5-mini` for Codex) and is overridable
+with [`RALPH_DIGEST_MODEL`](#environment-variables). Each narrative is also
+**appended** to `.ralph/digest.log` — one entry per digest, stamped with an
+ISO timestamp, the run id, and the task in flight, and never truncated — so a
+night of digests reads back as the night's story. Failure is deliberately
+silent and harmless: an agent that is missing, unauthenticated, slow to
+answer, or that answers with nothing writes **no** history entry, prints one
+line to stderr, and still exits `0`, because a digest is an accessory to a run
+and must never be able to fail one. In a project with no run recorded yet it
+prints one honest line and never invokes the agent at all.
 
 `ralph update` updates the Ralph CLI itself, from any directory. It, the
 `--force` flag, the install layouts it can and cannot update, and the weekly
@@ -728,22 +751,23 @@ recorded on the last validation:
 
 ### Environment variables
 
-Not every setting lives in `ralph.config.sh`. The variable below is read
-from the **process environment** only. Putting it in `ralph.config.sh`
-has no effect: the Node CLI never sources that file (it text-parses
-individual assignments out of it), and this variable is not resolved
-through `.env.local` or the global `~/.config/ralph/.env` either — those
-feed a fixed set of notification credentials (see
+Not every setting lives in `ralph.config.sh`. The variables below are
+read from the **process environment** only. Putting them in
+`ralph.config.sh` has no effect: the Node CLI never sources that file (it
+text-parses individual assignments out of it), and these variables are
+not resolved through `.env.local` or the global `~/.config/ralph/.env`
+either — those feed a fixed set of notification credentials (see
 [Global config file](#global-config-file-share-creds-across-repos)).
-Export it in your shell, your shell profile, or prefix it on the command
-line.
+Export them in your shell, your shell profile, or prefix them on the
+command line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
+| `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. |
 
-**The value parse is permissive, which is a footgun on a
-negatively-named flag.** Only `0` and `false` keep the check **on**
+**`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
+on a negatively-named flag.** Only `0` and `false` keep the check **on**
 (case-insensitive, surrounding whitespace ignored); unset or empty also
 keeps it on. **Every other value disables the check** — including the
 ones that read as a refusal:
