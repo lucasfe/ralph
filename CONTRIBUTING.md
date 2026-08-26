@@ -178,6 +178,13 @@ to catch path/template bugs that unit tests can't surface.
      number. The hermetic suite pins the document's shape but never runs `jq`,
      so this is the one place the timestamp format meets the parser it is
      truncated to the second for.
+   - The startup box's `Projection:` lines, for the same reason. On the **first**
+     `ralph start` in a fresh project there is no `.ralph/metrics/issues.jsonl`
+     yet, so the block is correctly **absent** — never `~0 min/task · ~$0/task`.
+     Run `ralph start` again once an issue has completed (with something left in
+     the queue) and it must show real minutes and dollars per task, a total, and
+     a plausible local finish clock. On a Codex project the dollar segments drop
+     out and the minutes stay, which is correct.
    - WhatsApp delivery works when `.env.local` is configured (else
      skipped silently).
    - The custom hook fires when `ralph-notify.sh` is present and

@@ -108,8 +108,11 @@ a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are printed by
 `ralph start`; detach with `Ctrl+B` then `D`, or tail per-issue logs in
-`logs/ralph-issue-*.log`. Each iteration also tees
-the agent's raw JSON stream (Claude's `stream-json`, or Codex's
+`logs/ralph-issue-*.log`. The same box carries `ralph status` for checking in
+later and — on a repo with metrics history behind it — a projection of what the
+queue it just accepted should take and cost, and when it should be done (see
+[The launch projection](#the-launch-projection--ralph-start)). Each iteration
+also tees the agent's raw JSON stream (Claude's `stream-json`, or Codex's
 `codex exec --json` JSONL) to `logs/ralph-issue-*.jsonl` and appends one
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
 [Monitoring data model](#monitoring-data-model)).
@@ -1294,8 +1297,8 @@ live at:
 | Line | How it is computed |
 | --- | --- |
 | `pace` | The mean duration of the **last three** tasks *this run* completed, once at least two of them exist — a queue's difficulty drifts, and what a run just finished predicts what it is about to pick up far better than every task ever recorded does. Below two in-run samples it falls back to the **all-time** mean over the whole of `issues.jsonl`, which is what a run too young to have an opinion of its own shows. The `$/task` half is the run's own observed rate. |
-| `eta` | What is left of the in-flight task's estimate — floored at zero, so a task already running longer than the pace predicted never pushes the finish line out on its own — plus the **live** queue depth times the pace. Rendered as time left, a local wall-clock finish time (past midnight simply reads as tomorrow's clock), and a `±` spread taken from the fastest and slowest of the same samples, rounded to five minutes. The depth is recounted on every call, never frozen at `queue_at_start`: items are opened and closed while a run is going, and a denominator fixed at launch drifts silently away from the truth. |
-| `spend` | What this run has recorded so far, printed to the cent because it is a sum and not an estimate, plus a projection at the observed per-task rate over the tasks still ahead. The projection is rounded to a coarse grid — `~$250`, not `~$251.40` — since cents are noise on a figure extrapolated from a handful of tasks, and it is never rounded below the money already on the books. |
+| `eta` | What is left of the in-flight task's estimate — floored at zero, so a task already running longer than the pace predicted never pushes the finish line out on its own — plus the **live** queue depth times the pace. Rendered as time left, a local wall-clock finish time (past midnight simply reads as tomorrow's clock; a finish no calendar can spell — one corrupt `duration_ms` away — reads `--:--` rather than a fabricated clock), and a `±` spread taken from the fastest and slowest of the same samples, rounded to five minutes. The depth is recounted on every call, never frozen at `queue_at_start`: items are opened and closed while a run is going, and a denominator fixed at launch drifts silently away from the truth. |
+| `spend` | What this run has recorded so far, printed to the cent because it is a sum and not an estimate, plus a projection at the observed per-task rate over the tasks still ahead. The projection is rounded to a coarse grid — `~$250`, not `~$251.40` — since cents are noise on a figure extrapolated from a handful of tasks, and it is never rounded below the money already on the books, nor away to nothing: a figure the grid would erase falls back to its exact cents instead. A positive amount below a cent is spelled as the bound it is, `<$0.01`, rather than as the `$0.00` cents would round it to — cheap, not free. |
 
 Every one of them reads `unknown` rather than a number it cannot stand behind:
 these lines exist to be trusted when you leave a run unattended, and a guessed
@@ -1406,6 +1409,59 @@ gets the figure and rounds it however it likes. For the same reason there is
 deliberately **no `elapsed_min`** on the task in flight: `started_at` is a fact,
 whereas an elapsed would be stale the instant the document was written — a
 status line redrawing on a timer wants the former and derives the latter itself.
+
+### The launch projection — `ralph start`
+
+`ralph start` asks the three questions
+[Pace, ETA, and spend](#pace-eta-and-spend) answers, one step earlier: before a
+single task has run, what should the queue it just accepted take, what should it
+cost, and when should it be done? The answer sits at the top of the startup box,
+above the tmux lines:
+
+```
+✅ Ralph started in background. 9 issues in the queue.
+   Projection:     ~84 min/task · ~$31/task
+                   → ~12h36m, ~$280, done ≈ 04:40
+   Progress:       ralph status
+   Watch live:     tmux attach -t ralph-ralph-b36ff7b1
+   Detach:         inside the session, Ctrl+B then D
+   List:           tmux ls
+   Kill:           tmux kill-session -t ralph-ralph-b36ff7b1
+   Logs:           logs/ralph-issue-*.log
+```
+
+Two rates on the first line — minutes and dollars per task — and on the
+continuation line what they come to over the whole accepted queue: a total
+duration, a total cost, and a local wall-clock finish time (past midnight simply
+reads as tomorrow's clock, exactly as in `ralph status`). Everything from
+`Watch live:` down is unchanged; the projection and the `ralph status` hint are
+purely additive.
+
+The basis is **deliberately different**. This projection is the **all-time** mean
+over the whole of `.ralph/metrics/issues.jsonl`, never the last three tasks the
+live view prefers, because at launch there is no run to observe yet — every task
+ever recorded in this repo is the only evidence there is. So the two can differ,
+and the pace `ralph status` reports an hour in, measured on the run actually
+happening, is the better number: this one exists to be read before you walk away.
+
+The unknown discipline is the same one, spent differently. With no history at
+all — a fresh repo's first launch — the two lines are **omitted entirely**
+rather than printed as `~0 min/task · ~$0/task`, which would promise a free,
+instant queue. With one half measurable and the other not, the known segments
+print and the rest drop out: a Codex project records durations but no cost (see
+`total_cost_usd` [above](#per-issue-stream--ralphmetricsissuesjsonl)), so it gets
+the minutes and the duration total and no dollars at all. And unlike every line
+of `ralph status`, the word `unknown` never appears here — a launch box is advice
+on the way out the door rather than a report being interrogated, so an absent
+number is simply absent, and a finish time no calendar can spell drops `done ≈`
+instead of printing `--:--`. Money rounds to the same coarse grid, and yields to
+the exact figure the same way: a rate the grid would erase prints its exact cents,
+and a positive one below a cent prints `<$0.01`.
+
+Reading the metrics file is best-effort, the same way every other read of it is:
+missing, unreadable, or half-written by a run killed mid-append costs the reader
+this hint and never the launch — by the time these lines print, the loop is
+already going.
 
 ## Links
 
