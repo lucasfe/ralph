@@ -131,8 +131,12 @@ program
 
 program
   .command('cycle')
+  // #53: the update check earns its place in the one-liner — since #51/#52 it is
+  // part of the sequence, not a `ralph start` extra, and it is listed where it
+  // actually runs: inside the lock, before the drain. Named here because `--help`
+  // is where a scheduler owner learns what a tick does.
   .description(
-    'Run one queue-processing cycle: preflight, lock, drain, notify. Designed for launchd / cron schedules.',
+    'Run one queue-processing cycle: preflight, lock, update check, drain, notify. Designed for launchd / cron schedules.',
   )
   .action(async () => {
     try {

@@ -589,11 +589,19 @@ prints the same one-line notice, on stdout — which launchd captures in
 7-day windows are shared with `ralph start`, so six cycles a day cost at most
 one registry query and one question a week between them, not six a day — and
 being asked by one of the two commands this week means the other will not ask
-again until the window rolls over. A scheduled cycle is **notice-only**:
-launchd attaches no terminal, so the question below is never asked and its
-window is never spent. To silence a *scheduled* cycle,
-[`RALPH_NO_UPDATE_CHECK`](#environment-variables) has to reach the launchd
-agent, which is not the same thing as exporting it in your shell.
+again until the window rolls over. `ralph doctor` is the exception that draws
+from neither: it *reads* that same file for its `cached latest:` line and
+stamps neither window, so running `doctor` never spends the week's question.
+
+A scheduled cycle is **notice-only**: launchd attaches no terminal, so the
+question below is never asked and its window is never spent. **Ralph never
+auto-updates on a schedule** — an unattended tick notifies and nothing more;
+the install runs only after a human answers the question on a terminal. And
+printing is not asking, so the check can **never block a scheduled tick** and
+never fail one: it prints, and the pass drains as it always would. To silence a
+*scheduled* cycle, [`RALPH_NO_UPDATE_CHECK`](#environment-variables) has to
+reach the launchd agent, which is not the same thing as exporting it in your
+shell.
 
 When that notice fires, stdin is a terminal, **and** you have not already been
 asked in the last 7 days, `ralph start` asks `Update now? [y/N]:` — before the
