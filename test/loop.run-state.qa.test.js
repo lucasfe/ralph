@@ -362,7 +362,10 @@ exit 0
     expect(lines).toContain('  queue      2 waiting')
     expect(lines).toContain('  attach     tmux attach -t ralph-test')
     expect(lines.join('\n')).not.toContain('#?')
-    expect(lines.join('\n')).not.toContain('unknown')
+    // Scoped to the lines the RECORD drives: #57's pace/eta/spend block reads
+    // `unknown` here on purpose, because this renders with no issues.jsonl behind
+    // it — which is the honest answer, not a drift.
+    expect(lines.slice(0, 3).join('\n')).not.toContain('unknown')
   })
 })
 

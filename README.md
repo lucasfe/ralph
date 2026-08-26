@@ -60,7 +60,7 @@ In a git repo on the branch you want Ralph to work from:
 ralph init     # one-time: detect stack, write config, slash command, gitignore
 ralph doctor   # verify required deps are on PATH, and report installed vs cached latest
 ralph start    # launch the loop in a detached tmux session
-ralph status   # what is Ralph on right now: run, task in flight, queue depth
+ralph status   # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend
 ralph stop     # kill this project's tmux session when you want Ralph to halt
 ralph update   # update Ralph itself to the latest published version (any directory)
 ```
@@ -117,11 +117,14 @@ telemetry event line to `.ralph/metrics/issues.jsonl` (see
 `ralph status` answers "what is Ralph on right now?" without attaching to
 anything. It reads the run-state record the loop keeps at
 `.ralph/run-state.json` and prints the run and how long it has been going, the
-task in flight and for how long, the **live** queue depth, and the attach / kill
-lines for the session — or, for a scheduled `ralph cycle` run, the log to follow
-instead, since that run has no session to attach to. It anchors on the git
-toplevel, so it reports the same run from any subdirectory of the repo, and it
-exits `0` whether a run is in flight, was interrupted, is over, or never
+task in flight and for how long, the **live** queue depth, the pace the run is
+holding, an ETA with a range and a wall-clock finish time, the spend so far and
+where it projects to, and the attach / kill lines for the session — or, for a
+scheduled `ralph cycle` run, the log to follow instead, since that run has no
+session to attach to. Each of those three estimates reads `unknown` rather than
+a guessed number when the run has no history to reason from. It anchors on the
+git toplevel, so it reports the same run from any subdirectory of the repo, and
+it exits `0` whether a run is in flight, was interrupted, is over, or never
 happened. See
 [Run state](#run-state--ralphrun-statejson-and-ralph-status).
 
@@ -913,9 +916,10 @@ for your session.
 **You detached and cannot tell whether Ralph is still working.** — Run
 `ralph status`. It reads the run-state record the loop writes
 (`.ralph/run-state.json`), reconciles it against whether that run is still
-alive, and names the run, the issue in flight and for how long, and the live
-queue depth — from any subdirectory of the repo, and without attaching to
-anything. **`interrupted`** there means a run started and never wrote a terminal
+alive, and names the run, the issue in flight and for how long, the live queue
+depth, and the pace, ETA, and spend the run is holding — from any subdirectory
+of the repo, and without attaching to anything. **`interrupted`** there means a
+run started and never wrote a terminal
 record: a `tmux kill-session`, a `kill -9`, or a reboot took it out mid-issue,
 and the issue on the `in flight` line is where it stopped. There is nothing left
 to attach to, so start again — the next `ralph start` offers to clear the
@@ -1226,6 +1230,9 @@ session to attach to:
 ▸ ralph — running · run ralph-ralph-b36ff7b1-1718700000 (started 16:20, 12min ago)
   in flight  #031 (4min)
   queue      6 waiting
+  pace       ~84 min/task
+  eta        ~9h44m left → ~02:16  (±1h30m)
+  spend      unknown
 
   scheduled  ralph cycle run — no tmux session to attach to
   logs       tail -f logs/ralph-cycle.out.log
@@ -1235,18 +1242,25 @@ session to attach to:
 ▸ ralph — running · run ralph-ralph-b36ff7b1-1718700000 (started 16:20, 3h12m ago)
   in flight  #031 (40min)
   queue      6 waiting
+  pace       ~84 min/task · $31.4/task
+  eta        ~9h08m left → ~04:40  (±1h30m)
+  spend      $62.85 so far · ~$250 projected
 
   attach     tmux attach -t ralph-ralph-b36ff7b1
   kill       ralph stop
 ```
 
-The two readouts differ only in those last two lines, never in the id: a cycle
-builds its `run_id` from the same per-project session name a `ralph start` run
-would use, so what tells them apart is whether there is a session to attach to.
+The two readouts differ only in those last two lines and in how much each run has
+to say about itself, never in the id: a cycle builds its `run_id` from the same
+per-project session name a `ralph start` run would use, so what tells them apart
+is whether there is a session to attach to. The scheduled run above is twelve
+minutes old and has finished nothing yet, which is why its pace is the all-time
+fallback and it has no spend of its own to report (see
+[Pace, ETA, and spend](#pace-eta-and-spend) below).
 
-An **`interrupted`** run prints the same first three lines with the mode swapped
-and `restart    ralph start` in place of the attach pair — there is nothing left
-to attach to or kill, and the `in flight` line names the issue the run died on.
+An **`interrupted`** run prints the same six lines with the mode swapped and
+`restart    ralph start` in place of the attach pair — there is nothing left to
+attach to or kill, and the `in flight` line names the issue the run died on.
 **`idle`** and **`never-run`** are one line each, deliberately: the run is over,
 or there has not been one.
 
@@ -1264,6 +1278,32 @@ The queue depth is **live**, counted the way `ralph start` counts it — the sam
 fails the command, and it never reads as `0 waiting`. Only the live views pay
 for it: `idle` and `never-run` skip the count entirely — no `gh` call, no
 directory scan.
+
+#### Pace, ETA, and spend
+
+The three lines under the queue are the counted facts turned into what they
+imply. They are derived from the run's own
+[per-issue events](#per-issue-stream--ralphmetricsissuesjsonl), read from
+`.ralph/metrics/issues.jsonl` at the same git toplevel the record and the lock
+live at:
+
+| Line | How it is computed |
+| --- | --- |
+| `pace` | The mean duration of the **last three** tasks *this run* completed, once at least two of them exist — a queue's difficulty drifts, and what a run just finished predicts what it is about to pick up far better than every task ever recorded does. Below two in-run samples it falls back to the **all-time** mean over the whole of `issues.jsonl`, which is what a run too young to have an opinion of its own shows. The `$/task` half is the run's own observed rate. |
+| `eta` | What is left of the in-flight task's estimate — floored at zero, so a task already running longer than the pace predicted never pushes the finish line out on its own — plus the **live** queue depth times the pace. Rendered as time left, a local wall-clock finish time (past midnight simply reads as tomorrow's clock), and a `±` spread taken from the fastest and slowest of the same samples, rounded to five minutes. The depth is recounted on every call, never frozen at `queue_at_start`: items are opened and closed while a run is going, and a denominator fixed at launch drifts silently away from the truth. |
+| `spend` | What this run has recorded so far, printed to the cent because it is a sum and not an estimate, plus a projection at the observed per-task rate over the tasks still ahead. The projection is rounded to a coarse grid — `~$250`, not `~$251.40` — since cents are noise on a figure extrapolated from a handful of tasks, and it is never rounded below the money already on the books. |
+
+Every one of them reads `unknown` rather than a number it cannot stand behind:
+these lines exist to be trusted when you leave a run unattended, and a guessed
+ETA is worse than no ETA. A run that has completed nothing and no history behind
+it to fall back on, a queue count that failed (no depth, so no ETA), a metrics
+file that is missing, unreadable, or half-written by a run killed mid-append —
+each degrades to `unknown`, never to `0`. Cost is the sharpest case:
+`total_cost_usd` is `0` for every Codex iteration, because the Codex stream
+carries no price and Ralph never fabricates one, so a Codex run reads
+`spend      unknown` rather than `$0.00`, which would claim the run was free.
+The metrics read is guarded the same way the queue count is — a read-only view
+never aborts over its own telemetry.
 
 Like `ralph cycle`, `ralph status` anchors itself on the **git toplevel**, so it
 reports the same run from any subdirectory of the repo — the loop writes the

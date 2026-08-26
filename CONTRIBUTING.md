@@ -167,7 +167,11 @@ to catch path/template bugs that unit tests can't surface.
      in flight, and a live queue depth. This step is the only place the loop's
      run-state writes are exercised for real: `.ralph/run-state.json` is
      written by `templates/ralph.sh`, which the unit suite can only drive
-     against stubs.
+     against stubs. The same holds for `.ralph/metrics/issues.jsonl`, which
+     backs the `pace` / `eta` / `spend` lines: once the first issue completes
+     they must show real numbers instead of `unknown` (on a Codex project
+     `spend` stays `unknown`, which is correct — the Codex stream carries no
+     cost).
    - WhatsApp delivery works when `.env.local` is configured (else
      skipped silently).
    - The custom hook fires when `ralph-notify.sh` is present and
