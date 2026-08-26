@@ -1080,7 +1080,7 @@ alerts, and no ceilings**; they only record what already happened.
 
 The two streams are designed to map cleanly onto two future database
 tables — a `runs` table (per-run stream) and an `issues` table (per-issue
-stream) — joined on [`run_id`](#run_id-the-join-key).
+stream) — joined on [`run_id`](#run_id--the-join-key).
 
 Both streams are **history**. Ralph also keeps one artifact that is not a stream
 at all — a single [run-state
@@ -1107,7 +1107,7 @@ with these fields:
 | Field | Meaning |
 | --- | --- |
 | `issue_number` | The issue resolved this iteration. |
-| `run_id` | The [join key](#run_id-the-join-key) — ties every issue event from one loop invocation to its run. |
+| `run_id` | The [join key](#run_id--the-join-key) — ties every issue event from one loop invocation to its run. |
 | `ts` | Event timestamp (epoch milliseconds). |
 | `agent` | The **resolved** coding agent that produced the event: `claude` or `codex`. A `RALPH_AGENT` typo records the fallback (`claude`), so a misconfiguration stays auditable. |
 | `subtype` | The result subtype (e.g. `success`, `error`), or `null` if absent — **reconciled** with the stream's error flag, not copied verbatim. Claude's `result` event carries **both** `subtype` and `is_error`, and on a hard failure the two contradict each other (an auth failure reports `{"subtype":"success","is_error":true}`). `is_error` decides pass/fail; `subtype` only *names* the outcome. So a flagged result never records `success`: it keeps its own subtype when that already names the error (`error_max_turns` stays `error_max_turns`) and records `error` otherwise. The flag is **not** a field of its own — it is folded into this one, so the event's key set is unchanged. |
@@ -1151,7 +1151,7 @@ This stream maps to the future `runs` table.
 | `ok`, `failed` | Real per-run counts of resolved vs. failed issues. |
 | `durationMin` | Run duration in minutes. |
 | `processed` | Total issues processed (`ok + failed`). |
-| `run_id` | The [join key](#run_id-the-join-key) — the same value stamped on every per-issue event from this run. |
+| `run_id` | The [join key](#run_id--the-join-key) — the same value stamped on every per-issue event from this run. |
 
 Both run paths now emit real counts: scheduled `ralph cycle` passes and
 interactive `ralph start` runs each append one `RALPH_CYCLE_EVENT`, so an
@@ -1204,7 +1204,7 @@ loop nor `ralph status` names a field of its own:
 | Field | Meaning |
 | --- | --- |
 | `schema` | Record version, currently `1`. Written for future migrations; **no reader inspects it yet**, so a record whose `schema` is missing or from the future is still read verbatim. |
-| `run_id` | The [join key](#run_id-the-join-key) — the same value this run stamps on every `RALPH_ISSUE_EVENT` and on its `RALPH_CYCLE_EVENT`, so a run in flight can be tied to the history it has already written. |
+| `run_id` | The [join key](#run_id--the-join-key) — the same value this run stamps on every `RALPH_ISSUE_EVENT` and on its `RALPH_CYCLE_EVENT`, so a run in flight can be tied to the history it has already written. |
 | `session` | The tmux session the run was launched into (`ralph-<repo>-<hash>`), or the default `ralph` for a `ralph cycle` run, which has no session of its own. `ralph status` probes **this** session for liveness — the one the run recorded, not the one a fresh `ralph start` would create. |
 | `source` | The resolved task source for the run: `github` or `folder`. |
 | `status` | `running` until the run ends, then the loop's own terminal status: `success`, `partial`, or `failed` — the same value the run's `RALPH_CYCLE_EVENT` reports. |
@@ -1278,6 +1278,18 @@ or there has not been one.
 ```
 ▸ ralph — never-run · no run recorded yet (start one with `ralph start`)
 ```
+
+Three small rules govern how those lines spell what they cannot say plainly, and
+all three are the record's own never-lie-with-a-zero discipline seen from the
+rendering side. A task number is **zero-padded to three digits** — `#031` — so
+consecutive readouts align down the column, and a wider number is never cut to
+fit it (`#1234`); a `number` the record could not supply as one reads `#?`. The
+`in flight` line reads `none yet` before the run has picked up its first task,
+and reads it for a `current` that is *present but empty* too, since neither of
+those names a task to report. And the `idle` line spends its `?` exactly where
+`queue_at_start` does: a truncated or externally-written record that never
+recorded `ok`/`failed` reads `(partial: ? ok, ? failed)` rather than a `0` that
+would claim a run failed nothing.
 
 The queue depth is **live**, counted the way `ralph start` counts it — the same
 `gh` search in GitHub mode, the local `.ralph/tasks` tree in folder mode (no
@@ -1353,7 +1365,7 @@ two surfaces cannot drift apart, and everything in
 | Field | Meaning |
 | --- | --- |
 | `mode` | `running`, `interrupted`, `idle`, or `never-run` — the four modes above. The **discriminator**: read it first, because every key below it is present in every mode. |
-| `run_id` | The [join key](#run_id-the-join-key) as a string, or `null` in `never-run`. An `idle` document still names the run that just ended, so its history in `issues.jsonl` stays reachable. |
+| `run_id` | The [join key](#run_id--the-join-key) as a string, or `null` in `never-run`. An `idle` document still names the run that just ended, so its history in `issues.jsonl` stays reachable. |
 | `progress.completed`, `progress.in_flight` | Tasks this run has finished, and whether one is in flight (`0` or `1`). |
 | `progress.remaining`, `progress.total` | The **live** queue depth, and `completed + in_flight + remaining`. Both `null` when the count failed — "nothing left" and "we could not look" are different answers. |
 | `tasks.current` | `{ number, started_at }` for the task in flight, and `null` **exactly** when `progress.in_flight` is `0`. Gated on that count rather than on the record, because a terminal record deliberately keeps `current` (it names the last task the run worked on) and reading it directly would have an `idle` document claim a finished run is still working. |
@@ -1409,6 +1421,56 @@ gets the figure and rounds it however it likes. For the same reason there is
 deliberately **no `elapsed_min`** on the task in flight: `started_at` is a fact,
 whereas an elapsed would be stale the instant the document was written — a
 status line redrawing on a timer wants the former and derives the latter itself.
+
+Worked, then: everything above exists so that one line of `jq` can be written
+once and left alone. What a shell prompt or a tmux `status-right` wants is the
+mode, the task, how far through the queue it is, and when it lands —
+
+```bash
+ralph status --json | jq -r '
+  if .mode != "running" then "ralph \(.mode)"
+  else [ "ralph",
+         (.tasks.current | if . == null then "no task yet" else "#\(.number // "?")" end),
+         "\(.progress.completed)/\(.progress.total // "?")",
+         (.eta.finish_at | if . == null then "eta ?" else "eta \(fromdate | strflocaltime("%H:%M"))" end)
+       ] | join(" · ")
+  end'
+```
+
+— which across the four modes prints, the first line being the document above
+read back on that same UTC machine:
+
+```
+ralph · #31 · 2/9 · eta 04:40      # running, every measurement available
+ralph · #31 · 0/? · eta ?          # running: the queue count failed, nothing to pace from yet
+ralph · no task yet · 0/6 · eta ?  # running, before the first task is picked up
+ralph interrupted                  # …and `ralph idle`, `ralph never-run`, from the same branch
+```
+
+Three habits in it, and each is a paragraph above being spent. `mode` is read
+**first**, and answers on its own for the three non-running modes: those
+documents have nothing to say past their name and a run id, and asking a
+finished run how fast it is going is not a question. Then **every leaf a number
+can go missing from is guarded**, because a `null` breaks a consumer in two
+different ways and only one of them is loud: interpolated, it prints the literal
+text (`#null`, `0/null`), which a status line will happily display for hours,
+whereas `fromdate` on it fails outright (`strptime/1 requires string inputs`)
+and takes the whole line down. So the numbers take a `//` default and the
+instant takes an explicit `null` branch — while `progress.completed` needs
+neither, precisely *because* it is a count. And `finish_at` goes through
+`fromdate` and only then `strflocaltime`, which is the whole reason that field is
+truncated to the second: the document carries an unambiguous UTC instant and the
+reader wants their own wall clock, so the conversion belongs at the point of
+display and nowhere earlier.
+
+Keep it in a small script on `PATH` and point the prompt or `status-right` at
+*that* rather than inlining it — tmux reads a bare `#` in a format string as its
+own escape. Nothing downstream needs a failure branch, because there is no
+failure to branch on: the command exits `0` and stdout carries exactly one
+document in all four modes. And the same four reads drive a notifier instead of a
+status line by changing only the string they are formatted into —
+`.eta.remaining_min` under a threshold is the entire condition for "tell me when
+it is nearly done".
 
 ### The launch projection — `ralph start`
 
