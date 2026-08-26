@@ -85,7 +85,11 @@ program
   )
   .action(async () => {
     try {
-      const result = await cycleCommand()
+      // #51: currentVersion feeds the update notice the cycle prints inside its
+      // lock. Same pkg.version start, update and doctor get — one source of truth
+      // for "what is installed", and the reason a launchd-driven cycle can tell it
+      // is stale at all.
+      const result = await cycleCommand({ currentVersion: pkg.version })
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof CycleAbort) {
