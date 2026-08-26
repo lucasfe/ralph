@@ -147,10 +147,12 @@ to catch path/template bugs that unit tests can't surface.
      macOS, `apt install ...` on Linux/WSL).
    - The version line under the header names the tarball version you
      just installed. Its `cached latest:` half comes from the global
-     update-check cache that only `ralph start` writes, so on a machine
-     that has never run `ralph start` it reads `unknown (no update check
-     cached yet)` — expected here, not a failure. `doctor` must return
-     immediately either way: it makes no registry query.
+     update-check cache, which is written by the weekly check in
+     `ralph start` and in `ralph cycle` — so it reads `unknown (no update
+     check cached yet)` on a machine where neither has run, and reads a
+     real version on a machine with scheduled cycles installed. Both are
+     expected here; neither is a failure. `doctor` must return immediately
+     either way: it makes no registry query.
 5. **Pick a real open issue** in the project and run `ralph start`.
    Watch via `tmux attach -t ralph`. Verify that:
    - Lazy validation runs on first start (`.ralph/state.json` did not

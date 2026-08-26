@@ -86,7 +86,8 @@ cached latest: 0.17.0 — up to date` when it holds the version you already have
 (or an older one — a local build ahead of the registry is not stale), and
 `version: 0.17.0 — cached latest: unknown (no update check cached yet)` when
 nothing usable is cached. The "latest" half is **read** from the same global
-`update-check.json` that `ralph start`'s weekly check writes (see
+`update-check.json` the weekly check writes, whether that check ran under
+`ralph start` or under a scheduled `ralph cycle` (see
 [Updating Ralph](#updating-ralph)): `doctor` never queries the registry,
 never writes that file, and applies neither of the two 7-day windows it holds —
 it reports whatever the last check left behind, however old, and running it
@@ -114,7 +115,7 @@ telemetry event line to `.ralph/metrics/issues.jsonl` (see
 
 `ralph update` updates the Ralph CLI itself, from any directory. It, the
 `--force` flag, the install layouts it can and cannot update, and the weekly
-check `ralph start` runs are all covered in
+check `ralph start` and `ralph cycle` run are all covered in
 [Updating Ralph](#updating-ralph).
 
 ## How Ralph resolves issues
@@ -427,6 +428,16 @@ install`. The `ralph schedule heartbeat` subcommand exists, but it is
 the entry point launchd invokes when the heartbeat plist fires; you
 will not normally call it by hand.
 
+**A launchd agent sources no shell startup file**, so the
+`EnvironmentVariables` dict `install` writes into each plist is the
+entire environment a scheduled run ever sees — not your `.zshrc`, and
+not an `export` you typed in a terminal. Two values from the installing
+shell go into it: `PATH`, and `RALPH_NO_UPDATE_CHECK` when that is set
+to a non-empty value. Both are snapshots taken **at install time**;
+re-run `ralph schedule install --force` to re-take them (see
+[Environment variables](#environment-variables) for what the second one
+silences).
+
 ## Updating Ralph
 
 Ralph ships one update command, `ralph update`, and `ralph start` offers to
@@ -505,7 +516,7 @@ through and it exits 1. All of it goes to stderr, one whole line per write, and 
 successful update writes nothing there at all — so a wrapper or CI step that
 captures only stderr keeps the whole diagnosis and nothing else.
 
-### The weekly check in `ralph start`
+### The weekly check
 
 Before the loop launches, `ralph start` asks npm for the latest published
 version — **at most once every 7 days** — and prints
@@ -513,6 +524,19 @@ version — **at most once every 7 days** — and prints
 when what it knows about is newer than what you have. The notice itself is not
 throttled and keeps printing on every run that finds something newer (see
 [Troubleshooting](#troubleshooting)).
+
+**`ralph cycle` runs the identical check, and only ever prints.** A scheduled
+cycle (see [Scheduling Ralph](#scheduling-ralph-macos-launchd)) runs the same
+check and prints the same one-line notice, on stdout — which launchd captures
+in `logs/ralph-cycle.out.log`, where an unattended run is read. It shares the
+one global 7-day window with `ralph start`, so six cycles a day cost at most
+one registry query a week between them, not six a day. It is
+**notice-only**: a cycle never asks the question below, on any terminal, not
+even when you run `ralph cycle` by hand — so it can never spend that question's
+own window either, and the offer to install stays `ralph start`'s alone. To
+silence a *scheduled* cycle,
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables) has to reach the launchd
+agent, which is not the same thing as exporting it in your shell.
 
 When that notice fires, stdin is a terminal, **and** you have not already been
 asked in the last 7 days, `ralph start` asks `Update now? [y/N]:` — before the
@@ -561,9 +585,11 @@ one question a week between them rather than five.
 The file holds **two independent windows**: `last_check_at` gates the registry
 query, `last_prompted_at` gates the question. Neither gates the other, so a run
 can query the registry without asking you anything, and can ask without
-querying. The prompt is always served from the *cached* `latest_version`, so a
-query that was skipped or that failed outright still gets you the question as
-long as what is cached is newer than what you have — which is the point: a
+querying. `ralph cycle` is the pure form of the first case: it reads and writes
+the same file and stamps `last_check_at`, but never `last_prompted_at`, because
+it never asks. The prompt is always served from the *cached* `latest_version`,
+so a query that was skipped or that failed outright still gets you the question
+as long as what is cached is newer than what you have — which is the point: a
 flaky network no longer hides an update Ralph already knows about. With the
 network down and nothing useful cached there is simply nothing to say, and
 `ralph start` goes quiet and launches the loop. A stamp that is missing,
@@ -653,7 +679,7 @@ line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
 
 **The value parse is permissive, which is a footgun on a
 negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -675,6 +701,17 @@ RALPH_NO_UPDATE_CHECK=           # enabled (empty is treated as unset)
 
 To turn the check back on, unset the variable (or set it to `0`) rather
 than assigning it something that looks negative.
+
+**Scheduled cycles read it from the plist, not your shell.** A launchd
+agent sources no `.zshrc` or `.zprofile`, so the only environment
+`ralph cycle` sees under
+[scheduling](#scheduling-ralph-macos-launchd) is the
+`EnvironmentVariables` dict in its plist. `ralph schedule install`
+therefore copies `RALPH_NO_UPDATE_CHECK` into both plists when it is set
+in the installing shell — a snapshot taken at install time, exactly like
+`PATH`. Setting or unsetting it afterwards changes nothing for the
+already-installed agents; re-run `ralph schedule install --force` to
+re-take the snapshot.
 
 This table is not the only environment-sensitive setting: `RALPH_AGENT`
 is honored as an env override on top of its `ralph.config.sh` value, as
@@ -861,8 +898,11 @@ global cache outside the project (see
 Working as intended. The notice is the one part of the update check with no
 throttle on it at all: `ralph start` prints it on *every* run for as long as
 the version it has cached is newer than the one you have, so expect it to
-repeat until you actually update (or a later check finds nothing newer). The
-question that can follow it on an interactive terminal — `Update now? [y/N]:` —
+repeat until you actually update (or a later check finds nothing newer). A
+scheduled `ralph cycle` prints the same unthrottled notice into
+`logs/ralph-cycle.out.log`, so on a machine with the launchd agents
+installed, expect one there per pass as well. The question that can
+follow it on an interactive terminal — `Update now? [y/N]:` —
 has a **7-day window of its own** in the global update-check cache, so it
 reaches you at most once a week however many times `ralph start` runs and
 however many repos are involved; declining is remembered until that window
@@ -880,9 +920,11 @@ update notices — it is not a knob to reach for.
 
 **`ralph doctor` reports `cached latest: unknown`.** — Nothing usable is
 in the update-check cache yet, which is the normal state on a fresh
-install: only `ralph start` writes that file, and `doctor` deliberately
-makes no registry query of its own. Run `ralph start` once and the line
-fills in on the next `doctor`; to learn the latest version right now,
+install: that file is written only by the weekly check — which runs in
+`ralph start` and in `ralph cycle`, and nowhere else — and `doctor`
+deliberately makes no registry query of its own. Run `ralph start` once, or
+let the next scheduled cycle run, and the line fills in on the next
+`doctor`; to learn the latest version right now,
 `ralph update` asks the registry directly (and installs nothing when you
 are already current). The line also reads `unknown` when the cache file
 is unreadable or hand-mangled into something that is not a version, and
