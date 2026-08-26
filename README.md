@@ -440,9 +440,9 @@ silences).
 
 ## Updating Ralph
 
-Ralph ships one update command, `ralph update`, and `ralph start` offers to
-run it for you roughly once a week. There is no `ralph upgrade` and no alias
-for one.
+Ralph ships one update command, `ralph update`, and offers to run it for you
+roughly once a week — from `ralph start`, or from a `ralph cycle` you run on a
+terminal yourself. There is no `ralph upgrade` and no alias for one.
 
 ### `ralph update`
 
@@ -525,16 +525,17 @@ when what it knows about is newer than what you have. The notice itself is not
 throttled and keeps printing on every run that finds something newer (see
 [Troubleshooting](#troubleshooting)).
 
-**`ralph cycle` runs the identical check, and only ever prints.** A scheduled
-cycle (see [Scheduling Ralph](#scheduling-ralph-macos-launchd)) runs the same
-check and prints the same one-line notice, on stdout — which launchd captures
-in `logs/ralph-cycle.out.log`, where an unattended run is read. It shares the
-one global 7-day window with `ralph start`, so six cycles a day cost at most
-one registry query a week between them, not six a day. It is
-**notice-only**: a cycle never asks the question below, on any terminal, not
-even when you run `ralph cycle` by hand — so it can never spend that question's
-own window either, and the offer to install stays `ralph start`'s alone. To
-silence a *scheduled* cycle,
+**`ralph cycle` runs the identical check, and on a terminal asks the identical
+question.** A scheduled cycle (see
+[Scheduling Ralph](#scheduling-ralph-macos-launchd)) runs the same check and
+prints the same one-line notice, on stdout — which launchd captures in
+`logs/ralph-cycle.out.log`, where an unattended run is read. **Both** global
+7-day windows are shared with `ralph start`, so six cycles a day cost at most
+one registry query and one question a week between them, not six a day — and
+being asked by one of the two commands this week means the other will not ask
+again until the window rolls over. A scheduled cycle is **notice-only**:
+launchd attaches no terminal, so the question below is never asked and its
+window is never spent. To silence a *scheduled* cycle,
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables) has to reach the launchd
 agent, which is not the same thing as exporting it in your shell.
 
@@ -559,6 +560,23 @@ Without a TTY — cron, launchd, CI, a piped stdin — nothing is ever asked and
 the loop always starts. Because no question was displayed, the prompt window is
 left untouched, so a nightly headless run cannot spend the week's question on
 nobody.
+
+Run `ralph cycle` by hand on a terminal and the same question follows its
+notice — same wording, same window — with one difference in what accepting
+means: the update runs, ``✅ Updated to <version> — run `ralph cycle` again.``
+is printed, and the cycle **stops without draining the queue**, for the reason
+`ralph start` refuses to launch. This process holds pre-update code and reaches
+the loop script through the install that was just replaced, so stopping is what
+guarantees no issue is processed by a mixture of two versions. Nothing is lost:
+re-run `ralph cycle` yourself, or let the next scheduled tick pick the new
+version up on its own. Declining, a failed install, or an `npx` run / linked
+dev checkout with nothing to install all leave the cycle draining normally on
+the version you already have — the last two after one neutral line,
+`⚠️  Update did not complete — continuing this cycle on <version>.` A stopped
+cycle still appends one `RALPH_CYCLE_EVENT` (status `updated`, every count
+zero) to `logs/ralph-cycle.out.log`, so the
+[daily heartbeat](#daily-heartbeat-24h-summary) counts the tick but attributes
+no issues and no run time to it.
 
 The question is asked **at most once every 7 days**, throttled by its own
 `last_prompted_at` stamp in the global update-check cache — a window
@@ -585,9 +603,11 @@ one question a week between them rather than five.
 The file holds **two independent windows**: `last_check_at` gates the registry
 query, `last_prompted_at` gates the question. Neither gates the other, so a run
 can query the registry without asking you anything, and can ask without
-querying. `ralph cycle` is the pure form of the first case: it reads and writes
-the same file and stamps `last_check_at`, but never `last_prompted_at`, because
-it never asks. The prompt is always served from the *cached* `latest_version`,
+querying. A *scheduled* `ralph cycle` is the pure form of the first case: it
+reads and writes the same file and stamps `last_check_at`, but never
+`last_prompted_at`, because launchd gives it no terminal to ask on. Run by hand
+on a terminal it stamps both, out of the very same windows `ralph start` draws
+from. The prompt is always served from the *cached* `latest_version`,
 so a query that was skipped or that failed outright still gets you the question
 as long as what is cached is newer than what you have — which is the point: a
 flaky network no longer hides an update Ralph already knows about. With the
@@ -901,12 +921,13 @@ the version it has cached is newer than the one you have, so expect it to
 repeat until you actually update (or a later check finds nothing newer). A
 scheduled `ralph cycle` prints the same unthrottled notice into
 `logs/ralph-cycle.out.log`, so on a machine with the launchd agents
-installed, expect one there per pass as well. The question that can
-follow it on an interactive terminal — `Update now? [y/N]:` —
+installed, expect one there per pass as well — and never a question after
+it, since a launchd run has no terminal to ask on. The question that can
+follow the notice on an interactive terminal — `Update now? [y/N]:` —
 has a **7-day window of its own** in the global update-check cache, so it
-reaches you at most once a week however many times `ralph start` runs and
-however many repos are involved; declining is remembered until that window
-rolls over. See [Updating Ralph](#updating-ralph) for the full behavior — both
+reaches you at most once a week however many times `ralph start` and
+`ralph cycle` run and however many repos are involved; declining is remembered
+until that window rolls over. See [Updating Ralph](#updating-ralph) for the full behavior — both
 windows, the prompt-from-cache rule, and the headless path.
 
 Run `ralph update` to update — it picks the right command for a global
@@ -1067,7 +1088,7 @@ This stream maps to the future `runs` table.
 | Field | Meaning |
 | --- | --- |
 | `ts` | Run-end timestamp (ISO 8601, UTC). |
-| `status` | `success` (no failures), `partial` (some ok, some failed), or `failed`. |
+| `status` | `success` (no failures), `partial` (some ok, some failed), or `failed` — the outcomes of a pass that drained the queue. A pass that stopped instead reports that, with every count zero: `updated`, for one, is a cycle that installed a newer Ralph and stopped rather than draining through a half-swapped install (see [The weekly check](#the-weekly-check)). |
 | `ok`, `failed` | Real per-run counts of resolved vs. failed issues. |
 | `durationMin` | Run duration in minutes. |
 | `processed` | Total issues processed (`ok + failed`). |
