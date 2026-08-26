@@ -99,6 +99,14 @@ mkdir -p logs
 # the RALPH_AGENT_ARGS array and RALPH_AGENT_STREAM_FILTER. For claude the argv is
 # byte-for-byte the flags the loop has always used, so the Claude path is
 # unchanged. This bash holds NO agent-specific knowledge of its own.
+#
+# The same output may carry `export` lines for environment the chosen agent needs
+# (claude's background-wait ceiling, which decides whether an orphaned subagent
+# kills the whole invocation — see lib/agent-registry.js). They are emitted AHEAD
+# of the assignments because the stream filter is a multi-line value that must
+# stay last, and they are DEFAULTS: anything already set above wins, so
+# ralph.config.sh keeps the last word. Nothing here needs to know which variables
+# those are.
 resolve_agent_invocation() {
   local sh _err
   # Fail fast: bash has no agent defaults to fall back to. If the node bridge

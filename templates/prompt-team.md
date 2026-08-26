@@ -23,6 +23,37 @@ Current effort tier: `{{RALPH_HEAVY_TIER}}` (0 = off). This flag gates the
 Tier 2 / Heavy path in step 3b: when it is `0` the heavy tier is unavailable
 and triage uses only Tier 0 (Light) and Tier 1 (Standard).
 
+## Dispatch discipline — never finish with a dispatch in flight
+
+Subagents run in the BACKGROUND and report back through a completion
+notification. You can therefore reach the end of your turn while one is still
+working — and if you do, this invocation is lost.
+
+What happens is not a graceful degradation. When you emit your final message,
+the headless run ends the turn and then waits for any surviving background task
+up to a fixed ceiling (10 minutes by default), after which it TERMINATES the
+whole session. The orphaned subagent's report can never reach you, because your
+turn is already over: nothing gets committed, no PR is opened, and the issue is
+left open holding `claude-working` — which excludes it from the queue, so the
+loop silently skips it on every later cycle until a human intervenes.
+
+This has already cost real work. Three separate invocations died exactly this
+way, each with one more subagent STARTED than FINISHED, each recorded as
+"success" with zero files changed, and each burning its full cost for nothing.
+
+So, without exception:
+
+- After dispatching a subagent, WAIT for its completion notification before
+  doing anything that depends on it, and before writing your final message.
+- Never guess, predict, or write what a pending subagent "will" report. If you
+  need its result, you need its notification.
+- Before you finish — at step 9, at "Failed", or anywhere you decide to exit —
+  account for every subagent you dispatched. Started count must equal finished
+  count. If one is still running, wait for it.
+- If a dispatch genuinely hangs and you must abandon it, go to "Failed" and say
+  so in the issue comment. An honest `claude-failed` re-enters triage; a
+  truncated "success" does not.
+
 ## Required sequence
 
 0. **Ensure dependencies**: run `{{INSTALL_CMD}}` (skip if empty).
@@ -308,6 +339,9 @@ reviewers** instead of a single pass:
   `--auto` handles it.
 - NEVER close issues manually (`gh issue close`). The `Closes #N` in
   the PR body handles it.
+- NEVER emit your final message while a dispatched subagent is still
+  running. See "Dispatch discipline" — the session is terminated at the
+  background-wait ceiling and the whole invocation is lost.
 - NEVER edit, create, or delete files outside `{{PROJECT_ROOT}}`.
 - NEVER run Bash commands that touch files outside `{{PROJECT_ROOT}}`
   (e.g. `rm`, `mv`, `curl > path`).
