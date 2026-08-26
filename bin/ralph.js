@@ -6,6 +6,7 @@ import { Command } from 'commander'
 import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { statusCommand, StatusAbort } from '../lib/commands/status.js'
+import { digestCommand, DigestAbort } from '../lib/commands/digest.js'
 import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
@@ -99,6 +100,29 @@ program
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof StatusAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('digest')
+  // Sits right after `status` on purpose: the two answer the same question at
+  // different resolutions. `status` prints the counted facts; `digest` (#61) asks a
+  // cheap model, with NO tools and the context assembled inline, to say in a few
+  // sentences what those facts mean — which file the task is editing, which TDD phase
+  // it looks to be in, and whether anything looks wrong. Every entry is appended to
+  // `.ralph/digest.log`, so a night of digests reads back as the night's narrative.
+  .description(
+    'Narrate what the loop is doing right now in a few sentences of prose, and append it to .ralph/digest.log',
+  )
+  .action(async () => {
+    try {
+      const result = await digestCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof DigestAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e
