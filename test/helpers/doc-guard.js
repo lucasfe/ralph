@@ -73,6 +73,15 @@ const SKIP_DIRS = ['node_modules', '.git', 'dist', 'logs', '.ralph', 'coverage']
  * true at each release, so an entry describing pre-#51 behavior is history rather
  * than a stale claim.
  *
+ * A LISTING IS A SNAPSHOT, NOT A LEASE: an entry can vanish between the readdir
+ * and the stat, and in this repo one reliably does. Vitest transforms
+ * `vitest.config.js` by writing `vitest.config.js.timestamp-<n>.mjs` beside it and
+ * unlinking it immediately, so a walk that trusts its own listing dies on
+ * `ENOENT` — intermittently, and only under enough parallel load to overlap a
+ * config transform with a sweep, which is why this survived a smaller suite.
+ * A vanished entry is skipped; any OTHER stat failure still throws, because a
+ * sweep whose value is completeness must not quietly get smaller.
+ *
  * @param {object}   [opts]
  * @param {string}   [opts.dir='.']       subtree to walk, relative to `root`
  * @param {string}   [opts.root]          tree root (defaults to the repo root)
@@ -86,13 +95,28 @@ export function repoMarkdown({ dir = '.', root = REPO_ROOT, fs = { existsSync, r
   for (const entry of fs.readdirSync(abs)) {
     if (SKIP_DIRS.includes(entry)) continue
     const full = join(abs, entry)
-    if (fs.statSync(full).isDirectory()) {
+    const stat = statOrVanished(fs, full)
+    if (stat == null) continue
+    if (stat.isDirectory()) {
       out.push(...repoMarkdown({ dir: relative(root, full), root, fs }))
     } else if (entry.endsWith('.md') && entry !== 'CHANGELOG.md') {
       out.push(relative(root, full))
     }
   }
   return out
+}
+
+// `null` for an entry that is gone, a throw for anything else. Narrow on purpose:
+// `ENOENT` is the one failure a concurrent writer explains, and swallowing (say)
+// `EACCES` would shrink the sweep silently — the one way this guard can fail
+// without failing.
+function statOrVanished(fs, path) {
+  try {
+    return fs.statSync(path)
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null
+    throw error
+  }
 }
 
 /**
