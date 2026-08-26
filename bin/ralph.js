@@ -81,7 +81,14 @@ program
 
 program
   .command('status')
-  .description('Show what the Ralph loop is working on right now (run, task in flight, queue)')
+  // The parenthetical is the live view's own line-up (#64): the three counted facts
+  // #55 shipped, then the three #57 derives from them. Spelled out rather than left
+  // at "what it is working on" because `--help` is the whole description a reader
+  // gets before running the command — and a summary naming fewer lines than the view
+  // prints undersells it, which is what this one did between #57 and #64.
+  .description(
+    'Show what the Ralph loop is working on right now (run, task in flight, queue, pace, ETA, spend)',
+  )
   // #58: the same snapshot the human view prints, as one JSON document on stdout —
   // so a shell prompt, a status line or a custom notifier can be driven off `ralph
   // status --json | jq` instead of re-parsing issues.jsonl by hand.
