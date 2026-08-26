@@ -172,6 +172,12 @@ to catch path/template bugs that unit tests can't surface.
      they must show real numbers instead of `unknown` (on a Codex project
      `spend` stays `unknown`, which is correct — the Codex stream carries no
      cost).
+   - `ralph status --json | jq .` prints one document and no `jq` error, and —
+     once `eta.finish_at` is non-null —
+     `ralph status --json | jq '.eta.finish_at | fromdate'` prints an epoch
+     number. The hermetic suite pins the document's shape but never runs `jq`,
+     so this is the one place the timestamp format meets the parser it is
+     truncated to the second for.
    - WhatsApp delivery works when `.env.local` is configured (else
      skipped silently).
    - The custom hook fires when `ralph-notify.sh` is present and

@@ -82,9 +82,13 @@ program
 program
   .command('status')
   .description('Show what the Ralph loop is working on right now (run, task in flight, queue)')
-  .action(async () => {
+  // #58: the same snapshot the human view prints, as one JSON document on stdout —
+  // so a shell prompt, a status line or a custom notifier can be driven off `ralph
+  // status --json | jq` instead of re-parsing issues.jsonl by hand.
+  .option('--json', 'Print the snapshot as a single JSON document instead of the human view')
+  .action(async (opts) => {
     try {
-      const result = await statusCommand()
+      const result = await statusCommand({ json: Boolean(opts.json) })
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof StatusAbort) {
