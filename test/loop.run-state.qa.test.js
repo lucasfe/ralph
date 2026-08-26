@@ -358,14 +358,22 @@ exit 0
       now: startedMs + 40 * 60000,
     })
     expect(lines[0]).toContain(`run ${midRun.run_id}`)
-    expect(lines).toContain('  in flight  #002 (40min)')
+    // #56 reads the in-flight task off the record on BOTH of the surfaces that
+    // replaced #55's `in flight` line, so a field-name drift now has two places to
+    // show up rather than one.
+    expect(lines).toContain('  progress   0/3 done · #002 in flight (40min)  [────────] 0%')
+    expect(lines).toContain('  #002  🔄 live     –         ~40min')
     expect(lines).toContain('  queue      2 waiting')
     expect(lines).toContain('  attach     tmux attach -t ralph-test')
     expect(lines.join('\n')).not.toContain('#?')
-    // Scoped to the lines the RECORD drives: #57's pace/eta/spend block reads
-    // `unknown` here on purpose, because this renders with no issues.jsonl behind
-    // it — which is the honest answer, not a drift.
-    expect(lines.slice(0, 3).join('\n')).not.toContain('unknown')
+    // Scoped to the lines the RECORD drives — through the queue line, which is where
+    // #57's pace/eta/spend block starts. That block reads `unknown` here on purpose,
+    // because this renders with no issues.jsonl behind it — the honest answer, not a
+    // drift. (The table's `–` cells are the same discipline: this run recorded no
+    // cost for a task still in flight.)
+    expect(lines.slice(0, lines.indexOf('  queue      2 waiting') + 1).join('\n')).not.toContain(
+      'unknown',
+    )
   })
 })
 

@@ -81,13 +81,18 @@ program
 
 program
   .command('status')
-  // The parenthetical is the live view's own line-up (#64): the three counted facts
-  // #55 shipped, then the three #57 derives from them. Spelled out rather than left
-  // at "what it is working on" because `--help` is the whole description a reader
-  // gets before running the command — and a summary naming fewer lines than the view
-  // prints undersells it, which is what this one did between #57 and #64.
+  // The parenthetical is the live view's own line-up (#64): the counted facts #55
+  // shipped, then the three #57 derives from them. Spelled out rather than left at
+  // "what it is working on" because `--help` is the whole description a reader gets
+  // before running the command — and a summary naming fewer lines than the view prints
+  // undersells it, which is what this one did between #57 and #64.
+  //
+  // `task in flight` became `progress, task table` in #56: the in-flight line grew a
+  // denominator and a table of the tasks already done, and lib/commands/status.help.test.js
+  // computes this enumeration from `renderStatus` itself, so the two cannot drift apart
+  // again without going red.
   .description(
-    'Show what the Ralph loop is working on right now (run, task in flight, queue, pace, ETA, spend)',
+    'Show what the Ralph loop is working on right now (run, progress, task table, queue, pace, ETA, spend)',
   )
   // #58: the same snapshot the human view prints, as one JSON document on stdout —
   // so a shell prompt, a status line or a custom notifier can be driven off `ralph
