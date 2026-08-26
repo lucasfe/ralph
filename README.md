@@ -60,6 +60,7 @@ In a git repo on the branch you want Ralph to work from:
 ralph init     # one-time: detect stack, write config, slash command, gitignore
 ralph doctor   # verify required deps are on PATH, and report installed vs cached latest
 ralph start    # launch the loop in a detached tmux session
+ralph status   # what is Ralph on right now: run, task in flight, queue depth
 ralph stop     # kill this project's tmux session when you want Ralph to halt
 ralph update   # update Ralph itself to the latest published version (any directory)
 ```
@@ -112,6 +113,17 @@ the agent's raw JSON stream (Claude's `stream-json`, or Codex's
 `codex exec --json` JSONL) to `logs/ralph-issue-*.jsonl` and appends one
 telemetry event line to `.ralph/metrics/issues.jsonl` (see
 [Monitoring data model](#monitoring-data-model)).
+
+`ralph status` answers "what is Ralph on right now?" without attaching to
+anything. It reads the run-state record the loop keeps at
+`.ralph/run-state.json` and prints the run and how long it has been going, the
+task in flight and for how long, the **live** queue depth, and the attach / kill
+lines for the session — or, for a scheduled `ralph cycle` run, the log to follow
+instead, since that run has no session to attach to. It anchors on the git
+toplevel, so it reports the same run from any subdirectory of the repo, and it
+exits `0` whether a run is in flight, was interrupted, is over, or never
+happened. See
+[Run state](#run-state--ralphrun-statejson-and-ralph-status).
 
 `ralph update` updates the Ralph CLI itself, from any directory. It, the
 `--force` flag, the install layouts it can and cannot update, and the weekly
@@ -390,7 +402,11 @@ Per-task telemetry works exactly as in GitHub mode: the same
 `.ralph/metrics/issues.jsonl` stream and daily heartbeat rollup serve both
 sources, keyed on the task id, with the terminal directory (`done`/`failed`) as
 the outcome and the frontmatter labels recorded (see
-[Monitoring data model](#monitoring-data-model)).
+[Monitoring data model](#monitoring-data-model)). So does
+[`ralph status`](#run-state--ralphrun-statejson-and-ralph-status): the loop
+writes its run-state record from both sources, and in folder mode `status`
+counts the queue off the local `.ralph/tasks/` tree — no `gh` call, in keeping
+with the rest of the mode.
 
 > **Accepted tradeoff:** committing straight to the dev branch means folder mode
 > has no per-task rollback boundary — a bad autonomous commit lands directly on
@@ -427,6 +443,13 @@ transparently — there is no separate `ralph schedule heartbeat
 install`. The `ralph schedule heartbeat` subcommand exists, but it is
 the entry point launchd invokes when the heartbeat plist fires; you
 will not normally call it by hand.
+
+A scheduled pass is observable **while it runs**, not only after it: the cycle
+writes the same run-state record an interactive run does, and proves it is alive
+by holding the cycle lock rather than by owning a tmux session, so
+`ralph status` reports it as `running` and points you at
+`logs/ralph-cycle.out.log` instead of at an attach command (see
+[Run state](#run-state--ralphrun-statejson-and-ralph-status)).
 
 **A launchd agent sources no shell startup file**, so the
 `EnvironmentVariables` dict `install` writes into each plist is the
@@ -883,8 +906,25 @@ the loop.
 **"tmux session 'ralph-…' already exists."** — A previous `ralph start`
 already launched the loop for *this* project (the session name is
 per-project: `ralph-<repo>-<hash>`). Either attach and let it finish, or
-stop it (`ralph stop`) before starting again — `ralph start` prints the
-exact attach / kill commands for your session.
+stop it (`ralph stop`) before starting again — `ralph status` names the run and
+the issue it is on, and `ralph start` prints the exact attach / kill commands
+for your session.
+
+**You detached and cannot tell whether Ralph is still working.** — Run
+`ralph status`. It reads the run-state record the loop writes
+(`.ralph/run-state.json`), reconciles it against whether that run is still
+alive, and names the run, the issue in flight and for how long, and the live
+queue depth — from any subdirectory of the repo, and without attaching to
+anything. **`interrupted`** there means a run started and never wrote a terminal
+record: a `tmux kill-session`, a `kill -9`, or a reboot took it out mid-issue,
+and the issue on the `in flight` line is where it stopped. There is nothing left
+to attach to, so start again — the next `ralph start` offers to clear the
+`claude-working` label that run left behind (see below). One case reads
+misleadingly stale rather than wrong: a run that never reached the loop at all
+(an empty queue, or a preflight abort) writes no record, so `status` keeps
+reporting the run before it. See
+[Run state](#run-state--ralphrun-statejson-and-ralph-status) for the record and
+all four modes.
 
 **`ralph doctor` reports a missing required dep.** — Install it with
 the command shown in the output (e.g. `brew install gh` on macOS,
@@ -1031,6 +1071,14 @@ The two streams are designed to map cleanly onto two future database
 tables — a `runs` table (per-run stream) and an `issues` table (per-issue
 stream) — joined on [`run_id`](#run_id-the-join-key).
 
+Both streams are **history**. Ralph also keeps one artifact that is not a stream
+at all — a single [run-state
+record](#run-state--ralphrun-statejson-and-ralph-status) for the run in
+progress, rewritten in place instead of appended, which is what `ralph status`
+reads. It is the present tense rather than the record of what happened, but it
+keeps the same observation-only discipline: every write is `|| true`, and no
+failure of it can change a run.
+
 ### Per-issue stream — `.ralph/metrics/issues.jsonl`
 
 After each issue iteration — regardless of outcome — Ralph appends one
@@ -1120,6 +1168,109 @@ carries the `run_id` of the run that produced it, and exactly one
 `run_id`. One run event therefore fans out to N issue events — the same
 one-to-many relationship the future `runs` ←→ `issues` tables will model,
 with `run_id` as the foreign key.
+
+### Run state — `.ralph/run-state.json` and `ralph status`
+
+Both streams above are history. The **run state** is the present tense: one
+small JSON record, rewritten in place (never appended), saying what the run
+happening *right now* is doing. A detached run is otherwise unobservable — the
+`==> Iteration for issue #N` line lives only in the tmux pane's scrollback, so
+without this file nothing on disk answers "what is Ralph on?". It lives under the
+gitignored `.ralph/` directory, so it is machine-local by construction and never
+travels in a commit.
+
+The loop writes it at three moments, each best-effort (`|| true`): once at run
+start (`run_id`, `session`, `source`, `queue_at_start`, `started_at`), once per
+iteration (`current: { number, started_at, iteration }`), and once at the end
+(`status`, `finished_at`, `ok`, `failed`). `--once` runs — the path
+`ralph cycle` drives — write the same records. An unwritable `.ralph/` changes
+nothing about a run: not its outcome, not its per-issue events, not its
+`RALPH_CYCLE_EVENT` line.
+
+The record is flat, and `lib/run-state.js` is its single owner — neither the bash
+loop nor `ralph status` names a field of its own:
+
+| Field | Meaning |
+| --- | --- |
+| `schema` | Record version, currently `1`. Written for future migrations; **no reader inspects it yet**, so a record whose `schema` is missing or from the future is still read verbatim. |
+| `run_id` | The [join key](#run_id-the-join-key) — the same value this run stamps on every `RALPH_ISSUE_EVENT` and on its `RALPH_CYCLE_EVENT`, so a run in flight can be tied to the history it has already written. |
+| `session` | The tmux session the run was launched into (`ralph-<repo>-<hash>`), or the default `ralph` for a `ralph cycle` run, which has no session of its own. `ralph status` probes **this** session for liveness — the one the run recorded, not the one a fresh `ralph start` would create. |
+| `source` | The resolved task source for the run: `github` or `folder`. |
+| `status` | `running` until the run ends, then the loop's own terminal status: `success`, `partial`, or `failed` — the same value the run's `RALPH_CYCLE_EVENT` reports. |
+| `started_at` | Run start (ISO 8601, UTC). |
+| `queue_at_start` | How deep the queue was when the run began — how much work it picked up. `null` when the count produced no number at all; an unknown depth is never recorded as `0`, which would be a lie. |
+| `current` | The task in flight: `{ number, started_at, iteration }`, rewritten at the top of **every** iteration in both task sources; `null` before the first one. Deliberately left in place on a terminal record, where it names the last task the run worked on. |
+| `finished_at` | Run end (ISO 8601, UTC). `null` while the run is going. |
+| `ok`, `failed` | The run's own final counts — the same numbers as its `RALPH_CYCLE_EVENT`. `null` while the run is going. |
+
+Only the loop writes the record, and only once it has actually started: a pass
+that stops before it — an empty queue, or a preflight that aborts — leaves the
+previous run's record untouched, so `ralph status` reports *that* run rather than
+inventing one for a pass that did no work.
+
+`ralph status` reads the record and reconciles it against whether the run that
+wrote it is still alive, in one rule: a `running` record + a live run is
+**running**; a `running` record whose run is gone is **interrupted** (a hard kill
+or a reboot never got to write a terminal record); a terminal record is
+**idle**; no record at all is **never-run**. All four exit `0`, and none of them
+writes anything — `status` is a read-only view, so consulting a run can never
+disturb it.
+
+A run can prove it is alive two ways, because the loop has two launchers:
+`ralph start` leaves a tmux session, and `ralph cycle` (including every scheduled
+run) holds the cycle lock instead. Both count — a draining scheduled run reads
+`running`, not `interrupted`, and is shown with the log to follow rather than a
+session to attach to:
+
+```
+▸ ralph — running · run ralph-ralph-b36ff7b1-1718700000 (started 16:20, 12min ago)
+  in flight  #031 (4min)
+  queue      6 waiting
+
+  scheduled  ralph cycle run — no tmux session to attach to
+  logs       tail -f logs/ralph-cycle.out.log
+```
+
+```
+▸ ralph — running · run ralph-ralph-b36ff7b1-1718700000 (started 16:20, 3h12m ago)
+  in flight  #031 (40min)
+  queue      6 waiting
+
+  attach     tmux attach -t ralph-ralph-b36ff7b1
+  kill       ralph stop
+```
+
+The two readouts differ only in those last two lines, never in the id: a cycle
+builds its `run_id` from the same per-project session name a `ralph start` run
+would use, so what tells them apart is whether there is a session to attach to.
+
+An **`interrupted`** run prints the same first three lines with the mode swapped
+and `restart    ralph start` in place of the attach pair — there is nothing left
+to attach to or kill, and the `in flight` line names the issue the run died on.
+**`idle`** and **`never-run`** are one line each, deliberately: the run is over,
+or there has not been one.
+
+```
+▸ ralph — idle · last run ralph-ralph-b36ff7b1-1718700000 ended 14:02 (partial: 2 ok, 1 failed)
+```
+
+```
+▸ ralph — never-run · no run recorded yet (start one with `ralph start`)
+```
+
+The queue depth is **live**, counted the way `ralph start` counts it — the same
+`gh` search in GitHub mode, the local `.ralph/tasks` tree in folder mode (no
+`gh` call at all). A failed count degrades to `queue      unknown`; it never
+fails the command, and it never reads as `0 waiting`. Only the live views pay
+for it: `idle` and `never-run` skip the count entirely — no `gh` call, no
+directory scan.
+
+Like `ralph cycle`, `ralph status` anchors itself on the **git toplevel**, so it
+reports the same run from any subdirectory of the repo — the loop writes the
+record at its `PROJECT_ROOT`, and a cwd-anchored read two directories down would
+report `never-run` about a live run and then advise the `ralph start` that would
+put a second loop on it. Outside a git work tree it falls back to the current
+directory, which for anything but a Ralph project root means `never-run`.
 
 ## Links
 

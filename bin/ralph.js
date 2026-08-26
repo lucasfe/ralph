@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { Command } from 'commander'
 import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
+import { statusCommand, StatusAbort } from '../lib/commands/status.js'
 import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
@@ -72,6 +73,21 @@ program
       await stopCommand()
     } catch (e) {
       if (e instanceof StopAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('status')
+  .description('Show what the Ralph loop is working on right now (run, task in flight, queue)')
+  .action(async () => {
+    try {
+      const result = await statusCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof StatusAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e

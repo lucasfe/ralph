@@ -251,6 +251,9 @@ RALPH_RUN_ID="${RALPH_RUN_ID:-${RALPH_TMUX_SESSION:-ralph}-${START}}"
 successes=()
 failures=()
 claude_failed=0
+# Iteration index for the run-state record (#55) — the loop had no counter of its
+# own, and "which pass are we on?" is what makes a stuck run legible from outside.
+iter=0
 
 SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge'
 
@@ -276,6 +279,27 @@ queue_count() {
     gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length'
   fi
 }
+
+# --- Run state (#55) --------------------------------------------------------
+# Record this run in .ralph/run-state.json so a DETACHED run is observable from
+# outside the tmux pane — `ralph status` reads that file. lib/run-state.js owns
+# the record's whole shape; bash only passes values it already has.
+#
+# Placed HERE rather than beside RALPH_RUN_ID above because the queue depth at
+# start needs queue_count(), defined just above. That costs one extra count call
+# per run (cheap: the loop already counts once per iteration) and buys a record
+# that says how much work the run started with.
+#
+# Best-effort, exactly like the telemetry sidecar further down: `|| true` so an
+# unwritable .ralph/ can never change the run's outcome. Same for every other
+# run-state call in this file.
+node "$RALPH_PKG_DIR/lib/run-state.js" begin \
+  "$PROJECT_ROOT" \
+  "$RALPH_RUN_ID" \
+  "${RALPH_TMUX_SESSION:-ralph}" \
+  "$TASK_SOURCE" \
+  "$(queue_count)" || true
+# ---------------------------------------------------------------------------
 
 # --- Stale `claude-working` sweep (#40) -------------------------------------
 # A merged PR that closes its issue (`Closes #N`) runs neither of the agent's
@@ -325,6 +349,13 @@ while :; do
     num=$(gh issue list --search "$SEARCH_QUERY sort:created-asc" --limit 1 --json number -q '.[0].number')
     echo "==> Iteration for issue #$num ($count remaining) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
   fi
+
+  # Run state (#55): the in-flight task, updated at the top of every iteration so
+  # `ralph status` can say what Ralph is on and for how long. ONE call for BOTH
+  # task sources — $num is set by either branch above — and best-effort like the
+  # `begin` call.
+  iter=$((iter + 1))
+  node "$RALPH_PKG_DIR/lib/run-state.js" begin-task "$PROJECT_ROOT" "$num" "$iter" || true
 
   # Stream the agent's JSON to jq, but keep stderr OUT of the JSON pipe: any
   # non-JSON line the agent prints to stderr (auth/credit/rate-limit errors,
@@ -459,6 +490,17 @@ fi
 
 # Stdout always — visible to anyone running `tmux attach`.
 echo "$msg"
+
+# Run state (#55): the terminal record — the loop's OWN counts and status, so a
+# finished run stops reading as in flight.
+#
+# Deliberately ABOVE the `--once` early exit below, unlike the RALPH_CYCLE_EVENT
+# append further down: `ralph cycle` drives this exact path, and a cycle whose run
+# record never terminates would leave every scheduled run looking like it is still
+# working. The cycle event stays below the exit because `ralph cycle` emits its
+# own; a run record has no such second emitter. Best-effort as ever.
+node "$RALPH_PKG_DIR/lib/run-state.js" end \
+  "$PROJECT_ROOT" "$status" "$ok_count" "$fail_count" || true
 
 # In --once mode (called from `ralph cycle`), the parent owns notifications +
 # lifetime. Skip end-of-run notify and tmux teardown.

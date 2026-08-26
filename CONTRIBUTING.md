@@ -154,21 +154,31 @@ to catch path/template bugs that unit tests can't surface.
      expected here; neither is a failure. `doctor` must return immediately
      either way: it makes no registry query.
 5. **Pick a real open issue** in the project and run `ralph start`.
-   Watch via `tmux attach -t ralph`. Verify that:
+   Watch via the `tmux attach` command `ralph start` prints (the session is
+   per-project: `ralph-<repo>-<hash>`). Verify that:
    - Lazy validation runs on first start (`.ralph/state.json` did not
      exist), Claude rewrites the config if needed, and the state file
      is created.
    - The loop selects the issue, opens a PR, polls until merge,
      closes the issue, and emits the end-of-run summary on stdout.
    - `logs/ralph-issue-N.log` exists for the issue.
+   - `ralph status` — run once from the project root and once from a
+     subdirectory — reports `running`, the same run id both times, the issue
+     in flight, and a live queue depth. This step is the only place the loop's
+     run-state writes are exercised for real: `.ralph/run-state.json` is
+     written by `templates/ralph.sh`, which the unit suite can only drive
+     against stubs.
    - WhatsApp delivery works when `.env.local` is configured (else
      skipped silently).
    - The custom hook fires when `ralph-notify.sh` is present and
      executable (else skipped).
 6. **Run `ralph stop`** and confirm the tmux session is gone:
    ```bash
-   tmux ls   # must not list 'ralph'
+   tmux ls   # must not list the project's ralph-<repo>-<hash> session
    ```
+   `ralph status` must now read `interrupted`, not `running`: `stop` is a
+   `tmux kill-session`, so the loop never gets to write a terminal record —
+   precisely the case that mode exists for.
 7. **Re-run `ralph start`** with no eligible issues and confirm it
    exits with `ℹ️  No issues in the queue. Nothing to do.`
 8. **Edit `ralph.config.sh`** by hand (e.g. change `MERGE_STRATEGY`),
