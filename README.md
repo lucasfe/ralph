@@ -127,6 +127,10 @@ git toplevel, so it reports the same run from any subdirectory of the repo, and
 it exits `0` whether a run is in flight, was interrupted, is over, or never
 happened. See
 [Run state](#run-state--ralphrun-statejson-and-ralph-status).
+`ralph status --json` prints that same snapshot as a single JSON document on
+stdout instead, so a shell prompt, a status line, or a notifier can read it
+without re-parsing the metrics file — see
+[Machine-readable output](#machine-readable-output--ralph-status---json).
 
 `ralph update` updates the Ralph CLI itself, from any directory. It, the
 `--force` flag, the install layouts it can and cannot update, and the weekly
@@ -1311,6 +1315,97 @@ record at its `PROJECT_ROOT`, and a cwd-anchored read two directories down would
 report `never-run` about a live run and then advise the `ralph start` that would
 put a second loop on it. Outside a git work tree it falls back to the current
 directory, which for anything but a Ralph project root means `never-run`.
+
+#### Machine-readable output — `ralph status --json`
+
+`ralph status --json` prints **one JSON document on stdout and nothing else** —
+no heading, no advice, no trailing blank line, one compact newline-terminated
+line — so a shell prompt, a tmux status line, or a custom notifier can be driven
+off `ralph status --json | jq` instead of re-parsing
+`.ralph/metrics/issues.jsonl` by hand. It is the second readout above seen from
+the other side — the same document, broken one section per line here for reading,
+from a machine whose clock is UTC so its finish time reads as the same wall
+clock:
+
+```
+{
+  "mode": "running",
+  "run_id": "ralph-ralph-b36ff7b1-1718700000",
+  "progress": { "completed": 2, "in_flight": 1, "remaining": 6, "total": 9 },
+  "tasks": { "current": { "number": 31, "started_at": "2026-08-25T18:52:00Z" } },
+  "pace": { "basis": "last3-in-run", "per_task_min": 84, "fastest_min": 71, "slowest_min": 97, "samples": 2 },
+  "eta": { "remaining_min": 548, "finish_at": "2026-08-26T04:40:00Z", "range_min": [457, 639], "basis": "last3-in-run" },
+  "spend": { "usd": 62.85, "per_task_usd": 31.425, "projected_usd": 251.4 }
+}
+```
+
+The document is a **projection of the very snapshot the human lines are rendered
+from**, not a second reading of the same files: one snapshot is built per
+invocation and handed to whichever surface is printing, and the JSON side only
+renames camelCase to snake_case, converts milliseconds to whole minutes, and
+clamps. It computes nothing and never opens `issues.jsonl` for itself, so the
+two surfaces cannot drift apart, and everything in
+[Pace, ETA, and spend](#pace-eta-and-spend) above applies to it unchanged.
+
+| Field | Meaning |
+| --- | --- |
+| `mode` | `running`, `interrupted`, `idle`, or `never-run` — the four modes above. The **discriminator**: read it first, because every key below it is present in every mode. |
+| `run_id` | The [join key](#run_id-the-join-key) as a string, or `null` in `never-run`. An `idle` document still names the run that just ended, so its history in `issues.jsonl` stays reachable. |
+| `progress.completed`, `progress.in_flight` | Tasks this run has finished, and whether one is in flight (`0` or `1`). |
+| `progress.remaining`, `progress.total` | The **live** queue depth, and `completed + in_flight + remaining`. Both `null` when the count failed — "nothing left" and "we could not look" are different answers. |
+| `tasks.current` | `{ number, started_at }` for the task in flight, and `null` **exactly** when `progress.in_flight` is `0`. Gated on that count rather than on the record, because a terminal record deliberately keeps `current` (it names the last task the run worked on) and reading it directly would have an `idle` document claim a finished run is still working. |
+| `pace.basis`, `eta.basis` | `last3-in-run`, `all-time`, or `unknown` — which sample set the pace came from. One value from one read, published on both sections: the ETA is the number a reader distrusts, and being told it came from the last three tasks is what makes it checkable. |
+| `pace.per_task_min` | The pace as whole minutes per task — the `~84 min/task` the human line prints. |
+| `pace.fastest_min`, `pace.slowest_min` | The observed extremes of the **same** samples, published here beside the mean they were measured with, because they are a fact about tasks rather than about the finish. |
+| `pace.samples` | How many task durations the pace averaged. |
+| `eta.remaining_min` | Whole minutes until the queue empties, at that pace and that live depth. |
+| `eta.finish_at` | When that lands, as an instant (see below). |
+| `eta.range_min` | The ETA's `[low, high]` band in whole minutes — `remaining_min` ± the spread the human line prints as `(±1h30m)`, floored at `0` and always ascending. Taken **unrounded**, so the endpoints can sit a minute or two wider than that `±` implies: the printed spread is rounded to five minutes for a reader, the document's is not. **Endpoints of the ETA, not the per-task extremes**: those are `pace.fastest_min` / `pace.slowest_min`, where they were measured, and a `[71, 97]` band around `548` would be nonsense. |
+| `spend.usd`, `spend.per_task_usd`, `spend.projected_usd` | What the run has recorded, its observed rate, and that rate over the tasks still ahead — in dollars, unrounded. |
+
+Every mode emits the **same key set**; only the values change. The measurements
+belong to the two **live** modes: `idle` and `never-run` never count the queue
+and never read `issues.jsonl` at all — the same shortcut their one-line human
+view takes — so an `idle` document is its `mode` and its `run_id` with every
+measurement empty, and a consumer that wants a finished run's totals reads
+`issues.jsonl` instead. An unknown value is `null` — never `0`, and never an
+absent key, so a consumer writes `.eta.finish_at` once and it resolves in all
+four modes instead of needing a presence check per field. `progress.completed`,
+`progress.in_flight`, and `pace.samples` are the exception that proves the rule:
+they are counts, so a `0` there is the measurement and not a stand-in.
+
+The exit code is `0` in every mode and **nothing is ever written to stderr**,
+because there is nothing to say — a missing record (including a cwd outside a
+work tree) resolves to a mode, and a failed queue count or an unreadable,
+half-written `issues.jsonl` resolves to a `null` leaf, which tells a consumer
+more than a line of prose it would have to parse. Whatever happens, stdout stays
+one parseable document.
+
+Both instants are **ISO-8601 UTC truncated to the second**
+(`2026-08-26T04:40:00Z`, not `…:00.000Z`): `jq`'s `fromdate` parses
+`%Y-%m-%dT%H:%M:%SZ` and fails outright on a fractional second. UTC rather than
+the local wall clock the human view prints, because a document gets parsed,
+moved between machines, and diffed — the reader's local reading is the
+terminal's job. Where the two differ is what they do with an instant that format
+cannot spell, and the difference is provenance. `eta.finish_at` is **derived**
+(now plus the ETA), so one corrupt `duration_ms` in `issues.jsonl` can push it
+past year 9999; it **saturates** at the calendar bounds
+(`0000-01-01T00:00:00Z` … `9999-12-31T23:59:59Z`), which costs nothing because
+`remaining_min` sits right beside it carrying the true magnitude losslessly, and
+which buys an invariant worth writing a prompt against: `finish_at` is `null`
+only when there is no ETA at all, and otherwise always a four-digit-year
+instant. `tasks.current.started_at` is **transcribed** from the record, so an
+out-of-range value is `null` instead — there is no adjacent field to carry the
+truth, and a clamped start would hand a status line computing
+`now - started_at` thousands of years while the terminal beside it prints
+`(0min)`.
+
+Money is emitted unrounded (`62.85`, `31.425`, `251.4`). The coarse dollar grid
+the human line uses (`~$250`) is a rendering decision for a reader; a machine
+gets the figure and rounds it however it likes. For the same reason there is
+deliberately **no `elapsed_min`** on the task in flight: `started_at` is a fact,
+whereas an elapsed would be stale the instant the document was written — a
+status line redrawing on a timer wants the former and derives the latter itself.
 
 ## Links
 
