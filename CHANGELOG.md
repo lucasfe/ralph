@@ -5,6 +5,19 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0](https://github.com/lucasfe/ralph/compare/v0.20.0...v0.21.0) (2026-08-26)
+
+
+### Features
+
+* GIF-to-sprite generator and pure half-block renderer ([#66](https://github.com/lucasfe/ralph/issues/66)) ([#87](https://github.com/lucasfe/ralph/issues/87)) ([6d1834b](https://github.com/lucasfe/ralph/commit/6d1834b540a5a55c8a8a7b01aedd478ca874e9b1))
+* idle post-mortem and never-run pointer in `ralph status` ([#59](https://github.com/lucasfe/ralph/issues/59)) ([#91](https://github.com/lucasfe/ralph/issues/91)) ([46ddd1e](https://github.com/lucasfe/ralph/commit/46ddd1e184a90c036956a3c98ec50730bb66e544))
+
+
+### Bug Fixes
+
+* never finish a turn with a subagent in flight ([#88](https://github.com/lucasfe/ralph/issues/88)) ([#89](https://github.com/lucasfe/ralph/issues/89)) ([c18ea21](https://github.com/lucasfe/ralph/commit/c18ea2141236f0d04959c8af8c8b3efb6db60cf8))
+
 ## [0.20.0](https://github.com/lucasfe/ralph/compare/v0.19.1...v0.20.0) (2026-08-26)
 
 
