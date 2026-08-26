@@ -5,6 +5,18 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0](https://github.com/lucasfe/ralph/compare/v0.19.1...v0.20.0) (2026-08-26)
+
+
+### Features
+
+* `ralph status --json` ([#58](https://github.com/lucasfe/ralph/issues/58)) ([#84](https://github.com/lucasfe/ralph/issues/84)) ([15c8ae0](https://github.com/lucasfe/ralph/commit/15c8ae0c3c6cd5e1fac5d4451e12b7f88e3115f4))
+* launch projection and `ralph status` hint in the `ralph start` box ([#60](https://github.com/lucasfe/ralph/issues/60)) ([#85](https://github.com/lucasfe/ralph/issues/85)) ([ec042ac](https://github.com/lucasfe/ralph/commit/ec042acdc1dbedb3074a65b84e30244400da99c6))
+* observed pace, ETA with range, and spend projection in `ralph status` ([#57](https://github.com/lucasfe/ralph/issues/57)) ([#83](https://github.com/lucasfe/ralph/issues/83)) ([89da13d](https://github.com/lucasfe/ralph/commit/89da13da9f63646187e1ab36682e544b455dc9a2))
+* print the update notice in `ralph cycle` ([#51](https://github.com/lucasfe/ralph/issues/51)) ([#79](https://github.com/lucasfe/ralph/issues/79)) ([2cde79f](https://github.com/lucasfe/ralph/commit/2cde79ffb43800a2b63c3ee29ab28f14024c8c6f))
+* run-state file + `ralph status` reporting the in-flight task ([#55](https://github.com/lucasfe/ralph/issues/55)) ([#82](https://github.com/lucasfe/ralph/issues/82)) ([330cedf](https://github.com/lucasfe/ralph/commit/330cedf582597674c9986e42f08bad5a5be1d771))
+* TTY-gated update prompt in `ralph cycle`, stopping the drain after an install ([#52](https://github.com/lucasfe/ralph/issues/52)) ([#81](https://github.com/lucasfe/ralph/issues/81)) ([c4a9ec8](https://github.com/lucasfe/ralph/commit/c4a9ec88622a06b7a07c8c0f36efe625de4eabc0))
+
 ## [0.19.1](https://github.com/lucasfe/ralph/compare/v0.19.0...v0.19.1) (2026-08-25)
 
 
