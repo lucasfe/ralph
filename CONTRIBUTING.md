@@ -141,16 +141,22 @@ the two halves, the first of them fed by a generator that is not published at al
 - `lib/sprite-render.js` — the pure half-block renderer (two pixel rows per text
   row, so a 26x34 grid draws as 26 columns x 17 lines).
 - `lib/sprite-banner.js` — the *decision*: may we draw, and what exactly gets
-  printed. Both of its capabilities (**stdout** TTY-ness and the colour policy)
-  arrive as arguments, and `ralph start` resolves them into injectable
-  `stdoutIsTTY` / `color` options rather than reading `process.stdout` or
-  `process.env` anywhere down the stack. Keep it that way — a module that read
-  `process.env.NO_COLOR` itself would turn every test that injects an environment
-  into a test of the contributor's shell, which is what
+  printed. All three of its inputs (**stdout** TTY-ness, the colour policy, and the
+  terminal's `width`) arrive as arguments, and `ralph start` resolves them into
+  injectable `stdoutIsTTY` / `color` / `width` options rather than reading
+  `process.stdout` or `process.env` anywhere down the stack. Keep it that way — a
+  module that read `process.env.NO_COLOR` itself would turn every test that injects
+  an environment into a test of the contributor's shell, which is what
   [test hermeticity](#test-hermeticity-41) exists to prevent. `NO_COLOR` is
   honoured on **presence** here, deliberately unlike picocolors' truthiness test;
   the reasoning is in the module's docstring and the README's env-var row, and both
-  should move together if it ever changes.
+  should move together if it ever changes. The width is asked **last** and is only
+  ever a reason to stay silent, so no column count can talk a piped stream into a
+  screenful of escapes — and it holds no threshold of its own: it asks
+  `bannerLayout` (below) for the verdict. Do not give this module a 26 of its own.
+  Two copies of that number are two thresholds the day one of them moves, and the
+  failure would be silent — a sprite still drawn at 25 columns above a box that had
+  already unboxed.
 - `lib/banner-compose.js` — the banner's *other half*: the identity box, composed
   from **resolved facts**. Pure in the same way and for the same reason — no
   `process`, no clock, no fs, and no cache read of its own — so `ralph start`
@@ -166,7 +172,18 @@ the two halves, the first of them fed by a generator that is not published at al
   slices add **rows, not parameters**: `composeBanner`'s three arguments (`facts`,
   `width`, `capabilities`) are the seam, and a new fact belongs in the object
   `start` already builds — which is exactly how #70's what's-new rows landed, as a
-  `whatsNew` entry in that object with the signature untouched. The box is
+  `whatsNew` entry in that object with the signature untouched. The `width`
+  argument is the one that came home to roost: `bannerLayout(width)` is the whole
+  degradation ladder in one pure, total function — box from `BOX_MIN_WIDTH` (44)
+  up, sprite from `SPRITE_MIN_WIDTH` (26) up, and any width that cannot be used at
+  all falling back to the 60-column `BANNER_WIDTH` rather than throwing or
+  degrading. It is the *only* place either rung is read, which is what makes every
+  one of them testable without a terminal, and the two line forms it selects
+  between (`BOXED` / `BARE`) are data rather than a conditional inside each builder
+  — so a box whose top is framed and whose rows are not is unreachable. `26` is
+  deliberately **not** imported from `sprite-data.js` (this half knows nothing about
+  pixels); a test pins `spriteWidth === SPRITE_MIN_WIDTH` instead, so redrawing the
+  art wider goes red in the suite rather than tearing on a narrow terminal. The box is
   deliberately **not** capability-gated the way the sprite is — facts belong in a
   launchd log too — so a piped `ralph start` is no longer byte-identical to a
   pre-banner one, and an assertion about what a non-TTY run does *not* print has to
@@ -289,10 +306,13 @@ to catch path/template bugs that unit tests can't surface.
      printed only when the global update-check cache already holds something newer
      than the tarball you just installed, so on a machine where nothing has ever
      checked there is nothing to see and that is not a failure. Resize the window
-     too: under 60 columns the box must narrow and clip its values with `…`, never
-     wrap a line or run its right border ragged. And `RALPH_NO_UPDATE_CHECK=1 ralph
-     start` must leave the box with its title, its `cwd`, and its what's-new rows
-     alone.
+     too, and walk the whole ladder: under 60 columns the box must narrow and clip
+     its values with `…`, never wrapping a line or running its right border ragged;
+     under 44 it must drop the border entirely and print bare `label   value` rows;
+     and under 26 the sprite must go as well — whole, not clipped — leaving those
+     bare rows behind it. No width may wrap a line, tear a row, or lose the version.
+     And `RALPH_NO_UPDATE_CHECK=1 ralph start` must leave the box with its title,
+     its `cwd`, and its what's-new rows alone.
    - The box's **`new` rows** are read from the `CHANGELOG.md` inside the tarball you
      just installed, and this step is the only place that read happens for real — the
      hermetic suite injects an fs and never touches the file. They must show the three
