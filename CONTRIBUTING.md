@@ -123,9 +123,10 @@ lockstep.
 
 ## The sprite banner: generated asset, placeholder art
 
-`ralph start` prints a pixel sprite as its first output on a colour terminal, and
-an identity box under it on every run (see
-[the README](./README.md#quick-start)). Six published modules under `lib/` back
+`ralph start` plays a one-second pixel-sprite splash as its first output on a
+colour terminal, settles it on a still frame, and prints an identity box under it
+on every run (see
+[the README](./README.md#quick-start)). Seven published modules under `lib/` back
 the two halves, the first of them fed by a generator that is not published at all:
 
 - `lib/sprite-data.js` — **GENERATED. Do not edit by hand.** It is the committed
@@ -156,7 +157,37 @@ the two halves, the first of them fed by a generator that is not published at al
   `bannerLayout` (below) for the verdict. Do not give this module a 26 of its own.
   Two copies of that number are two thresholds the day one of them moves, and the
   failure would be silent — a sprite still drawn at 25 columns above a box that had
-  already unboxed.
+  already unboxed. Since #73 that one gate answers **two** entry points:
+  `renderSplashFrames`, every frame in the order the splash plays them, which is what
+  `ralph start` calls; and `renderStaticBanner`, the poster frame alone, which **no
+  command calls any more and which stays anyway**. It is the oracle — three specs
+  compare the frame the animation settles on against its output, so "the splash ends
+  on the frame an unanimated banner would have drawn" is a comparison between two
+  functions instead of a claim about one. Do not retire it as dead code; a caller
+  with no stream to write to has no other answer available.
+- `lib/sprite-player.js` — the splash (#73), and the **one impure module** in this
+  list: it writes bytes to a stream and waits between them, which is why it is a
+  file of its own rather than a loop inside `start.js`. Everything it is impure
+  through arrives as an argument — the stream, the `sleep`, the signal source, the
+  re-raise — so a one-second animation is a sequence a test compares byte for byte
+  in microseconds, with no timer and no listener on the real process. Two rules
+  worth keeping. **The bound is structural:** `splashSequence` builds a fixed array
+  before the first byte goes out and the loop is a `for...of` over it, so a splash
+  can never hang a `ralph start`; there is no `while`, no clock comparison and no
+  interval, and a static read in the spec asserts that absence. **It knows no
+  height:** every cursor-up is derived from the frame just written, so regenerating
+  the art at another size cannot desync the animation from it — a hardcoded `17`
+  here is the bug that walks the cursor up through the previous run's output. It
+  holds no gate either: `renderSplashFrames` answers with an empty list on a pipe,
+  under `NO_COLOR` and below 26 columns, and an empty list plays *nothing* — not a
+  sleep, not a cursor toggle, not one byte. `cycles: 1` is byte-for-byte the
+  unanimated banner, which is all the `RALPH_BANNER=static` mode of #74 — not shipped
+  yet, and not to be documented as if it were — will need from it. The two seams are
+  this module's defaults and **`start.js` forwards them rather than defaulting them
+  itself**, so `sleep` and `signals` are named once, here, where the spec asserts them.
+  The consequence for a contributor: any test that drives `startCommand` over a TTY
+  stdout has to inject both, or it buys a real second of wall clock per run and hangs a
+  SIGINT listener on the vitest worker's own process.
 - `lib/banner-compose.js` — the banner's *other half*: the identity box, composed
   from **resolved facts**. Pure in the same way and for the same reason — no
   `process`, no clock, no fs, and no cache read of its own — so `ralph start`
@@ -292,14 +323,27 @@ to catch path/template bugs that unit tests can't surface.
    Watch via the `tmux attach` command `ralph start` prints (the session is
    per-project: `ralph-<repo>-<hash>`). Verify that:
    - The **sprite** is drawn as the very first thing on the terminal, above the
-     preflight lines, with the **identity box** immediately under it. This is the one
-     place a real TTY is exercised — the hermetic suite injects `stdoutIsTTY` and
-     `columns` and never touches a terminal — so check both suppressions here as
+     preflight lines, with the **identity box** immediately under it — and since #73 it
+     *animates* for about a second before it settles, so watch this one rather than
+     glancing at it. This is the one place a real TTY is exercised — the hermetic suite
+     injects `stdoutIsTTY` and `columns`, and `sleep` and `signals` besides, and never
+     touches a terminal — so the splash is only ever *seen* here. Four things to look
+     for that no spec can show you: the frames must redraw **in place**, so when the run
+     is over the scrollback holds one sprite and not five, and nothing above the sprite
+     has been walked over; the box's `╭─` must land clean under the settled frame, with
+     no stray escape in front of the corner; the **cursor must be visible again** for the
+     rest of the run (if it has vanished, the restore did not happen — `reset` your shell
+     and treat that as a bug, not a quirk); and a `Ctrl-C` *through the middle of
+     the animation* must leave the cursor visible and exit **130** (`echo $?`), the same
+     as a `Ctrl-C` anywhere else in the run. Then check both suppressions here as
      well. Piped: `ralph start 2>/dev/null | cat -v` must show no sprite and no
-     truecolor escape (`^[[38;2;`, `^[[48;2;`) while the box is **still there**, in
-     plain text, holding its 60 columns, with the remaining lines and the exit code
-     unchanged. Value-less `NO_COLOR`: `NO_COLOR= ralph start` on the same terminal
-     must drop the sprite while the ✅ / ⚠️ lines stay coloured — the divergence from
+     truecolor escape (`^[[38;2;`, `^[[48;2;`) — and none of the splash's control
+     sequences either (`^[[?25l`, `^[[?25h`, `^[[17A`), because a suppressed sprite is
+     not animated at half volume — while the box is **still there**, in plain text,
+     holding its 60 columns, with the remaining lines and the exit code unchanged. It
+     must also come back no slower than it used to: nothing is waited for on a pipe.
+     Value-less `NO_COLOR`: `NO_COLOR= ralph start` on the same terminal must drop the
+     sprite while the ✅ / ⚠️ lines stay coloured — the divergence from
      picocolors is intentional, so this is the pass condition, not a bug — and the
      box must survive it too, losing only the yellow on its `update` row.
    - The box's **`update` row is the one line that depends on machine state**: it is
