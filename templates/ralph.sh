@@ -13,6 +13,44 @@ if [ "${1:-}" = "--once" ]; then
   RALPH_ONCE_MODE=1
 fi
 
+# --- Session teardown, on EVERY exit (#62) ----------------------------------
+# `ralph start` runs this loop as window 0 of a session it created, and since #62 it
+# may open a second window in that same session running `ralph digest --loop`. That
+# second window changes what an abort means: window 0 closing no longer ends the
+# session, so a loop that exits early — not a git repo, an agent bridge it cannot
+# resolve, a validation that produced no state — used to leave the digest narrating a
+# run that never started, on a timer, against a paid model, with the session name
+# still taken so the next `ralph start` refused as "already running".
+#
+# A TRAP rather than teardown before each `exit 1`: there are five of those today and
+# the sixth one somebody adds must not have to remember this. Installed as early as it
+# can be, so it covers the guards below it too — including the git-root and $HOME
+# refusals, which run before anything has been read.
+#
+# That position has one cost, and it is the reason the whole guard reads as it does: the
+# decision is taken BEFORE ralph.config.sh is sourced (`set -a` further down), so a
+# session named ONLY in that config is never torn down. Ralph does not produce that
+# shape — `ralph start` passes the session name in the command string it launches this
+# script with, so the variable is always already set by the time we get here — and a
+# hand-written config that sets it is not describing a session this process is in.
+#
+# Guarded on BOTH facts, and both matter. RALPH_TMUX_SESSION is only set by `ralph
+# start`, so a hand-run `bash templates/ralph.sh` kills nothing it does not own. And
+# `--once` (the path `ralph cycle` drives) must NEVER tear a session down: it is not
+# running inside one, and a stale variable in the ambient environment would otherwise
+# make an aborting cycle kill somebody else's.
+if [ -z "$RALPH_ONCE_MODE" ] && [ -n "${RALPH_TMUX_SESSION:-}" ]; then
+  # CAPTURED here, not re-expanded at exit: the trap body is single-quoted, so without
+  # this the guard above would test one value and the kill would use whatever the
+  # variable held when the shell exited. A ralph.config.sh that assigns
+  # RALPH_TMUX_SESSION is sourced with `set -a` between those two moments, which would
+  # make an aborting loop kill a session it has nothing to do with and leave its own —
+  # digest window and all — running with the name still taken. One name, read once.
+  _RALPH_TEARDOWN_SESSION="$RALPH_TMUX_SESSION"
+  trap 'tmux kill-session -t "$_RALPH_TEARDOWN_SESSION" 2>/dev/null || true' EXIT
+fi
+# ---------------------------------------------------------------------------
+
 # Path safety: anchor the loop to the git project root and refuse to run
 # outside a git repo or in $HOME / root. PROJECT_ROOT is exported so child
 # tools (Claude, gh, npm) inherit the same anchor.
@@ -557,4 +595,8 @@ if [ -x ./ralph-notify.sh ]; then
 fi
 # ---------------------------------------------------------------------------
 
-tmux kill-session -t "${RALPH_TMUX_SESSION:-ralph}" 2>/dev/null || exit 0
+# Session teardown is the EXIT trap installed at the top of this file (#62) — one
+# site, so the normal end of a run and every abort in between cannot disagree about
+# it. This used to be an explicit `tmux kill-session` here, which is why nothing but
+# the happy path took the session down.
+exit 0

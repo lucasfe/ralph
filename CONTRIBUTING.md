@@ -185,6 +185,17 @@ to catch path/template bugs that unit tests can't surface.
      the queue) and it must show real minutes and dollars per task, a total, and
      a plausible local finish clock. On a Codex project the dollar segments drop
      out and the minutes stay, which is correct.
+   - The **digest window**, which is the part of it the hermetic suite can only
+     drive against a stubbed `tmux`. Set `RALPH_DIGEST_INTERVAL="2m"` in
+     `ralph.config.sh` and run `ralph start` again:
+     `tmux list-windows -t ralph-<repo>-<hash>` must show a second window named
+     `digest` beside the loop's, the startup box must read `Digest: every 2m —
+     runs alongside the loop`, and within a couple of minutes that pane *and*
+     `.ralph/digest.log` must both carry a narrative (on a Codex project, one
+     produced by Codex — `start` forwards `RALPH_AGENT` into the window). Then
+     set the interval to something the grammar refuses (`0.5h`) and start once
+     more: the launch must still succeed, with `⚠️  Digest window not opened`
+     on stderr and `NOT running` on the box's digest line.
    - WhatsApp delivery works when `.env.local` is configured (else
      skipped silently).
    - The custom hook fires when `ralph-notify.sh` is present and
@@ -195,7 +206,10 @@ to catch path/template bugs that unit tests can't surface.
    ```
    `ralph status` must now read `interrupted`, not `running`: `stop` is a
    `tmux kill-session`, so the loop never gets to write a terminal record —
-   precisely the case that mode exists for.
+   precisely the case that mode exists for. With a digest interval still
+   configured, this is also the teardown check: `stop` kills the *session*, so
+   the `digest` window must be gone with it and the next `ralph start` must not
+   report the session name as already taken.
 7. **Re-run `ralph start`** with no eligible issues and confirm it
    exits with `ℹ️  No issues in the queue. Nothing to do.`
 8. **Edit `ralph.config.sh`** by hand (e.g. change `MERGE_STRATEGY`),

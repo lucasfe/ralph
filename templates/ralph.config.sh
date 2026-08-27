@@ -23,6 +23,30 @@ TASK_SOURCE="{{TASK_SOURCE}}"
 # RALPH_CODEX_MODEL="gpt-5-codex"
 # RALPH_CODEX_MODEL=""
 
+# How often the digest runs while the loop works. A digest is a few sentences of
+# prose about what is happening right now (`ralph digest`), from a cheap model
+# with no tools. Set an interval and `ralph start` opens a second tmux window
+# named `digest` next to the loop, running `ralph digest --loop` on that interval
+# and printing each one into the pane; `ralph stop` takes it down with the rest
+# of the session. Empty or 0 DISABLES it — the default, so nothing here costs a
+# model call until you ask for one. Accepts the same durations as `ralph schedule
+# install --interval`: 60 (seconds), 30m, 2h, 1d — a whole number and at most one
+# unit letter, so 0.5h is refused, as is anything over 24d (longer than a timer
+# can wait). A refused value costs you the digest and not the run: `ralph start`
+# warns on stderr, says NOT running in its launch box, and starts the loop
+# anyway. 30m suits tasks that take 40-100 minutes; there is no point narrating
+# faster than the work changes.
+RALPH_DIGEST_INTERVAL=""
+
+# Model the digest asks. Leave unset/commented for the cheap default (haiku under
+# RALPH_AGENT=claude, gpt-5-mini under codex) — this is narration, not the work,
+# and the loop's own model is chosen for depth. `ralph start` forwards this value
+# into the digest window it opens (along with RALPH_AGENT), so an unattended digest
+# uses the model this repo committed to rather than whatever the launching shell
+# happened to export; for a digest you run by hand, export it or set it inline.
+# Example:
+# RALPH_DIGEST_MODEL="haiku"
+
 # Branches. Autodetected from `origin/HEAD` and `git branch -a`.
 MAIN_BRANCH="{{MAIN_BRANCH}}"
 DEV_BRANCH="{{DEV_BRANCH}}"

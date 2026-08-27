@@ -109,7 +109,11 @@ a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are printed by
 `ralph start`; detach with `Ctrl+B` then `D`, or tail per-issue logs in
-`logs/ralph-issue-*.log`. The same box carries `ralph status` for checking in
+`logs/ralph-issue-*.log`. When
+[`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set in
+`ralph.config.sh`, the same session also gets a **second window named
+`digest`** that narrates the run on a timer beside the loop — see
+`ralph digest` below. The same box carries `ralph status` for checking in
 later and — on a repo with metrics history behind it — a projection of what the
 queue it just accepted should take and cost, and when it should be done (see
 [The launch projection](#the-launch-projection--ralph-start)). Each iteration
@@ -157,6 +161,55 @@ answer, or that answers with nothing writes **no** history entry, prints one
 line to stderr, and still exits `0`, because a digest is an accessory to a run
 and must never be able to fail one. In a project with no run recorded yet it
 prints one honest line and never invokes the agent at all.
+
+The digest can also keep the loop company on a timer instead of being asked one
+question at a time. `ralph digest --loop --interval 30m` prints a digest
+immediately and then one every 30 minutes until it is killed, and
+[`RALPH_DIGEST_INTERVAL`](#configuration-reference) in `ralph.config.sh` is how
+you get that without typing it: `ralph start` opens exactly that command in a
+**second tmux window named `digest`**, in the session it just created for the
+loop.
+
+```
+session ralph-<repo>-<hash>
+  window 0            the loop — the raw agent stream
+  window 1  digest    ralph digest --loop --interval 30m
+```
+
+`tmux attach` still lands on the loop's window; `Ctrl+B` then `W` lists both, so
+the stream and the narration sit side by side. Each digest is appended to
+`.ralph/digest.log` exactly as a hand-run one is, so the night's story reads back
+without attaching to anything. The window narrates with the agent and model *this
+repo* configures — `ralph start` forwards whichever of `RALPH_AGENT` and
+[`RALPH_DIGEST_MODEL`](#environment-variables) `ralph.config.sh` sets into it (and
+nothing when it sets neither, leaving the ambient environment to decide as usual),
+so a Codex repo's digest runs Codex rather than a `claude` that would fail every
+tick. Teardown is the session's: `ralph stop`, and
+the loop's own end of run, kill the **session**, and the digest window goes with
+it. There is nothing separate to stop and nothing left narrating afterwards.
+
+The interval is **off by default**, and turning it on can cost you the digest but
+never the run. Empty — what `ralph init` writes — or any spelling of zero (`0`,
+`0m`) means no window, no timer, and no model call. In a repo initialized before
+this shipped there is no `RALPH_DIGEST_INTERVAL` line in `ralph.config.sh` at all,
+because `ralph init` never rewrites that file (see
+[What survives an update](#what-survives-an-update)); add the assignment yourself
+— an absent knob reads exactly like an empty one, so the only difference is that
+nothing in the file tells you it exists. A value the duration grammar
+rejects (a fraction like `0.5h`) or one longer than a timer can wait (`30d`; the
+ceiling is `24d`) is refused **after** the loop is already running: `ralph start`
+writes `⚠️  Digest window not opened — …. The loop is running.` to stderr, and the
+startup box's digest line — which quotes the interval exactly as the file spells it
+— reads `Digest: every 0.5h — NOT running (see the warning on stderr)` where a
+working one reads `Digest: every 30m — runs alongside the loop`. The launch itself
+still succeeds either way. Run by hand, those two refusals — plus `--loop` with no
+`--interval` at all, and `--interval 0`, which the config knob instead reads as
+simply off — print one
+`ralph digest: not looping — …` line and exit `0`; so does a digest that
+fails *mid*-loop, which writes its line and leaves the timer to keep its next
+appointment rather than ending the night early. Only `ralph start` opens that
+window: a scheduled [`ralph cycle`](#scheduling-ralph-macos-launchd) has no tmux
+session of its own and starts no digest.
 
 `ralph update` updates the Ralph CLI itself, from any directory. It, the
 `--force` flag, the install layouts it can and cannot update, and the weekly
@@ -723,6 +776,8 @@ be committed. Re-running `ralph init` never overwrites it.
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
+| `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read only by `ralph start` — a scheduled `ralph cycle` opens no window. |
+| `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
 | `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs) or `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`). Unset/unrecognized falls back to `github`. Set by `ralph init --source <name>` / the interactive picker. See [Choosing the task source](#choosing-the-task-source). |
 | `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
 | `TEST_CMD`            | autodetected (e.g. `npm test`)       | Test command run before opening a PR. Empty = skip.                    |
@@ -752,8 +807,11 @@ recorded on the last validation:
 ### Environment variables
 
 Not every setting lives in `ralph.config.sh`. The variables below are
-read from the **process environment** only. Putting them in
-`ralph.config.sh` has no effect: the Node CLI never sources that file (it
+read from the **process environment** — with one narrow exception noted in
+its own row: `ralph start` does text-parse `RALPH_DIGEST_MODEL` out of
+`ralph.config.sh`, but only to forward it into the digest window it opens.
+Otherwise, putting these in `ralph.config.sh` has no effect: the Node CLI
+never sources that file (it
 text-parses individual assignments out of it), and these variables are
 not resolved through `.env.local` or the global `~/.config/ralph/.env`
 either — those feed a fixed set of notification credentials (see
@@ -764,7 +822,7 @@ command line.
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
-| `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. |
+| `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
 on a negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -951,6 +1009,19 @@ per-project: `ralph-<repo>-<hash>`). Either attach and let it finish, or
 stop it (`ralph stop`) before starting again — `ralph status` names the run and
 the issue it is on, and `ralph start` prints the exact attach / kill commands
 for your session.
+
+**The startup box says `Digest: … NOT running`.** — `ralph start` took
+`RALPH_DIGEST_INTERVAL` as set (non-empty, non-zero) and then could not open the
+digest window, and it explained why on stderr, above the box:
+`⚠️  Digest window not opened — …. The loop is running.` The loop is genuinely
+unaffected — that window is opened *after* the launch precisely so it can never
+fail one. Two things cause nearly all of it: the interval is not a duration Ralph
+accepts (`0.5h`, `90 minutes`) or is longer than a timer can wait (`30d`; `24d` is
+the ceiling), in which case fix the value in `ralph.config.sh` and the next
+`ralph start` opens the window; or tmux refused the `new-window`, whose own stderr
+is quoted in the warning. To get narration for the run *already* going, leave it
+alone and run `ralph digest` — or `ralph digest --loop --interval 30m` in another
+terminal, which appends to `.ralph/digest.log` exactly as the window would.
 
 **You detached and cannot tell whether Ralph is still working.** — Run
 `ralph status`. It reads the run-state record the loop writes
