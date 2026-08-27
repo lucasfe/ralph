@@ -11,6 +11,7 @@ import { initCommand, InitAbort } from '../lib/commands/init.js'
 import { doctorCommand, DoctorAbort } from '../lib/commands/doctor.js'
 import { cycleCommand, CycleAbort } from '../lib/commands/cycle.js'
 import { updateCommand, UpdateAbort } from '../lib/commands/update.js'
+import { changelogCommand, ChangelogAbort } from '../lib/commands/changelog.js'
 import {
   scheduleHeartbeatCommand,
   scheduleInstallCommand,
@@ -286,6 +287,32 @@ program
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof UpdateAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('changelog')
+  // Sits right under `update` on purpose: the two are the pair about the INSTALL rather
+  // than about a project, and this is the one a reader reaches for after the other has run.
+  // The summary names where the file comes from because that is the surprising half — it is
+  // the changelog inside the install, never the one in the directory you are standing in
+  // (#70/#71) — and it names the absence of a network call because that is what makes the
+  // command answerable offline.
+  .description(
+    'Print what changed in recent Ralph releases, read from the changelog that ships inside this install (no network, works from any directory)',
+  )
+  // #71: the newest three releases are the default; --all is the whole file. The banner's
+  // `more` row points at the bare command, so the default has to be the useful view.
+  .option('--all', 'Print every release in the changelog, not just the newest few')
+  .action(async (opts) => {
+    try {
+      const result = await changelogCommand({ all: Boolean(opts.all) })
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof ChangelogAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e
