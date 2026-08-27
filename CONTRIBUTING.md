@@ -125,7 +125,7 @@ lockstep.
 
 `ralph start` prints a pixel sprite as its first output on a colour terminal, and
 an identity box under it on every run (see
-[the README](./README.md#quick-start)). Four published modules under `lib/` back
+[the README](./README.md#quick-start)). Six published modules under `lib/` back
 the two halves, the first of them fed by a generator that is not published at all:
 
 - `lib/sprite-data.js` — **GENERATED. Do not edit by hand.** It is the committed
@@ -155,18 +155,42 @@ the two halves, the first of them fed by a generator that is not published at al
   from **resolved facts**. Pure in the same way and for the same reason — no
   `process`, no clock, no fs, and no cache read of its own — so `ralph start`
   resolves every fact on the impure side (the installed version, the working
-  directory, and the cached `latest_version`) and hands them over. Two more
-  injectable options carry the rest: `columns`, defaulting to `stdout?.columns`,
-  and `readCache`, defaulting to `readVersionCache` — the second so no suite reads
-  a real `~/.config/ralph` and a contributor's own pending update cannot add a row
-  to another suite's expected output. Later slices add **rows, not parameters**:
-  `composeBanner`'s three arguments (`facts`, `width`, `capabilities`) are the
-  seam, and a new fact belongs in the object `start` already builds. The box is
+  directory, the cached `latest_version`, and the newest release's changelog
+  bullets) and hands them over. Injectable options carry the rest: `columns`,
+  defaulting to `stdout?.columns`; `readCache`, defaulting to `readVersionCache`;
+  and `readChangelog`, defaulting to `readChangelogEntries`, with a `changelogFs`
+  beneath it so the default wiring is testable too. The last two are seams for the
+  same reason: no suite may read a real `~/.config/ralph` or the shipped release
+  notes, so neither a contributor's own pending update nor whatever this week's
+  changelog happens to say can add a row to another suite's expected output. Later
+  slices add **rows, not parameters**: `composeBanner`'s three arguments (`facts`,
+  `width`, `capabilities`) are the seam, and a new fact belongs in the object
+  `start` already builds — which is exactly how #70's what's-new rows landed, as a
+  `whatsNew` entry in that object with the signature untouched. The box is
   deliberately **not** capability-gated the way the sprite is — facts belong in a
   launchd log too — so a piped `ralph start` is no longer byte-identical to a
   pre-banner one, and an assertion about what a non-TTY run does *not* print has to
   name the sprite rather than ANSI in general (`expectNoSprite` in
   `lib/commands/start.banner.qa.test.js`, whose comment says why).
+- `lib/changelog.js` — `CHANGELOG.md` **as data**, for the box's what's-new rows:
+  text in, ordered release entries out, and nothing else. Pure, and it takes a
+  *string* rather than a path, so every shape it has to survive (an empty file, a
+  bullet wrapped over three lines, a CRLF checkout) is a string literal in a test
+  instead of a fixture. It is **total** — a changelog nothing can be made of is
+  *no entries*, never a throw, because `ralph start` prints this box before its
+  first preflight line and must not abort over its own release notes. It holds no
+  semver opinion either: release-please writes newest-first, so the parser reports
+  the order it read rather than sorting, which is the same refusal to have a second
+  version opinion that `banner-compose.js` makes above it.
+- `lib/changelog-file.js` — the impure half of that pair: one path, one read.
+  `changelogPath()` joins `RALPH_HOME` (which `lib/paths.js` derives from
+  `import.meta.url`) and **never the cwd** — `ralph start` runs inside the user's
+  repo, and that repo has a `CHANGELOG.md` of its own, so a cwd-relative read would
+  put somebody else's release notes in Ralph's banner. Every failure is `[]`: a
+  missing file, an unreadable one, an fs that is not one. `CHANGELOG.md` is in
+  `package.json`'s `files`, which is what makes the section affordable on every
+  start — the answer is already on disk beside `lib/`, so there is no round trip in
+  front of the first paint. Keep it that way if you touch either file.
 
 **The committed art is a placeholder.** This repository carries no Wreck-It Ralph
 GIF and never did — #66 made the source a developer-supplied *input*, which is why
@@ -258,7 +282,16 @@ to catch path/template bugs that unit tests can't surface.
      checked there is nothing to see and that is not a failure. Resize the window
      too: under 60 columns the box must narrow and clip its values with `…`, never
      wrap a line or run its right border ragged. And `RALPH_NO_UPDATE_CHECK=1 ralph
-     start` must leave the box with its title and `cwd` alone.
+     start` must leave the box with its title, its `cwd`, and its what's-new rows
+     alone.
+   - The box's **`new` rows** are read from the `CHANGELOG.md` inside the tarball you
+     just installed, and this step is the only place that read happens for real — the
+     hermetic suite injects an fs and never touches the file. They must show the three
+     bullets at the top of **Ralph's** newest entry (clipped with `…`), even though the
+     sibling project you are standing in very likely has a `CHANGELOG.md` of its own:
+     anything out of *that* file in the box is a cwd-relative read and a bug. The
+     `more` row names `ralph changelog`, which is not a command yet, so that command
+     erroring out is expected here rather than a failure.
    - Lazy validation runs on first start (`.ralph/state.json` did not
      exist), Claude rewrites the config if needed, and the state file
      is created.

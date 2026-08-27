@@ -134,12 +134,17 @@ code, is byte-for-byte what the same run prints on a terminal. There is no flag
 and no variable that turns the sprite **on**: a non-terminal never gets it.
 
 Directly under it, and on **every** run, comes the **identity box**: which Ralph
-this is, where it is running, and whether a newer one is waiting.
+this is, where it is running, whether a newer one is waiting, and what changed in
+the release you are on.
 
 ```
 ╭─ ralph 0.22.0 ───────────────────────────────────────────╮
 │ update  0.23.0 available — run `ralph update`            │
 │ cwd     /Users/you/repos/your-project                    │
+│ new     • `ralph digest --loop` + a digest window in th… │
+│         • `ralph digest` one-shot — no-tool narration o… │
+│         • a digest section in `ralph status` (#63) (#96… │
+│ more    run `ralph changelog` for the rest               │
 ╰──────────────────────────────────────────────────────────╯
 ```
 
@@ -164,8 +169,25 @@ same comparison behind [the weekly check](#the-weekly-check)'s notice, so the bo
 and the notice can never disagree about what counts as newer, though a single run
 can print both. It also honours
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables): with the opt-out set the cache
-is not read at all and the row never appears, leaving the box its title and its
-`cwd`.
+is not read at all and the row never appears, leaving the box its title, its
+`cwd`, and its what's-new rows.
+
+The `new` rows are the newest release in the `CHANGELOG.md` that **ships inside
+the installed package** — its first three bullets, in the order a reader of the
+file would meet them, clipped to the box's width like every other row. That file
+is in the tarball, so this is one local read: no network call, and nothing added
+to the first paint. It is resolved against the **install**, never against your
+working directory, so a globally installed Ralph running inside a project that
+has a `CHANGELOG.md` of its own still shows *Ralph's* release notes and never
+yours. The rows print on every run and nothing is recorded as seen — these are
+release notes, not the weekly update nag — so starting Ralph twice tells you
+twice. If the shipped changelog is missing (a pruned install), empty, or in a
+shape nothing can be made of, the `new` and `more` rows simply do not appear and
+the run starts exactly as it did before.
+
+The `more` row points at `ralph changelog`, which is **not a command yet** — it
+ships separately. Until it does, the rest of the entry is in
+[`CHANGELOG.md`](./CHANGELOG.md); the copy inside your install is the same file.
 
 `ralph status` answers "what is Ralph on right now?" without attaching to
 anything. It reads the run-state record the loop keeps at
