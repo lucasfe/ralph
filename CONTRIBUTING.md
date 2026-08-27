@@ -187,10 +187,19 @@ the two halves, the first of them fed by a generator that is not published at al
   `import.meta.url`) and **never the cwd** — `ralph start` runs inside the user's
   repo, and that repo has a `CHANGELOG.md` of its own, so a cwd-relative read would
   put somebody else's release notes in Ralph's banner. Every failure is `[]`: a
-  missing file, an unreadable one, an fs that is not one. `CHANGELOG.md` is in
-  `package.json`'s `files`, which is what makes the section affordable on every
-  start — the answer is already on disk beside `lib/`, so there is no round trip in
-  front of the first paint. Keep it that way if you touch either file.
+  missing file, an unreadable one, an fs that is not one — a policy that belongs
+  to `readChangelogEntries` and the banner **alone**, because that read happens
+  before `ralph start`'s first preflight line. `lib/commands/changelog.js`
+  (`ralph changelog`, #71) takes the same `changelogPath()` and the same
+  `parseChangelog`, so the two can never disagree about what a release
+  contained, but does its own guarded read on purpose: a user who *typed* a
+  command about the changelog is owed the failure, named, with the path in it and
+  a non-zero exit. Do not unify them on the reader that swallows everything.
+  `CHANGELOG.md` is in `package.json`'s `files`, which is what makes the section
+  affordable on every start — the answer is already on disk beside `lib/`, so
+  there is no round trip in front of the first paint — and what makes
+  `ralph changelog` answerable offline, from any directory. Keep it that way if
+  you touch either file.
 
 **The committed art is a placeholder.** This repository carries no Wreck-It Ralph
 GIF and never did — #66 made the source a developer-supplied *input*, which is why
@@ -290,8 +299,10 @@ to catch path/template bugs that unit tests can't surface.
      bullets at the top of **Ralph's** newest entry (clipped with `…`), even though the
      sibling project you are standing in very likely has a `CHANGELOG.md` of its own:
      anything out of *that* file in the box is a cwd-relative read and a bug. The
-     `more` row names `ralph changelog`, which is not a command yet, so that command
-     erroring out is expected here rather than a failure.
+     `more` row names `ralph changelog`: run it here too, and from a directory that is
+     no Ralph project at all. It must exit 0 and print **Ralph's** releases — the
+     newest one with every bullet the box clipped away, and the whole file under
+     `--all` — never the release notes of whatever repo you are standing in.
    - Lazy validation runs on first start (`.ralph/state.json` did not
      exist), Claude rewrites the config if needed, and the state file
      is created.

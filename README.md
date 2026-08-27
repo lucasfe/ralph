@@ -57,13 +57,14 @@ are supported.
 In a git repo on the branch you want Ralph to work from:
 
 ```bash
-ralph init     # one-time: detect stack, write config, slash command, gitignore
-ralph doctor   # verify required deps are on PATH, and report installed vs cached latest
-ralph start    # launch the loop in a detached tmux session
-ralph status   # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend, digest
-ralph digest   # narrate in prose what the loop is doing, and log it to .ralph/digest.log
-ralph stop     # kill this project's tmux session when you want Ralph to halt
-ralph update   # update Ralph itself to the latest published version (any directory)
+ralph init      # one-time: detect stack, write config, slash command, gitignore
+ralph doctor    # verify required deps are on PATH, and report installed vs cached latest
+ralph start     # launch the loop in a detached tmux session
+ralph status    # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend, digest
+ralph digest    # narrate in prose what the loop is doing, and log it to .ralph/digest.log
+ralph stop      # kill this project's tmux session when you want Ralph to halt
+ralph update    # update Ralph itself to the latest published version (any directory)
+ralph changelog # what changed in recent Ralph releases (any directory, no network)
 ```
 
 `ralph init` must be run **inside a git repository**. It checks this first and,
@@ -185,9 +186,12 @@ twice. If the shipped changelog is missing (a pruned install), empty, or in a
 shape nothing can be made of, the `new` and `more` rows simply do not appear and
 the run starts exactly as it did before.
 
-The `more` row points at `ralph changelog`, which is **not a command yet** — it
-ships separately. Until it does, the rest of the entry is in
-[`CHANGELOG.md`](./CHANGELOG.md); the copy inside your install is the same file.
+The `more` row points at [`ralph changelog`](#ralph-changelog), which is where
+the rest of the entry is: it prints the newest release **whole** — every bullet,
+not the box's three — then the two releases behind it, and **every** release in
+the file under `--all`. It reads the same shipped changelog this box does, from
+the install rather than from your project, so it costs no network call and needs
+no Ralph project to answer.
 
 `ralph status` answers "what is Ralph on right now?" without attaching to
 anything. It reads the run-state record the loop keeps at
@@ -289,6 +293,11 @@ session of its own and starts no digest.
 `--force` flag, the install layouts it can and cannot update, and the weekly
 check `ralph start` and `ralph cycle` run are all covered in
 [Updating Ralph](#updating-ralph).
+
+`ralph changelog` says what a version actually changed — the three newest
+releases by default, every one under `--all` — read from the `CHANGELOG.md` that
+ships inside the install, so it answers offline and from any directory. See
+[`ralph changelog`](#ralph-changelog).
 
 ## How Ralph resolves issues
 
@@ -626,6 +635,8 @@ silences).
 Ralph ships one update command, `ralph update`, and offers to run it for you
 roughly once a week — from `ralph start`, or from a `ralph cycle` you run on a
 terminal yourself. There is no `ralph upgrade` and no alias for one.
+`ralph changelog` is the other half of that pair: what the version you are on —
+or the one you just moved to — actually changed.
 
 ### `ralph update`
 
@@ -698,6 +709,76 @@ you to run yourself. Nothing ran in that case, so there is no exit code to pass
 through and it exits 1. All of it goes to stderr, one whole line per write, and a
 successful update writes nothing there at all — so a wrapper or CI step that
 captures only stderr keeps the whole diagnosis and nothing else.
+
+### `ralph changelog`
+
+`ralph changelog` answers the question an update leaves behind: what changed. It
+is the other command about the **install** rather than about a project, so like
+`ralph update` it needs neither a git repository nor an initialized Ralph project
+— no `ralph.config.sh`, no `.ralph/` — and runs from any directory. The default
+view is the **three newest releases**, in the order the file lists them, under a
+count of how many it holds and a pointer to the rest:
+
+```
+Ralph changelog — the 3 newest of 31 releases
+run `ralph changelog --all` for every release
+
+0.22.0 — 2026-08-27
+  Features
+    • `ralph digest --loop` + a digest window in the tmux session (#62) (#95) (a2f9464)
+    • `ralph digest` one-shot — no-tool narration on a cheap model (#61) (#93) (6687570)
+    • a digest section in `ralph status` (#63) (#96) (a6c37ba)
+    • commit the sprite asset and show it statically in `ralph start` (#67) (#97) (541616f)
+
+0.21.0 — 2026-08-26
+  Features
+    • GIF-to-sprite generator and pure half-block renderer (#66) (#87) (6d1834b)
+    • idle post-mortem and never-run pointer in `ralph status` (#59) (#91) (46ddd1e)
+  Bug Fixes
+    • never finish a turn with a subagent in flight (#88) (#89) (c18ea21)
+
+0.20.0 — 2026-08-26
+  Features
+    • `ralph status --json` (#58) (#84) (15c8ae0)
+    • launch projection and `ralph status` hint in the `ralph start` box (#60) (#85) (ec042ac)
+    • observed pace, ETA with range, and spend projection in `ralph status` (#57) (#83) (89da13d)
+    • print the update notice in `ralph cycle` (#51) (#79) (2cde79f)
+    • run-state file + `ralph status` reporting the in-flight task (#55) (#82) (330cedf)
+    • TTY-gated update prompt in `ralph cycle`, stopping the drain after an install (#52) (#81) (c4a9ec8)
+```
+
+`--all` prints every release in the file instead. Having held nothing back it
+drops the pointer line, and the header reads `Ralph changelog — 31 releases`.
+
+Three is a count of **releases, not of bullets**: the newest entry is printed
+whole, which is the point of the command. The identity box
+[`ralph start`](#quick-start) opens with shows the first three *bullets* of that
+same entry, clipped to its width; nothing is clipped here, so a bullet longer
+than your terminal wraps rather than losing its tail. Structure comes from
+indentation — two spaces for a section heading, four and a `•` for a bullet —
+and the listing carries **no colour and not one escape byte**, so
+`ralph changelog --all | grep digest`, a pager, or a paste into an issue comment
+all give back exactly what you saw. A release with no day on its heading (an
+`Unreleased` entry) prints its version alone rather than a dangling separator.
+
+What it reads is the [`CHANGELOG.md`](./CHANGELOG.md) inside the installed
+package, resolved against the **install** and never against your working
+directory — so standing in a project that has a `CHANGELOG.md` of its own still
+prints *Ralph's* releases and never yours. It is one local read: no registry
+query and **no network call at all**, which is what makes it answerable offline,
+instantly, from anywhere.
+
+A changelog it cannot answer from costs you two lines on **stderr** — what it
+could not do, and what to do about it — and exit code **1**, never a stack trace.
+Stdout is left empty in every case, so a pipe into a pager gets an empty document
+rather than half a listing. The three failures are worded apart because the
+repairs differ: a file it could not read is reported with the path it tried and the note that
+reinstalling Ralph restores it (a pruned install, or a tarball built without the
+file); a file it read but could not parse says that instead; and a file that is
+readable but holds no `## <version>` release heading is named along with how many
+characters long it is. This is where the command and the identity box part
+company: the box drops rows nobody asked for and starts the loop, while a
+question you typed is owed either an answer or a failure.
 
 ### The weekly check
 
