@@ -117,9 +117,18 @@ program
   .description(
     'Narrate what the loop is doing right now in a few sentences of prose, and append it to .ralph/digest.log',
   )
-  .action(async () => {
+  // #62: one digest is the default; --loop is how the digest keeps a long task
+  // company. `ralph start` uses exactly this pair in the second tmux window it opens
+  // when RALPH_DIGEST_INTERVAL is set, so what runs unattended is what a user can
+  // type by hand.
+  .option('--loop', 'Keep narrating on a timer instead of once, until killed (needs --interval)')
+  .option('--interval <duration>', 'Time between digests in --loop mode: 60, 30m, 2h, 1d')
+  .action(async (opts) => {
     try {
-      const result = await digestCommand()
+      const result = await digestCommand({
+        loop: Boolean(opts.loop),
+        interval: opts.interval ?? null,
+      })
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof DigestAbort) {
