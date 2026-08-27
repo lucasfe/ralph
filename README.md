@@ -60,7 +60,7 @@ In a git repo on the branch you want Ralph to work from:
 ralph init     # one-time: detect stack, write config, slash command, gitignore
 ralph doctor   # verify required deps are on PATH, and report installed vs cached latest
 ralph start    # launch the loop in a detached tmux session
-ralph status   # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend
+ralph status   # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend, digest
 ralph digest   # narrate in prose what the loop is doing, and log it to .ralph/digest.log
 ralph stop     # kill this project's tmux session when you want Ralph to halt
 ralph update   # update Ralph itself to the latest published version (any directory)
@@ -130,7 +130,10 @@ holding, an ETA with a range and a wall-clock finish time, the spend so far and
 where it projects to, and the attach / kill lines for the session — or, for a
 scheduled `ralph cycle` run, the log to follow instead, since that run has no
 session to attach to. Each of those three estimates reads `unknown` rather than
-a guessed number when the run has no history to reason from. It anchors on the
+a guessed number when the run has no history to reason from. A run that has been
+narrated also gets the latest `ralph digest` entry for it printed under those
+numbers — the sentence that explains them, with how old it is and which model
+wrote it (see [The digest section](#the-digest-section)). It anchors on the
 git toplevel, so it reports the same run from any subdirectory of the repo, and
 it exits `0` whether a run is in flight, was interrupted, is over, or never
 happened. See
@@ -153,9 +156,13 @@ respect. It is one turn rather than an agent session, which is what makes it
 cheap enough to ask for repeatedly; the model it asks defaults to a cheap
 per-agent one (`haiku` for Claude, `gpt-5-mini` for Codex) and is overridable
 with [`RALPH_DIGEST_MODEL`](#environment-variables). Each narrative is also
-**appended** to `.ralph/digest.log` — one entry per digest, stamped with an
-ISO timestamp, the run id, and the task in flight, and never truncated — so a
-night of digests reads back as the night's story. Failure is deliberately
+**appended** to `.ralph/digest.log` — one entry per digest, under a heading
+naming four things (an ISO timestamp, the run id, the task in flight, and the
+model that answered), and never truncated — so a night of digests reads back as
+the night's story and greps by any of the four. The latest entry for the run in
+flight is also what `ralph status` reads back to you, so the narration and the
+numbers it is about arrive in one view rather than two commands (see
+[The digest section](#the-digest-section)). Failure is deliberately
 silent and harmless: an agent that is missing, unauthenticated, slow to
 answer, or that answers with nothing writes **no** history entry, prints one
 line to stderr, and still exits `0`, because a digest is an accessory to a run
@@ -776,7 +783,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
-| `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read only by `ralph start` — a scheduled `ralph cycle` opens no window. |
+| `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
 | `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs) or `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`). Unset/unrecognized falls back to `github`. Set by `ralph init --source <name>` / the interactive picker. See [Choosing the task source](#choosing-the-task-source). |
 | `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
@@ -822,7 +829,7 @@ command line.
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
-| `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
+| `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
 on a negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -1021,15 +1028,21 @@ the ceiling), in which case fix the value in `ralph.config.sh` and the next
 `ralph start` opens the window; or tmux refused the `new-window`, whose own stderr
 is quoted in the warning. To get narration for the run *already* going, leave it
 alone and run `ralph digest` — or `ralph digest --loop --interval 30m` in another
-terminal, which appends to `.ralph/digest.log` exactly as the window would.
+terminal, which appends to `.ralph/digest.log` exactly as the window would. Either
+way `ralph status` picks the entry up and prints it: the section is about what is on
+disk for the run in flight, not about whether a window was ever opened, so a repo
+with no interval configured still shows a digest you asked for by hand (see
+[The digest section](#the-digest-section)) — measured for staleness against the
+30-minute fallback, since there is no configured interval to measure it against.
 
 **You detached and cannot tell whether Ralph is still working.** — Run
 `ralph status`. It reads the run-state record the loop writes
 (`.ralph/run-state.json`), reconciles it against whether that run is still
 alive, and names the run, the issue in flight and for how long, the live queue
-depth, and the pace, ETA, and spend the run is holding — from any subdirectory
-of the repo, and without attaching to anything. **`interrupted`** there means a
-run started and never wrote a terminal
+depth, the pace, ETA, and spend the run is holding, and — if anything has narrated
+the run — the latest [`ralph digest`](#the-digest-section) entry for it, from any
+subdirectory of the repo and without attaching to anything. **`interrupted`** there
+means a run started and never wrote a terminal
 record: a `tmux kill-session`, a `kill -9`, or a reboot took it out mid-issue,
 and the issue on the `in flight` line is where it stopped. There is nothing left
 to attach to, so start again — the next `ralph start` offers to clear the
@@ -1356,17 +1369,29 @@ session to attach to:
   eta        ~9h08m left → ~04:40  (±1h30m)
   spend      $62.85 so far · ~$250 projected
 
+  ── digest (6min ago · haiku) ─────────────────────────────────
+  Ralph is on #031, the digest section in ralph status, and it
+  looks to be in the green phase: the log tail is a vitest run
+  over lib/digest-history.test.js and the file it keeps
+  rewriting is lib/digest-history.js.
+  Nothing looks wrong — the pace has not moved off 84 minutes a
+  task and no error is repeating in the tail.
+
   attach     tmux attach -t ralph-ralph-b36ff7b1
   kill       ralph stop
 ```
 
-The two readouts differ only in those last two lines and in how much each run has
-to say about itself, never in the id: a cycle builds its `run_id` from the same
-per-project session name a `ralph start` run would use, so what tells them apart
-is whether there is a session to attach to. The scheduled run above is twelve
-minutes old and has finished nothing yet, which is why its pace is the all-time
-fallback and it has no spend of its own to report (see
-[Pace, ETA, and spend](#pace-eta-and-spend) below).
+The two readouts differ in those last two lines, in the digest block the second
+one has, and in how much each run has to say about itself — never in the id: a
+cycle builds its `run_id` from the same per-project session name a `ralph start`
+run would use, so what tells them apart is whether there is a session to attach
+to. The scheduled run above is twelve minutes old and has finished nothing yet,
+which is why its pace is the all-time fallback and it has no spend of its own to
+report (see [Pace, ETA, and spend](#pace-eta-and-spend) below). Nothing has
+narrated it either: the digest window is opened by `ralph start`, and a scheduled
+`ralph cycle` opens none, so a cycle run has a digest block only if you ran
+`ralph digest` against it by hand (see
+[The digest section](#the-digest-section) below).
 
 An **`interrupted`** run prints the same six lines with the mode swapped and
 `restart    ralph start` in place of the attach pair — there is nothing left to
@@ -1434,6 +1459,103 @@ report `never-run` about a live run and then advise the `ralph start` that would
 put a second loop on it. Outside a git work tree it falls back to the current
 directory, which for anything but a Ralph project root means `never-run`.
 
+#### The digest section
+
+Under the numbers, when there is one to show, sits the sentence that explains
+them: the latest [`ralph digest`](#quick-start) entry for the run in flight, read
+back out of `.ralph/digest.log`. It is printed **after** the figures it is about
+and **before** the advice about what to do next, and it brings its own blank line
+with it — so a run with no narration behind it gets byte-for-byte the view this
+command printed before the section existed.
+
+The heading carries the three things worth knowing before you trust the paragraph
+under it: how old the narration is, which model wrote it, and whether it is late.
+
+```
+  ── digest (6min ago · haiku) ─────────────────────────────────
+  ── digest (1h18m ago · haiku · stale) ────────────────────────
+  ── digest (6min ago) ─────────────────────────────────────────
+  ── digest (1h18m ago · us.anthropic.claude-haiku… · stale) ───
+```
+
+The **age** is never shortened and never dropped, and neither is `stale`: a stale
+narration mistaken for a current one is the one real harm this section can do. The
+**model** is the only elastic clause, so it is the clause that gives way —
+[`RALPH_DIGEST_MODEL`](#environment-variables) is free text and a Bedrock or Vertex
+id runs to forty-odd characters, so it is elided (the fourth line above) to keep
+the heading inside the same 64 columns the digest's other headings are padded to —
+the one `ralph digest` prints, and every one in `.ralph/digest.log`. A truncated
+model name is merely less specific; a truncated age would be a lie. It
+is dropped **entirely** rather than spelled `unknown` for an entry written before
+the model was a field — Ralph 0.21.0 recorded three (the third line above) — since
+what is missing there is the model, not the digest, and `· unknown` in a heading
+reads as a fact about the model rather than about our own records.
+
+**`stale` means the timer skipped a tick**, not that a digest is a few seconds
+late. The threshold is **two** intervals of
+[`RALPH_DIGEST_INTERVAL`](#configuration-reference), because a digest lands when
+its timer fires *and* the model answers, so a single interval is routinely missed
+by a few seconds and warning about that would only train you to ignore the marker.
+Two means the window is dead or the agent stopped answering, which is worth
+saying. With no interval to measure against — unset, turned off, or a value the
+duration grammar refuses — the *interval* falls back to **30 minutes**, so a
+narration reads `stale` past an hour: 30m is the interval the config `ralph init`
+writes recommends in its own comment, which makes it the assumption you most
+likely configured.
+
+An interval that is off is not the same thing as a digest that does not exist, and
+this is the seam where that will look like a bug. `RALPH_DIGEST_INTERVAL=""` turns
+off the *window*; it does not turn off `ralph digest`, which stays a one-shot you
+can run by hand at any moment. So an entry that is on disk and belongs to this run
+is shown whether or not anything was configured to produce it — refusing to print
+a narration you deliberately asked for because a config value is empty would hide
+the thing you asked for. All the interval decides is the ruler `stale` is measured
+with.
+
+The body is the narration **wrapped to those same 64 columns**, with blank lines
+dropped — an empty line inside a block whose surroundings use empty lines as
+separators would read as the block having ended halfway through — and capped at
+**eight rows**, which is the two short paragraphs the digest's own template asks
+for. A narration that runs longer says where the rest of it is, the way the `logs`
+row does, because being told something is hidden and not told where to find it is
+a problem rather than an answer:
+
+```
+  … full narration in .ralph/digest.log
+```
+
+That cap bounds **terminal rows**, so a single token too long for a line of its
+own — a URL, a base64 blob, a minified stack out of a log tail — is broken at the
+width rather than left to overflow. Eight rows means eight rows, and one long word
+cannot push the attach/kill pair the cap exists to protect off the screen.
+
+**This is the one part of `ralph status` that is not Ralph's own text.** Every
+other row is a number this repo computed, an id it generated, or one of its own
+words; the narration — and the model name beside it — come out of a file that
+holds model output and that a human can edit. So on the way to a terminal every
+control byte in it (C0, DEL, C1) is replaced with a **space**: a narration opening
+with an ANSI clear-screen would otherwise erase the view and take the attach/kill
+pair with it, a title-setting sequence would retitle your window, and a NUL
+truncates the line on some terminals. Newlines are the exception, because there
+they are structure rather than content — they are where the paragraphs break. A
+space rather than nothing, so a scrubbed sequence cannot fuse the words on either
+side of it into one. `ralph status --json` deliberately publishes the narration
+**raw** instead; that asymmetry is
+[explained below](#machine-readable-output--ralph-status---json).
+
+Finally, the section belongs to the **`running` view alone**, and to *this* run
+alone. An entry whose run id is not the record's is some other run's narration —
+`.ralph/digest.log` is appended forever, so last night's is still in the file —
+and reporting a finished run's work as the current state is worse than saying
+nothing. `idle`, `interrupted` and `never-run` do not read the history file at
+all: a run that is over is reported from facts rather than from prose, so an
+interrupted run whose last narration is still sitting on disk shows none of it.
+Everything else costs you the section and nothing more: a missing file (a repo
+with the digest off never creates one), an unreadable one, or a last entry that
+cannot be stood behind — a heading whose timestamp will not parse, or one torn in
+half by a digest killed mid-append — in which case the scan falls back to the last
+whole entry before it rather than printing a heading with nothing under it.
+
 #### Machine-readable output — `ralph status --json`
 
 `ralph status --json` prints **one JSON document on stdout and nothing else** —
@@ -1453,7 +1575,8 @@ clock:
   "tasks": { "current": { "number": 31, "started_at": "2026-08-25T18:52:00Z" } },
   "pace": { "basis": "last3-in-run", "per_task_min": 84, "fastest_min": 71, "slowest_min": 97, "samples": 2 },
   "eta": { "remaining_min": 548, "finish_at": "2026-08-26T04:40:00Z", "range_min": [457, 639], "basis": "last3-in-run" },
-  "spend": { "usd": 62.85, "per_task_usd": 31.425, "projected_usd": 251.4 }
+  "spend": { "usd": 62.85, "per_task_usd": 31.425, "projected_usd": 251.4 },
+  "digest": { "at": "2026-08-25T19:26:00Z", "age_min": 6, "model": "haiku", "task": "#031", "stale": false, "text": "Ralph is on #031, the digest section in ralph status, and …" }
 }
 ```
 
@@ -1463,7 +1586,10 @@ invocation and handed to whichever surface is printing, and the JSON side only
 renames camelCase to snake_case, converts milliseconds to whole minutes, and
 clamps. It computes nothing and never opens `issues.jsonl` for itself, so the
 two surfaces cannot drift apart, and everything in
-[Pace, ETA, and spend](#pace-eta-and-spend) above applies to it unchanged.
+[Pace, ETA, and spend](#pace-eta-and-spend) above applies to it unchanged. The
+one thing cut short above is `digest.text`, which carries the run's whole
+narration: the document is that block of prose in full, and it is elided here
+because nothing else in the document is prose.
 
 | Field | Meaning |
 | --- | --- |
@@ -1480,6 +1606,13 @@ two surfaces cannot drift apart, and everything in
 | `eta.finish_at` | When that lands, as an instant (see below). |
 | `eta.range_min` | The ETA's `[low, high]` band in whole minutes — `remaining_min` ± the spread the human line prints as `(±1h30m)`, floored at `0` and always ascending. Taken **unrounded**, so the endpoints can sit a minute or two wider than that `±` implies: the printed spread is rounded to five minutes for a reader, the document's is not. **Endpoints of the ETA, not the per-task extremes**: those are `pace.fastest_min` / `pace.slowest_min`, where they were measured, and a `[71, 97]` band around `548` would be nonsense. |
 | `spend.usd`, `spend.per_task_usd`, `spend.projected_usd` | What the run has recorded, its observed rate, and that rate over the tasks still ahead — in dollars, unrounded. |
+| `digest` | The run's latest narration — the same entry [The digest section](#the-digest-section) documents — or `null` when there is none to publish. **Always present, and `null` wholesale** rather than a shape with six empty leaves: a section whose every leaf is `null` still asserts that the thing exists and was unmeasurable, which is honest for a pace but not here, where there genuinely is no digest. It follows `tasks.current`, which is `null` wholesale for the same reason. Populated **only** in `running`: `idle`, `interrupted` and `never-run` never open `.ralph/digest.log` at all, so an interrupted run whose last narration is still sitting on disk publishes `null` here. |
+| `digest.at` | When the narration was written, as an instant (see below). Read off the entry's own heading and re-emitted in this document's format rather than copied through, so a hand-edited stamp still arrives as UTC to the second. |
+| `digest.age_min` | How old it is, in whole minutes — `age_min` and not an `age_ms` because a narration's freshness is a minutes-scale question, and the document's other durations are minutes. Rounded, and floored at `0`: two clocks (a record written on another machine, a system clock stepped by NTP) can put an entry in the future, and a negative age is a bug report about Ralph rather than news about the run. `.digest.age_min` resolves in every mode — to a number or to `null` — which is the property a consumer actually writes against. |
+| `digest.model` | The model that wrote it, as the entry recorded it, or `null`. Never the string `unknown`: an entry written by Ralph **0.21.0** carries three heading fields rather than four, so there is no model in it to report, and that is absence rather than a model named "unknown". |
+| `digest.task` | The task that was in flight when the narration was written, spelled as the entry spells it — the same zero-padded `"#031"` the terminal prints — or `null` when no task was in flight. A **string**, and deliberately not the same question as `tasks.current`: this is what the digest was about, which on an older entry need not be what the run is on now. |
+| `digest.stale` | Whether the narration is late by the rule [above](#the-digest-section) — the document's one boolean, because publishing a yes/no as a word would make a consumer parse it to learn something it can already read off `age_min` and its own interval. **Three-valued**, since the unknown discipline outranks the type: a value wherever `age_min` is a number, and `null` in the single case it is not, because with no age there is no judgement to make and `false` would say "fresh" where the honest answer is "we cannot say". Tied to `age_min` rather than computed twice, so the two leaves can never disagree. |
+| `digest.text` | The narration itself: the **raw** text of the entry, whole and unwrapped. The terminal's 64-column block is a rendering, so a consumer re-wrapping to its own width gets the paragraphs intact. |
 
 Every mode emits the **same key set**; only the values change. The measurements
 belong to the two **live** modes: `idle` and `never-run` never count the queue
@@ -1492,6 +1625,15 @@ four modes instead of needing a presence check per field. `progress.completed`,
 `progress.in_flight`, and `pace.samples` are the exception that proves the rule:
 they are counts, so a `0` there is the measurement and not a stand-in.
 
+`digest` is gated tighter than the measurements — only a `running` document opens
+`.ralph/digest.log`, so an `interrupted` one reports the pace and spend the run
+really did make and `digest: null` beside them. It is also the one section that
+goes `null` **wholesale** rather than leaf by leaf, following `tasks.current`: an
+all-`null` shape would assert a digest exists and could not be measured, and there
+simply is none. Nothing downstream has to know that, because `jq` reads a field of
+`null` as `null` — `.digest.age_min` resolves in all four modes exactly as
+`.eta.finish_at` does.
+
 The exit code is `0` in every mode and **nothing is ever written to stderr**,
 because there is nothing to say — a missing record (including a cwd outside a
 work tree) resolves to a mode, and a failed queue count or an unreadable,
@@ -1499,12 +1641,12 @@ half-written `issues.jsonl` resolves to a `null` leaf, which tells a consumer
 more than a line of prose it would have to parse. Whatever happens, stdout stays
 one parseable document.
 
-Both instants are **ISO-8601 UTC truncated to the second**
+All three instants are **ISO-8601 UTC truncated to the second**
 (`2026-08-26T04:40:00Z`, not `…:00.000Z`): `jq`'s `fromdate` parses
 `%Y-%m-%dT%H:%M:%SZ` and fails outright on a fractional second. UTC rather than
 the local wall clock the human view prints, because a document gets parsed,
 moved between machines, and diffed — the reader's local reading is the
-terminal's job. Where the two differ is what they do with an instant that format
+terminal's job. Where they differ is what they do with an instant that format
 cannot spell, and the difference is provenance. `eta.finish_at` is **derived**
 (now plus the ETA), so one corrupt `duration_ms` in `issues.jsonl` can push it
 past year 9999; it **saturates** at the calendar bounds
@@ -1512,11 +1654,11 @@ past year 9999; it **saturates** at the calendar bounds
 `remaining_min` sits right beside it carrying the true magnitude losslessly, and
 which buys an invariant worth writing a prompt against: `finish_at` is `null`
 only when there is no ETA at all, and otherwise always a four-digit-year
-instant. `tasks.current.started_at` is **transcribed** from the record, so an
-out-of-range value is `null` instead — there is no adjacent field to carry the
-truth, and a clamped start would hand a status line computing
-`now - started_at` thousands of years while the terminal beside it prints
-`(0min)`.
+instant. `tasks.current.started_at` and `digest.at` are **transcribed** — one from
+the record, the other from the history entry's own heading — so an out-of-range
+value is `null` instead. There is no adjacent field to carry the truth, and a
+clamped start would hand a status line computing `now - started_at` thousands of
+years while the terminal beside it prints `(0min)`.
 
 Money is emitted unrounded (`62.85`, `31.425`, `251.4`). The coarse dollar grid
 the human line uses (`~$250`) is a rendering decision for a reader; a machine
@@ -1524,6 +1666,16 @@ gets the figure and rounds it however it likes. For the same reason there is
 deliberately **no `elapsed_min`** on the task in flight: `started_at` is a fact,
 whereas an elapsed would be stale the instant the document was written — a
 status line redrawing on a timer wants the former and derives the latter itself.
+
+The narration goes out **raw**, which is the one place this document and the
+terminal deliberately disagree about the same bytes. The human view replaces every
+control byte in the narration with a space before printing it, because an ANSI
+escape sitting in there would act on the reader's terminal rather than show up in
+it (see [The digest section](#the-digest-section)). `digest.text` is not scrubbed,
+because `JSON.stringify` escapes every code unit below `0x20` anyway — the wire is
+safe by construction, and a consumer re-rendering the narration in a surface of its
+own should receive what the model actually wrote rather than our cleaned-up reading
+of it. The hazard is the terminal, so the defence lives in the terminal renderer.
 
 Worked, then: everything above exists so that one line of `jq` can be written
 once and left alone. What a shell prompt or a tmux `status-right` wants is the
