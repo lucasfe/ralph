@@ -31,9 +31,13 @@ file inherits that with no opt-in.
 The name set is **derived from the sources**, not hand-maintained: `RALPH_*` by
 prefix, every key passed to `resolveCred()` in `lib/`, and every variable declared
 by `templates/ralph.config.sh` / `templates/env.local.example`, plus a short list
-of names no file declares (`XDG_CONFIG_HOME`, `PROJECT_ROOT`, …). Add a new
-credential or config knob and it is neutralized automatically. `pool: 'forks'` is
-pinned in the same config for a reason documented there: the `HOME` sandbox
+of names no file declares (`XDG_CONFIG_HOME`, `PROJECT_ROOT`, `NO_COLOR`, …). Add a
+new credential or config knob and it is neutralized automatically. `NO_COLOR` earns
+its place on that undeclared list for a reason worth stating: it is a cross-tool
+convention nobody declares in a template, and a contributor who happens to export it
+would otherwise flip every colour-gated assertion in the suite at once (see
+[the sprite banner](#the-sprite-banner-generated-asset-placeholder-art)).
+`pool: 'forks'` is pinned in the same config for a reason documented there: the `HOME` sandbox
 travels through `process.env`, which only reaches `os.homedir()` when each worker
 is its own process.
 
@@ -117,6 +121,70 @@ lockstep.
   Disabling network access breaks the loop — no PR can be opened or merged. Do
   not "harden" it away.
 
+## The sprite banner: generated asset, placeholder art
+
+`ralph start` prints a pixel sprite as its first output on a colour terminal (see
+[the README](./README.md#quick-start)). Three published modules under `lib/` back
+it, fed by a generator that is not published at all:
+
+- `lib/sprite-data.js` — **GENERATED. Do not edit by hand.** It is the committed
+  asset: a palette plus one row-per-pixel grid per frame. Regenerate it, never
+  patch it:
+  ```bash
+  node scripts/generate-sprite.js <source.gif>   # → lib/sprite-data.js
+  ```
+  The generator is deterministic — same GIF, same flags, byte-identical module —
+  which is the whole reason hand-editing is pointless. `--help` lists the grid,
+  palette-size and near-black flags; the defaults are the measured values for the
+  intended source art.
+- `lib/sprite-render.js` — the pure half-block renderer (two pixel rows per text
+  row, so a 26x34 grid draws as 26 columns x 17 lines).
+- `lib/sprite-banner.js` — the *decision*: may we draw, and what exactly gets
+  printed. Both of its capabilities (**stdout** TTY-ness and the colour policy)
+  arrive as arguments, and `ralph start` resolves them into injectable
+  `stdoutIsTTY` / `color` options rather than reading `process.stdout` or
+  `process.env` anywhere down the stack. Keep it that way — a module that read
+  `process.env.NO_COLOR` itself would turn every test that injects an environment
+  into a test of the contributor's shell, which is what
+  [test hermeticity](#test-hermeticity-41) exists to prevent. `NO_COLOR` is
+  honoured on **presence** here, deliberately unlike picocolors' truthiness test;
+  the reasoning is in the module's docstring and the README's env-var row, and both
+  should move together if it ever changes.
+
+**The committed art is a placeholder.** This repository carries no Wreck-It Ralph
+GIF and never did — #66 made the source a developer-supplied *input*, which is why
+the generator takes a path instead of a constant — so `lib/sprite-data.js` was
+generated from a synthesized, original, obviously-not-Ralph stand-in put through
+the real generator unedited:
+
+```bash
+node scripts/placeholder-sprite-source.js   # deterministic GIF, written to the OS temp dir
+node scripts/generate-sprite.js <the path it just printed>
+```
+
+Swapping in real art is **one command** (`node scripts/generate-sprite.js
+ralph.gif`) — no test pins a pixel or a colour. Afterwards, four placeholder files
+are deleted **together**, and the two spec files among them are designed to go red
+the moment the real art lands, which is the reminder:
+
+```
+scripts/placeholder-sprite-source.js
+scripts/lib/placeholder-art.js
+test/sprite-placeholder-source.test.js
+test/sprite-placeholder-source.qa.test.js
+```
+
+In that last one, **keep or move the packaging block** (the `npm pack` manifest
+closure check) — it guards what the published tarball contains and is worth having
+with or without a placeholder.
+
+Everything under `scripts/` is **development-only and unpublished by
+construction**: `package.json`'s `files` is an allow-list (`bin`, `lib`,
+`templates`, and two markdown files), so there is no ignore rule to keep in sync.
+`lib/` *is* published, which is how the committed sprite data reaches an installed
+Ralph. Nothing under `lib/` or `bin/` may import from `scripts/` or `test/`, and
+that is asserted rather than trusted.
+
 ## Manual smoke test (pre-release recipe)
 
 Before each release we exercise the package against an unrelated project
@@ -156,6 +224,15 @@ to catch path/template bugs that unit tests can't surface.
 5. **Pick a real open issue** in the project and run `ralph start`.
    Watch via the `tmux attach` command `ralph start` prints (the session is
    per-project: `ralph-<repo>-<hash>`). Verify that:
+   - The **sprite** is drawn as the very first thing on the terminal, above the
+     preflight lines. This is the one place a real TTY is exercised — the hermetic
+     suite injects `stdoutIsTTY` and never touches a terminal — so check both
+     suppressions here as well. Piped: `ralph start 2>/dev/null | cat -v` must show
+     no sprite and nothing starting `^[` at all, with the remaining lines and the
+     exit code unchanged. Value-less `NO_COLOR`: `NO_COLOR= ralph start` on the same
+     terminal must drop the sprite while the ✅ / ⚠️ lines stay coloured — the
+     divergence from picocolors is intentional, so this is the pass condition, not a
+     bug.
    - Lazy validation runs on first start (`.ralph/state.json` did not
      exist), Claude rewrites the config if needed, and the state file
      is created.

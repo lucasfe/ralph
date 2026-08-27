@@ -9,7 +9,9 @@
 //
 // The source Wreck-It Ralph GIF is likewise NOT committed: it is an input a
 // developer points this at, which is why the path is an argument and not a
-// constant. The generated data module is not committed by this slice either.
+// constant. The OUTPUT, though, is committed as of #67 — lib/sprite-data.js is a
+// tracked file that ships in the tarball, so rerunning this overwrites it and the
+// diff belongs in the commit.
 //
 // This file is the ONLY part of the pipeline that touches the filesystem. Every
 // decision — decoding, compositing, transparency, downsampling, quantizing,

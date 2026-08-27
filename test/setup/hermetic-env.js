@@ -86,6 +86,14 @@ const UNDECLARED_AMBIENT_NAMES = [
   // to the scan — and this is the exact name that shipped the leak (#41 D1), so it
   // gets a second net that no refactor can remove.
   'HEALTHCHECK_URL',
+  // #67: read by lib/sprite-banner.js (through the env bag `ralph start` injects) to
+  // suppress the sprite. Undeclared here because the derivation below only finds
+  // names that are resolveCred() keys or assignments in a scanned template, and
+  // NO_COLOR is neither — it is a cross-tool convention nobody declares. It is NOT a
+  // toolchain name either: a developer with NO_COLOR exported would otherwise flip
+  // every colour-gated assertion in the suite, which is precisely the class of
+  // shell-dependence #41 exists to kill.
+  'NO_COLOR',
 ]
 
 // The derivation FAILS CLOSED: an unreadable source would silently shrink the name
