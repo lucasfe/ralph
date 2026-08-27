@@ -132,7 +132,10 @@ or [`NO_COLOR`](#environment-variables) is set in the environment, the sprite is
 not printed at all — none of its escape sequences, not even a blank line where it
 would have been — and every other line of `ralph start`'s output, plus its exit
 code, is byte-for-byte what the same run prints on a terminal. There is no flag
-and no variable that turns the sprite **on**: a non-terminal never gets it.
+and no variable that turns the sprite **on**: a non-terminal never gets it. A
+terminal narrower than the sprite itself — under **26 columns** — silences it the
+same way, and drops it *whole* rather than clipping it, because half a face with
+a torn edge is not a smaller sprite.
 
 Directly under it, and on **every** run, comes the **identity box**: which Ralph
 this is, where it is running, whether a newer one is waiting, and what changed in
@@ -157,9 +160,15 @@ terminal and plain text everywhere else, with not one escape byte emitted. It is
 printed **before every other side effect**, so it is on screen even on the runs a
 preflight check aborts, and it is **additive output only**: no other line and no
 exit code changes because of it. It holds 60 columns, or your terminal's width
-when that is narrower, with anything longer clipped by `…`; a fact Ralph could
-not read (the version, on an install with an unreadable `package.json`) reads
-`unknown` rather than being guessed at.
+when that is narrower, with anything longer clipped by `…` and no line ever
+wrapped; under **44 columns**, where the frame would be spending an eighth of the
+screen on decoration, the border is dropped altogether and the same rows print
+bare as `label   value` — the same information, with the border's four columns
+handed back to the fact. A width Ralph cannot use falls back to that 60-column
+default rather than degrading, so a pipe (where there is no column count to read)
+gets the box it always did. A fact Ralph could not read (the version, on an
+install with an unreadable `package.json`) reads `unknown` rather than being
+guessed at.
 
 The `update` row is served **entirely from the cache** the weekly check already
 keeps (see [Where the check keeps its state](#where-the-check-keeps-its-state)),
