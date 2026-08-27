@@ -123,9 +123,10 @@ lockstep.
 
 ## The sprite banner: generated asset, placeholder art
 
-`ralph start` prints a pixel sprite as its first output on a colour terminal (see
-[the README](./README.md#quick-start)). Three published modules under `lib/` back
-it, fed by a generator that is not published at all:
+`ralph start` prints a pixel sprite as its first output on a colour terminal, and
+an identity box under it on every run (see
+[the README](./README.md#quick-start)). Four published modules under `lib/` back
+the two halves, the first of them fed by a generator that is not published at all:
 
 - `lib/sprite-data.js` — **GENERATED. Do not edit by hand.** It is the committed
   asset: a palette plus one row-per-pixel grid per frame. Regenerate it, never
@@ -150,6 +151,22 @@ it, fed by a generator that is not published at all:
   honoured on **presence** here, deliberately unlike picocolors' truthiness test;
   the reasoning is in the module's docstring and the README's env-var row, and both
   should move together if it ever changes.
+- `lib/banner-compose.js` — the banner's *other half*: the identity box, composed
+  from **resolved facts**. Pure in the same way and for the same reason — no
+  `process`, no clock, no fs, and no cache read of its own — so `ralph start`
+  resolves every fact on the impure side (the installed version, the working
+  directory, and the cached `latest_version`) and hands them over. Two more
+  injectable options carry the rest: `columns`, defaulting to `stdout?.columns`,
+  and `readCache`, defaulting to `readVersionCache` — the second so no suite reads
+  a real `~/.config/ralph` and a contributor's own pending update cannot add a row
+  to another suite's expected output. Later slices add **rows, not parameters**:
+  `composeBanner`'s three arguments (`facts`, `width`, `capabilities`) are the
+  seam, and a new fact belongs in the object `start` already builds. The box is
+  deliberately **not** capability-gated the way the sprite is — facts belong in a
+  launchd log too — so a piped `ralph start` is no longer byte-identical to a
+  pre-banner one, and an assertion about what a non-TTY run does *not* print has to
+  name the sprite rather than ANSI in general (`expectNoSprite` in
+  `lib/commands/start.banner.qa.test.js`, whose comment says why).
 
 **The committed art is a placeholder.** This repository carries no Wreck-It Ralph
 GIF and never did — #66 made the source a developer-supplied *input*, which is why
@@ -225,14 +242,23 @@ to catch path/template bugs that unit tests can't surface.
    Watch via the `tmux attach` command `ralph start` prints (the session is
    per-project: `ralph-<repo>-<hash>`). Verify that:
    - The **sprite** is drawn as the very first thing on the terminal, above the
-     preflight lines. This is the one place a real TTY is exercised — the hermetic
-     suite injects `stdoutIsTTY` and never touches a terminal — so check both
-     suppressions here as well. Piped: `ralph start 2>/dev/null | cat -v` must show
-     no sprite and nothing starting `^[` at all, with the remaining lines and the
-     exit code unchanged. Value-less `NO_COLOR`: `NO_COLOR= ralph start` on the same
-     terminal must drop the sprite while the ✅ / ⚠️ lines stay coloured — the
-     divergence from picocolors is intentional, so this is the pass condition, not a
-     bug.
+     preflight lines, with the **identity box** immediately under it. This is the one
+     place a real TTY is exercised — the hermetic suite injects `stdoutIsTTY` and
+     `columns` and never touches a terminal — so check both suppressions here as
+     well. Piped: `ralph start 2>/dev/null | cat -v` must show no sprite and no
+     truecolor escape (`^[[38;2;`, `^[[48;2;`) while the box is **still there**, in
+     plain text, holding its 60 columns, with the remaining lines and the exit code
+     unchanged. Value-less `NO_COLOR`: `NO_COLOR= ralph start` on the same terminal
+     must drop the sprite while the ✅ / ⚠️ lines stay coloured — the divergence from
+     picocolors is intentional, so this is the pass condition, not a bug — and the
+     box must survive it too, losing only the yellow on its `update` row.
+   - The box's **`update` row is the one line that depends on machine state**: it is
+     printed only when the global update-check cache already holds something newer
+     than the tarball you just installed, so on a machine where nothing has ever
+     checked there is nothing to see and that is not a failure. Resize the window
+     too: under 60 columns the box must narrow and clip its values with `…`, never
+     wrap a line or run its right border ragged. And `RALPH_NO_UPDATE_CHECK=1 ralph
+     start` must leave the box with its title and `cwd` alone.
    - Lazy validation runs on first start (`.ralph/state.json` did not
      exist), Claude rewrites the config if needed, and the state file
      is created.

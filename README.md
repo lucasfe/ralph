@@ -127,11 +127,45 @@ one still frame in 24-bit colour, printed above the very first preflight line, s
 it is there on the runs that fail their checks too. It is decoration and nothing
 depends on it: it is gated on the terminal rather than on the run, so when stdout
 is **not** a TTY (a pipe, a redirect to a file, a launchd log, a CI transcript)
-or [`NO_COLOR`](#environment-variables) is set in the environment, nothing extra
-is printed at all — no escape sequences, not even a blank line — and every other
-line of `ralph start`'s output, plus its exit code, is byte-for-byte what it
-always was. There is no flag and no variable that turns the sprite **on**: a
-non-terminal never gets it.
+or [`NO_COLOR`](#environment-variables) is set in the environment, the sprite is
+not printed at all — none of its escape sequences, not even a blank line where it
+would have been — and every other line of `ralph start`'s output, plus its exit
+code, is byte-for-byte what the same run prints on a terminal. There is no flag
+and no variable that turns the sprite **on**: a non-terminal never gets it.
+
+Directly under it, and on **every** run, comes the **identity box**: which Ralph
+this is, where it is running, and whether a newer one is waiting.
+
+```
+╭─ ralph 0.22.0 ───────────────────────────────────────────╮
+│ update  0.23.0 available — run `ralph update`            │
+│ cwd     /Users/you/repos/your-project                    │
+╰──────────────────────────────────────────────────────────╯
+```
+
+Unlike the sprite the box is **not** gated on the terminal, because it is facts
+rather than decoration: a launchd log or a CI transcript is exactly where "which
+version, which directory" is the question being asked. A non-TTY or `NO_COLOR`
+costs it its colour and nothing else — the `update` row is yellow on a colour
+terminal and plain text everywhere else, with not one escape byte emitted. It is
+printed **before every other side effect**, so it is on screen even on the runs a
+preflight check aborts, and it is **additive output only**: no other line and no
+exit code changes because of it. It holds 60 columns, or your terminal's width
+when that is narrower, with anything longer clipped by `…`; a fact Ralph could
+not read (the version, on an install with an unreadable `package.json`) reads
+`unknown` rather than being guessed at.
+
+The `update` row is served **entirely from the cache** the weekly check already
+keeps (see [Where the check keeps its state](#where-the-check-keeps-its-state)),
+so the banner makes no registry query of its own and costs the first paint
+nothing: on a machine where that check has never run there is simply no row. It
+appears only when what is cached is **strictly newer** than what you have — the
+same comparison behind [the weekly check](#the-weekly-check)'s notice, so the box
+and the notice can never disagree about what counts as newer, though a single run
+can print both. It also honours
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables): with the opt-out set the cache
+is not read at all and the row never appears, leaving the box its title and its
+`cwd`.
 
 `ralph status` answers "what is Ralph on right now?" without attaching to
 anything. It reads the run-state record the loop keeps at
@@ -760,7 +794,12 @@ update path reads it any more: it is a leftover of the old per-release dedupe,
 not a knob. `ralph doctor` reads the update-check file for its `cached latest:`
 line, and only reads it: it makes no registry query and stamps neither window,
 so running `doctor` neither refreshes the weekly check nor consumes the week's
-question.
+question. The `update` row of the identity box
+[`ralph start`](#quick-start) opens with reads it the same way — one field,
+`latest_version`, no query and no stamp, so it can never move either window — with
+one difference from `doctor`: it is silenced by
+[`RALPH_NO_UPDATE_CHECK`](#environment-variables), and on that path the file is
+not opened at all.
 
 ## What survives an update
 
@@ -839,8 +878,8 @@ command line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, the interactive update prompt. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. |
-| `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, both the interactive update prompt and the `update` row of the identity box [`ralph start`](#quick-start) opens with, which is served from that same cache and therefore does not read it either. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. That the box's row reads that very same file and *is* gated is the deliberate half of the distinction: `doctor`'s line is a diagnostic a user asked for, while the row is the same nagging this variable exists to switch off, printed above every single run. |
+| `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box under the sprite — that is facts rather than decoration and prints on every run — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. |
 | `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
