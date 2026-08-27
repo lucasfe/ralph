@@ -5,6 +5,16 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0](https://github.com/lucasfe/ralph/compare/v0.21.0...v0.22.0) (2026-08-27)
+
+
+### Features
+
+* `ralph digest --loop` + a digest window in the tmux session ([#62](https://github.com/lucasfe/ralph/issues/62)) ([#95](https://github.com/lucasfe/ralph/issues/95)) ([a2f9464](https://github.com/lucasfe/ralph/commit/a2f9464f63accb38808ee7541694e0ee74af39c9))
+* `ralph digest` one-shot — no-tool narration on a cheap model ([#61](https://github.com/lucasfe/ralph/issues/61)) ([#93](https://github.com/lucasfe/ralph/issues/93)) ([6687570](https://github.com/lucasfe/ralph/commit/6687570de85934b65597f22746e7e86f501e2e1e))
+* a digest section in `ralph status` ([#63](https://github.com/lucasfe/ralph/issues/63)) ([#96](https://github.com/lucasfe/ralph/issues/96)) ([a6c37ba](https://github.com/lucasfe/ralph/commit/a6c37ba02d4ab248dac470e14dbbf8ad4a6fa87d))
+* commit the sprite asset and show it statically in `ralph start` ([#67](https://github.com/lucasfe/ralph/issues/67)) ([#97](https://github.com/lucasfe/ralph/issues/97)) ([541616f](https://github.com/lucasfe/ralph/commit/541616fc2de65fe376dcad7dfc5993816572e8f2))
+
 ## [0.21.0](https://github.com/lucasfe/ralph/compare/v0.20.0...v0.21.0) (2026-08-26)
 
 
