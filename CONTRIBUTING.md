@@ -163,7 +163,7 @@ on every run — or as much of that as `RALPH_BANNER` asked for (see
 [the README](./README.md#quick-start)). Since #75 `ralph doctor` heads its report
 with that same box, and since #76 `ralph status` heads its human view with it
 too — out of the same composer and the same setting, and with none of the pixels
-in either: three commands share this half, one shares both. Nine published
+in either: three commands share this half, one shares both. Ten published
 modules under `lib/` back the two halves and the setting that governs them, the
 first of them fed by a generator that is not published at all:
 
@@ -300,21 +300,22 @@ first of them fed by a generator that is not published at all:
   pre-banner one, and an assertion about what a non-TTY run does *not* print has to
   name the sprite rather than ANSI in general (`expectNoSprite` in
   `lib/commands/start.banner.qa.test.js`, whose comment says why).
-- `lib/banner-model.js` — the two facts the box cannot simply be *handed* (#69):
-  which model the agent will use, and which repository the loop will read issues
-  from. Every other row is a lookup the caller already holds; these two are
-  questions, and they have answers of different quality — which is the whole
-  reason `resolveBannerModel` returns a **`provenance`** alongside the model, and
-  why `MODEL_PROVENANCE` (`last-run` / `configured` / `unknown`) is exported and
-  frozen. That tag is a **correctness requirement, not a garnish**: the box must
-  never state a model with more confidence than its source warrants, so if you add
-  a fourth kind of evidence, add a sentence for it in `banner-compose.js` in the
-  same commit — the spec next door will tell you if you forget. Pure and total in
-  the same way the composer is, and asserted so by a static read: no clock, no
-  `process`, no fs. Both files it reasons about arrive as **text**, which is what
-  makes every case in its spec a string literal rather than a fixture on disk (see
-  [test hermeticity](#test-hermeticity-41)) — there is no `.ralph` directory, no
-  git remote and no previous run anywhere in that suite. Four rules worth keeping.
+- `lib/banner-model.js` — the fact the box cannot simply be *handed* (#69, and
+  the only one left here since #116 gave the repo slug a module of its own
+  below): which model the agent will use. Every other row is a lookup the caller
+  already holds; this one is a question, and its answers differ in **quality** —
+  which is the whole reason `resolveBannerModel` returns a **`provenance`**
+  alongside the model, and why `MODEL_PROVENANCE` (`last-run` / `configured` /
+  `unknown`) is exported and frozen. That tag is a **correctness requirement,
+  not a garnish**: the box must never state a model with more confidence than
+  its source warrants, so if you add a fourth kind of evidence, add a sentence
+  for it in `banner-compose.js` in the same commit — the spec next door will
+  tell you if you forget. Pure and total in the same way the composer is, and
+  asserted so by a static read: no clock, no `process`, no fs. The file it
+  reasons about arrives as **text**, which is what makes every case in its spec
+  a string literal rather than a fixture on disk (see
+  [test hermeticity](#test-hermeticity-41)) — there is no `.ralph` directory and
+  no previous run anywhere in that suite. Four rules worth keeping.
   **The log answers for Claude, the config answers for Codex:** Codex's stream
   carries no model id, so what the log holds for a Codex run is the configured
   `RALPH_CODEX_MODEL` one run staler, and consulting it would also let a log full
@@ -332,17 +333,54 @@ first of them fed by a generator that is not published at all:
   here is how they would. **And it never throws**, on the same grounds as the rest
   of the banner: every input is type-checked rather than coerced, because
   `String(value)` on a hostile bag runs its `toString` and these values come from
-  an ambient environment and two files nobody reads as bytes. `resolveBannerRepo`
-  is the same discipline applied to a grammar: `GH_REPO` decides when it is set
-  (it decides for `gh`, so it decides for the loop), otherwise `origin`'s url out
-  of `.git/config`, parsed line by line rather than with one whole-file regex — and
-  a bracket line the parser cannot read **closes** the origin section rather than
-  leaving it open, because attributing a fork's `[remote "upstream"]` keys to
-  `origin` would put a repository on screen that the loop is not about to read. A
-  slug it cannot resolve is `null`, which the composer's gate turns into no row;
-  `unknown` would be a claim, and a missing row is not. #69 changed **nothing**
+  an ambient environment and a file nobody reads as bytes. #69 changed **nothing**
   about the telemetry: no new event field, no changed event shape — the box is a
   reader of `issues.jsonl` and never a writer of it.
+- `lib/git-remote-slug.js` — the box's *other* resolved fact, and the whole of
+  #116: which repository the loop will read issues from, which is git's config
+  format and git's two url grammars reduced to `owner/name`. It was written in the
+  **back half** of `banner-model.js` (#69) rather than at its bottom — six of that
+  module's own helpers went on below it, which is part of why the seam went
+  unread — and carried out of it **unedited**: the two halves shared that module's
+  purity, its never-throws contract and two five-line helpers, and no code path,
+  no caller's question and no test that asserted both, which is what made #116 a
+  move rather than a rewrite. It is the same discipline as the resolver above,
+  applied to a *grammar* instead of to evidence. `GH_REPO` decides when it is set
+  (it decides for `gh`, so it decides for the loop), otherwise `origin`'s url out
+  of `.git/config`, parsed line by line rather than with one whole-file regex —
+  and a bracket line the parser cannot read **closes** the origin section rather
+  than leaving it open, because attributing a fork's `[remote "upstream"]` keys to
+  `origin` would put a repository on screen that the loop is not about to read. A
+  slug it cannot resolve is `null`, which the composer's gate turns into no row;
+  `unknown` would be a claim, and a missing row is not. Pure the way the rest of
+  this list is pure and one step further — it **imports nothing at all** — and
+  asserted so by a static read of its own. The config file arrives as an argument,
+  which is what makes every case across its three **behavioural** specs a string
+  literal rather than a fixture on disk (see
+  [test hermeticity](#test-hermeticity-41)): there is no `.git` directory and no
+  checkout anywhere in any of the three. Its **fourth** spec —
+  `git-remote-slug.extraction.qa.test.js`, the guard over the move's own seams —
+  does read files off disk, by design: what it reads is *this repository's own
+  source*, a static sweep of `lib/`, `bin/` and `test/` for a caller still pointed
+  at the old door. Source is not a fixture and needs no checkout of anybody's
+  repository, which is the distinction that keeps both claims true at once. Two
+  decisions of #116's are argued at length in the module header, and neither is
+  worth re-litigating from this file. **The two helpers are duplicated rather than
+  shared:** `bagOf` and `trimmedOr` have a twin in `banner-model.js`, because the
+  nearest existing home for them — `lib/utils/env.js` — opens `node:fs` on its
+  first line and would cost this module precisely the purity its own spec asserts,
+  and a third module whose only reason to exist is being imported twice would put
+  back the coupling the split just removed, one indirection worse. Ten lines with
+  no behaviour between them are the cheaper of the two costs; a drift guard in
+  `git-remote-slug.extraction.qa.test.js` holds the twins identical, and a *third*
+  caller is the point to reconsider, not this one.
+  **And the export keeps its caller-oriented name** in a module named for the
+  grammar: `remoteSlug` / `pathSlug` are the general half, and `resolveBannerRepo`
+  is the banner's particular question layered on top of it (`GH_REPO` first, because
+  that is what `gh` reads first). A general name over that particular *policy* would
+  be the inaccuracy — nothing about `owner/name` says `GH_REPO` wins — so the name
+  stayed where #69 put it. A second command with a different question adds a second
+  export beside it rather than a rename.
 - `lib/changelog.js` — `CHANGELOG.md` **as data**, for the box's what's-new rows:
   text in, ordered release entries out, and nothing else. Pure, and it takes a
   *string* rather than a path, so every shape it has to survive (an empty file, a
