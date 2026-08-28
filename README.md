@@ -192,13 +192,18 @@ whole banner, sprite and box together.
 
 Directly under it, and on **every** run bar one an explicit
 [`RALPH_BANNER=off`](#configuration-reference) silenced, comes the **identity
-box**: which Ralph this is, where it is running, whether a newer one is waiting,
-and what changed in the release you are on.
+box**: which Ralph this is, which agent and model are about to run and how much
+context that model has, where it is running and where it takes its work from,
+whether a newer Ralph is waiting, and what changed in the release you are on.
 
 ```
 ╭─ ralph 0.22.0 ───────────────────────────────────────────╮
 │ update  0.23.0 available — run `ralph update`            │
+│ agent   claude — claude-opus-5 (last run)                │
+│ context 1M tokens                                        │
 │ cwd     /Users/you/repos/your-project                    │
+│ source  github                                           │
+│ repo    you/your-project                                 │
 │ new     • `ralph digest --loop` + a digest window in th… │
 │         • `ralph digest` one-shot — no-tool narration o… │
 │         • a digest section in `ralph status` (#63) (#96… │
@@ -210,9 +215,9 @@ The **title** is the Ralph that is about to run — the installed version, read 
 of the package's own `package.json` — and `cwd` is the directory you ran the
 command in. Those two rows are on every box the three commands draw, though
 `ralph status`'s `cwd` names the git toplevel instead of the directory you typed
-in, for the reason its own paragraph below gives. `update`, `new` and `more` each
-appear only when Ralph has the fact behind them, and each has a paragraph of its
-own below.
+in, for the reason its own paragraph below gives. Every other row — `agent`,
+`context`, `source`, `repo`, `update`, `new` and `more` — appears only when Ralph
+has the fact behind it, and each has a paragraph of its own below.
 
 Unlike the sprite the box is **not** gated on the terminal, because it is facts
 rather than decoration: a launchd log or a CI transcript is exactly where "which
@@ -236,11 +241,15 @@ guessed at.
 same composer, same width ladder, same `RALPH_BANNER` setting — each carrying the
 rows it has facts for: `doctor` the ones a diagnostic needs (`os`, `agent`,
 `cached`), `status` the `cwd` under the version in the title and nothing else,
-where `ralph start` carries `update` and the what's-new bullets. Which rows a box
-holds is a question of which facts the command resolved, so no command grows
-another's; see the `ralph doctor` paragraph above for that box and its `cached`
-row, and the `ralph status` paragraph below for why that one is the shortest of
-the three.
+where `ralph start` carries `agent`, `context`, `source`, `repo`, `update` and the
+what's-new bullets. Which rows a box holds is a question of which facts the
+command resolved, so no command grows another's; see the `ralph doctor` paragraph
+above for that box and its `cached` row, and the `ralph status` paragraph below
+for why that one is the shortest of the three. The one row the two boxes spell
+differently is `agent`: `doctor` prints the agent's **name alone** (`agent
+codex`), because that report is a diagnostic about an installation and not a
+report about a run — it never looks at a run, so it has no model to name and no
+`context` row either — while `ralph start`'s row is the sentence described below.
 
 How much of that banner you get is the one thing about it that is yours to
 choose. [`RALPH_BANNER`](#configuration-reference) in `ralph.config.sh` takes
@@ -285,7 +294,100 @@ and the notice can never disagree about what counts as newer, though a single ru
 can print both. It also honours
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables): with the opt-out set the cache
 is not read at all and the row never appears, leaving the box its title, its
-`cwd`, and its what's-new rows.
+`agent`, `context`, `cwd`, `source` and `repo` rows, and its what's-new rows.
+
+The `agent` row names the agent that is **about to run** and, after an em dash,
+the model it will use — and it always says **where that model claim came from**,
+because the two agents give Ralph two different qualities of evidence and a row
+that hid the difference would be claiming more than it knows. The agent half is
+the *resolved* [`RALPH_AGENT`](#configuration-reference), so a mistyped value
+shows you the agent that will actually run (`claude`, that setting's fallback)
+rather than what you typed: this box reports the run, it does not diagnose it, and
+[`ralph doctor`](#quick-start) and `ralph init` are where a typo is named for you.
+The model half has three readings:
+
+- ``agent   claude — claude-opus-5 (last run)`` — the model the **previous** run
+  actually used, read back out of the newest event in
+  [`.ralph/metrics/issues.jsonl`](#per-issue-stream--ralphmetricsissuesjsonl).
+  Claude Code picks its own model and offers no way to ask before the first turn,
+  so this is the only honest evidence there is, and `(last run)` says out loud
+  what it is: a fact about the run before this one, not a promise about this one.
+  Switch models between runs and the box is a run behind you until the next event
+  lands.
+- ``agent   codex — gpt-5-codex (configured)`` — the
+  [`RALPH_CODEX_MODEL`](#configuration-reference) the loop is about to pass on the
+  command line, which for Codex *is* the answer. The metrics log is **never**
+  consulted for a Codex row: Codex's stream carries no model id, so the log holds
+  nothing but a staler copy of this same configured value — and reading it would
+  let a log full of Claude runs put a Claude model on a Codex row the first time a
+  project switched agents.
+- ``agent   claude — model resolves at first run`` — no evidence at all, so the
+  row **names no model**. That is what a fresh checkout gets, and it is spelled
+  with whichever agent it is about, so a `codex` project with no
+  `RALPH_CODEX_MODEL` set reads ``codex — model resolves at first run``. It is
+  worded as a fact about the future rather than as a failure: nothing is broken,
+  the run simply has not happened yet. Ralph does not guess here, the same way the
+  telemetry does not.
+
+The log is read the way every other consumer of that file reads it — the newest
+line, with a truncated or garbage trailing line skipped rather than fatal, since
+the loop appends to it and can be killed mid-line. It is the newest event **full
+stop**, deliberately: if that event carries no model, or belongs to a *different*
+agent (which is what the bottom of the log looks like in a repo that just switched
+`RALPH_AGENT`), the row falls to `model resolves at first run` rather than reaching
+further back for an event that would answer. An older run's model is not a fact
+about the last run, and labelling it `(last run)` would be exactly the
+overstatement the tag exists to prevent.
+
+The `context` row is how much context that model works with, and it appears
+**only when the window is known** — there is no `context unknown`, because a model
+id Ralph has no window for is a gap in the map rather than a detection bug worth a
+row. The number is written exactly, and abbreviated only when it is exactly
+divisible: `1M tokens`, `200k tokens`, and a plain `1500 tokens` for anything else,
+so what you read here can always be matched against the
+[`RALPH_CONTEXT_WINDOW`](#configuration-reference) you set rather than against a
+friendlier rounding. Which side of the model claim above it comes from matters for
+one thing: on the `(last run)` path the window is taken from that same event, which
+was written with whatever override *that* run had, so a change to
+`RALPH_CONTEXT_WINDOW` reaches this row on the next run rather than on this one;
+on the `(configured)` path it is resolved from the model id and the current
+override together, and takes effect immediately.
+
+All three knobs behind those two rows — `RALPH_AGENT`, `RALPH_CODEX_MODEL` and
+`RALPH_CONTEXT_WINDOW` — are read from `ralph.config.sh` **first**, and from the
+environment only where the file is silent about them. That is the way round the
+loop itself resolves them (it *sources* that file, so a committed value overrides
+an inherited one), and it is deliberately the opposite of
+[`RALPH_BANNER`](#configuration-reference), where the environment wins: these three
+name what the run is going to do, so a box that preferred the environment could
+name an agent the loop is not about to run, while a banner is a property of one
+invocation rather than of the repository.
+
+The `source` row is the resolved [`TASK_SOURCE`](#choosing-the-task-source) —
+`github` or `folder` — and the `repo` row under it is the repository the loop will
+read issues from, `owner/name`. **`repo` is a github-mode row only:** a folder-mode
+run draws no such row at all, because there is no repository it reads issues from
+and naming one would be naming a fact that is not about the run. Both rows are
+there for the same reader: the one running Ralph in several checkouts of the same
+project, or in a fork, who wants to know which one this loop is about to work on
+before it starts working.
+
+That slug is resolved **locally and cheaply** — [`GH_REPO`](#environment-variables)
+if the environment set it, which is what `gh` itself honours first, otherwise
+`origin`'s url out of the `.git/config` in the directory you ran the command in.
+`gh repo view` would know authoritatively, and it is deliberately not asked: this
+row prints *before* the first preflight line, and no decoration is worth putting a
+network round trip in front of the first paint or hanging a start on a bad
+connection. The trade is worth knowing about, because it is visible: `gh` resolves
+its base repository from more than `origin` (a `gh repo set-default`, an upstream
+remote), so in a checkout where the two disagree **this row shows what git says**.
+And when the answer is not cheaply knowable — no `.git` at all, an `origin` that is
+a local path or a bundle rather than a GitHub repository, a `GH_REPO` that is not a
+slug — the row is simply **absent** rather than reading `unknown`: "this checkout
+does not cheaply say" is not the same claim as "there is no repo", and only the
+missing row tells the truth. The `.git/config` read happens only when there is a
+box to draw, so [`RALPH_BANNER=off`](#configuration-reference) costs not one byte
+of output and not one read for this row either.
 
 The `new` rows are the newest release in the `CHANGELOG.md` that **ships inside
 the installed package** — its first three bullets, in the order a reader of the
@@ -598,7 +700,13 @@ Codex needs `codex`.
 Nothing else in `ralph.config.sh` changes between agents. The two agents share
 the same team roles, triage tiers, PR flow, and telemetry; only the
 orchestrator template and the invoked CLI differ. For Codex you can also pin a
-model with `RALPH_CODEX_MODEL` (see [Configuration reference](#configuration-reference)).
+model with `RALPH_CODEX_MODEL` (see [Configuration reference](#configuration-reference)),
+which is also the model `ralph start`'s identity box names beside the agent —
+``agent   codex — gpt-5-codex (configured)``. On a Claude project that row names
+the model the **last** run used instead, because Claude Code picks its own and
+there is no way to ask it before the first turn; [the quick
+start](#quick-start) walks through both readings and the third, where nothing is
+known yet and the row names no model at all.
 
 ### Codex sandbox and network access
 
@@ -659,6 +767,11 @@ automation keeps working unchanged.
 To switch an existing project, edit `TASK_SOURCE` in `ralph.config.sh` by hand.
 The bash loop, the prompt builder, and `ralph doctor`/`cycle` preflight all read
 this one value, so the loop and prompt consistently honor it on every run.
+`ralph start` also reports the resolved source in the `source` row of the identity
+box it opens with, and in `github` mode adds a `repo` row naming the repository the
+loop will read issues from — a folder-mode run draws no `repo` row at all, because
+there is no repository it reads issues from. See
+[the quick start](#quick-start) for how that slug is resolved.
 
 ### Folder-mode layout
 
@@ -1098,9 +1211,9 @@ be committed. Re-running `ralph init` never overwrites it.
 
 | Variable              | Default                              | Purpose                                                                 |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
-| `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
-| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report and [`ralph status`](#quick-start)'s human view, whether either of those commands prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` and `ralph status` take the identical fallback **silently**: the default box, and not a word about the typo on either stream — `doctor` because a typo in a purely cosmetic knob does not earn a line in a diagnostic, `status` because it has no stderr channel at all, which is what keeps its `--json` output pipeable — so `ralph start`, the command the setting is actually about, is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` and `ralph status` read the box half of this setting and nothing else: neither draws a sprite or an animation at any value, `full` and `static` are the same picture in both, and `off` means no box and not one blank line where it would have been — so `RALPH_BANNER=off ralph status` prints the report starting at its `▸ ralph` line, byte for byte as it did before the box existed. `ralph status` adds the only two exceptions in either direction: its `never-run` mode prints no box at any value, because the box identifies a run and that mode has none, and `ralph status --json` prints its one document at every value, since this setting reaches the human view alone. |
-| `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
+| `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. The `agent` row of the identity box [`ralph start`](#quick-start) opens with names the **resolved** agent, so a mistyped value shows you the agent that will actually run rather than what you typed — that box reports the run, and `ralph init` and [`ralph doctor`](#quick-start) are where the typo itself is named. |
+| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report and [`ralph status`](#quick-start)'s human view, whether either of those commands prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed — and nothing is read for a box nobody is going to see: not the update-check cache behind the `update` row, not the shipped `CHANGELOG.md` behind the what's-new rows, and not the `.git/config` behind the `repo` row. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` and `ralph status` take the identical fallback **silently**: the default box, and not a word about the typo on either stream — `doctor` because a typo in a purely cosmetic knob does not earn a line in a diagnostic, `status` because it has no stderr channel at all, which is what keeps its `--json` output pipeable — so `ralph start`, the command the setting is actually about, is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` and `ralph status` read the box half of this setting and nothing else: neither draws a sprite or an animation at any value, `full` and `static` are the same picture in both, and `off` means no box and not one blank line where it would have been — so `RALPH_BANNER=off ralph status` prints the report starting at its `▸ ralph` line, byte for byte as it did before the box existed. `ralph status` adds the only two exceptions in either direction: its `never-run` mode prints no box at any value, because the box identifies a run and that mode has none, and `ralph status --json` prints its one document at every value, since this setting reaches the human view alone. |
+| `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. It is also the model the identity box [`ralph start`](#quick-start) opens with names on a Codex project — ``agent   codex — gpt-5-codex (configured)`` — and the tag is literal: for Codex this value *is* the answer, so the metrics log is never consulted for that row (Codex's stream carries no model id, so the log would hold nothing but a staler copy of this same value). Unset, the row reads ``codex — model resolves at first run`` and names no model at all. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
 | `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs) or `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`). Unset/unrecognized falls back to `github`. Set by `ralph init --source <name>` / the interactive picker. See [Choosing the task source](#choosing-the-task-source). |
@@ -1115,7 +1228,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `MERGE_POLL_INTERVAL` | `30`                                 | Seconds between `gh pr view` polls while waiting for auto-merge.       |
 | `MERGE_POLL_MAX`      | `40`                                 | Max polls (default = 20 minutes) before giving up on a PR.             |
 | `RALPH_HEAVY_TIER`    | `0`                                  | Gates the **Tier 2 / Heavy** triage path. `0` = off (the default): the heavy tier is unavailable and triage falls back to Tier 1. When on, a Tier-2 run adds the explorer fan-out + inline synthesis understand phase before the dev, and a 3-reviewer adversarial-panel verify phase (majority-of-3 to block) before the PR opens. |
-| `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (Anthropic: `opus`/`sonnet`/`fable` = 1,000,000, `haiku` = 200,000; OpenAI/Codex: `gpt-5`/`gpt-4.1`/`gpt-4`/`o3`/`o4`/`codex` = 400,000, legacy `gpt-4o` = 128,000). An unknown model resolves to no window (`null` pct). A non-numeric or `<= 0` value is ignored. |
+| `RALPH_CONTEXT_WINDOW` | unset (auto-resolved)               | Optional numeric override (tokens) for the context window used by the [`context_end_pct`](#per-issue-stream--ralphmetricsissuesjsonl) metric. Unset = auto-resolve from the run's model id (Anthropic: `opus`/`sonnet`/`fable` = 1,000,000, `haiku` = 200,000; OpenAI/Codex: `gpt-5`/`gpt-4.1`/`gpt-4`/`o3`/`o4`/`codex` = 400,000, legacy `gpt-4o` = 128,000). An unknown model resolves to no window (`null` pct). A non-numeric or `<= 0` value is ignored. The same window is what the `context` row of the identity box [`ralph start`](#quick-start) opens with prints, spelled **exactly** — `1M tokens`, `200k tokens`, `1500 tokens`, abbreviated only when the number is exactly divisible — so a value you set here is one you can match against the box rather than against a rounding. Which run that row describes follows the `agent` row above it: on a Codex project the box resolves the window from the configured model and this value together, so a change takes effect on the very next `ralph start`, while for Claude it reads the window out of the **last run's** telemetry event, which already folded in whatever override that run had — so a change here reaches the box one run later. A window neither the map nor this override supplies draws no row at all. |
 
 The config is plain bash; edit it in any editor. On the next
 `ralph start` Ralph re-validates the config one-shot via the selected
@@ -1153,6 +1266,7 @@ command line.
 | `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line — the one-second splash with it, so a run under this variable spends no time and writes no cursor movement on an animation nobody would have seen. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box under the sprite — that is facts rather than decoration and prints on every run bar one an explicit [`RALPH_BANNER=off`](#configuration-reference) silenced — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. The box [`ralph doctor`](#quick-start) heads its report with is coloured by picocolors' rule rather than this presence one, exactly like the ✓ / ✗ marks under it — so `NO_COLOR=1 ralph doctor` is plain from top to bottom, a piped `ralph doctor` emits not one escape byte *unless* `FORCE_COLOR` or `CI` is set (picocolors keeps colour on a non-TTY for both — its rule, not this one, and it paints the ✓ / ✗ marks and the `cached` row alike), and `NO_COLOR= ralph doctor` on a terminal keeps the colour on both the marks and the box's `cached` row. |
 | `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run of `ralph start`, of [`ralph doctor`](#quick-start) **or** of [`ralph status`](#quick-start) — the latter two head their reports with the same identity box: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally — in `ralph start`. `ralph doctor` and `ralph status` fall back the same way and **say nothing at all**: the three commands share the knob and its precedence, not the warning, so a typo you never see reported here is one `ralph start` will name for you (`status` could not report it if it wanted to — it writes to stderr in no mode, which is what keeps `ralph status --json` pipeable). `full` and `static` are indistinguishable in both, neither of which draws a sprite at any value. In `ralph status` this reaches the human view alone: `--json` prints its one document whatever the value, and the `never-run` mode prints no box at any value, having no run to identify. |
 | `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
+| `GH_REPO`               | unset (`origin` decides) | Not Ralph's variable but [`gh`'s](https://cli.github.com/manual/gh_help_environment), and it is listed here because Ralph reads it for one row: the `repo` row of the identity box [`ralph start`](#quick-start) opens with, which names the repository the loop will read issues from. Set, it **decides** — because it decides for every `gh` command the loop runs, so a box that named `origin`'s slug while the loop read someone else's would be wrong in exactly the situation that row was added for. `gh`'s own spelling is accepted (`[HOST/]OWNER/REPO`, with the host dropped), a blank value counts as unset, and a value that is not a slug at all draws **no row** rather than falling back to `origin`: naming a repository the loop will not use is worse than naming none. Unset, the slug comes from `origin`'s url in the `.git/config` of the directory you ran the command in — read locally, never with `gh repo view`, because that row prints before the first preflight line and no decoration may put a network round trip in front of the first paint. This is a **github-mode** row only: a `TASK_SOURCE=folder` run draws none, whatever this is set to. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
 on a negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -1566,8 +1680,8 @@ with these fields:
 | `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. |
 | `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The input side of the **most recent** model request: for Claude, the sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage); for Codex, the same sum taken from the last `turn.completed` usage. `0` when no usage is present. |
 | `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (see [`RALPH_CONTEXT_WINDOW`](#configuration-reference) for the Anthropic + OpenAI/Codex maps) or from the override. |
-| `model` | The resolved model id. For Claude it comes from the last `message_start`. **Codex's stream carries no model id**, so this is the configured [`RALPH_CODEX_MODEL`](#configuration-reference), or `null` when that is unset — Ralph never guesses. |
-| `context_window` | The resolved context window in tokens — the **same** window that backs `context_end_pct` (single source of truth). Resolves from the model id (see [`RALPH_CONTEXT_WINDOW`](#configuration-reference)) or from the override. `null` when the window is unknown (including Codex with no configured model). |
+| `model` | The resolved model id. For Claude it comes from the last `message_start`. **Codex's stream carries no model id**, so this is the configured [`RALPH_CODEX_MODEL`](#configuration-reference), or `null` when that is unset — Ralph never guesses. This is the one field of this stream with a reader outside the metrics: the `agent` row of the identity box [`ralph start`](#quick-start) opens with reads it back out of the **newest** event in this file to report which model the last run used, which is why that row is tagged `(last run)` rather than presented as a promise about the run about to start. It does so for Claude only — a Codex row is served straight from `RALPH_CODEX_MODEL`, because what is recorded here for a Codex run is that same configured value, one run staler. |
+| `context_window` | The resolved context window in tokens — the **same** window that backs `context_end_pct` (single source of truth). Resolves from the model id (see [`RALPH_CONTEXT_WINDOW`](#configuration-reference)) or from the override. `null` when the window is unknown (including Codex with no configured model). The box's `context` row is read from this field of that same newest event, so it already reflects whatever `RALPH_CONTEXT_WINDOW` *that* run was given; a `null` here is a run the box draws no `context` row for. |
 
 Stream parsing is agent-specific but yields the same normalized event
 shape. For **Claude**, `subtype`, `total_cost_usd`, `num_turns`,
