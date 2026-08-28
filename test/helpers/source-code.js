@@ -28,3 +28,27 @@ export function codeWithoutComments(path) {
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/(^|\s)\/\/.*$/gm, '$1')
 }
+
+const blank = (text) => text.replace(/[^\n]/g, ' ')
+
+/**
+ * The same haystack, for a spec that has to REPORT WHERE it found something.
+ *
+ * Prose is not a pattern. A comment is free to QUOTE a broken matcher in order to explain
+ * what a broken one looks like — the #107 guards do exactly that, and one of them went red
+ * against its own sweep on the first run, which is the same reason codeWithoutComments
+ * exists. But deleting the comment shifts every line after it, so a failure that says
+ * `foo.js:412` names the wrong line. Blanking with spaces instead keeps the prose out of the
+ * haystack while leaving every line number and column exactly where it was.
+ *
+ * Takes the source as a STRING rather than a path, because callers with a line-numbered
+ * report already hold the text they read.
+ *
+ * @param {string} source the file's contents
+ * @returns {string} the same text with comment characters replaced by spaces
+ */
+export function codeWithCommentsBlanked(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/(^|\s)\/\/[^\n]*/g, (match, lead) => lead + blank(match.slice(lead.length)))
+}

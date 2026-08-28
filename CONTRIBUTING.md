@@ -50,6 +50,40 @@ is sticky for the rest of the file. Never rely on a variable the invoking shell
 happens to export. The contract is asserted by `test/hermetic-env.test.js`,
 `test/hermetic-env.qa.test.js` and `test/hermetic-env.idempotence.qa.test.js`.
 
+### Source hygiene: no raw control bytes (#107)
+
+No file committed here may carry a raw C0 control byte (TAB, LF and CR excepted)
+or DEL. Plenty of tests need those bytes — most of the suite's ANSI assertions do —
+so write them as **escapes**: `\u001B` in a string, template or regex literal, or
+`String.fromCharCode(27)` when a sequence is assembled into a `RegExp`. Both
+spellings are byte-identical to the raw byte at runtime, so what the code under
+test receives is unchanged; only what a reader and a search tool can see changes.
+
+Two bytes are worth naming, because neither cost is obvious. A raw **U+0000
+(NUL)** makes `file` classify the source as `data`, and grep, `rg` and `git grep`
+then skip the file — silently, without so much as a line count, while Node reads
+it perfectly well. #107 found two committed test files in exactly that state: the
+coverage existed and nothing could find it. A raw **U+001B (ESC)** stays
+greppable but is a live escape sequence, so `cat`-ing or `less`-ing the file
+recolours the reader's terminal from that line on.
+
+The rule is **asserted** rather than merely written down, because it *was* written
+down — in `lib/commands/doctor.identity-box.test.js` — and violated twice anyway,
+and the failure is silent by construction: the suite stays green while a whole test
+file leaves the searchable repo. The guard's scope is **what `git ls-files`
+tracks**, which is a rule rather than a hand-maintained skip list: a `coverage/`
+report, a `.DS_Store`, or the `.env.local` the README asks you to create is not
+authored source and never reaches the sweep, and nothing under `.git/` or
+`node_modules/` needs excusing. The cost of that choice, stated so it does not
+surprise you: a new file is out of scope until it is staged. It also **fails
+closed** — a missing `git`, a directory that is not a repository, or an empty file
+list throws rather than reporting a clean sweep, since a guard that quietly scans
+nothing is the same blind spot #107 is about. NUL is forbidden in **every** tracked
+file; ESC and the rest of the class are checked in `.js`. The contract is asserted
+by `test/source-control-bytes.test.js` and `test/source-control-bytes.qa.test.js`
+(which plants offenders and proves the detector actually fires), both driving the
+one shared detector in `test/helpers/source-control-bytes.js`.
+
 ## Pull requests
 
 - Branch off `main` and open a PR against `main`.

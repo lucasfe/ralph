@@ -181,7 +181,11 @@ describe('decodeGif — headers and colour tables', () => {
       height: 1,
       palette: QUAD,
       frames: [{ width: 1, height: 1, indices: [0] }],
-      signature: 'PNG\r\n',
+      // PNG's magic, SUB spelled `\u001A` rather than embedded — a raw control byte
+      // makes `file` call this suite `data` and takes it out of grep (#107). The bytes
+      // handed to decodeGif are unchanged; what matters here is only that they are
+      // not GIF87a/GIF89a.
+      signature: 'PNG\r\n\u001A',
     })
     expect(() => decodeGif(bytes)).toThrow(/signature/i)
   })
