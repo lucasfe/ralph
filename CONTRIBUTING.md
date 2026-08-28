@@ -163,7 +163,7 @@ on every run — or as much of that as `RALPH_BANNER` asked for (see
 [the README](./README.md#quick-start)). Since #75 `ralph doctor` heads its report
 with that same box, and since #76 `ralph status` heads its human view with it
 too — out of the same composer and the same setting, and with none of the pixels
-in either: three commands share this half, one shares both. Eight published
+in either: three commands share this half, one shares both. Nine published
 modules under `lib/` back the two halves and the setting that governs them, the
 first of them fed by a generator that is not published at all:
 
@@ -233,8 +233,9 @@ first of them fed by a generator that is not published at all:
   from **resolved facts**. Pure in the same way and for the same reason — no
   `process`, no clock, no fs, and no cache read of its own — so `ralph start`
   resolves every fact on the impure side (the installed version, the working
-  directory, the cached `latest_version`, and the newest release's changelog
-  bullets) and hands them over. Injectable options carry the rest: `columns`,
+  directory, the cached `latest_version`, the newest release's changelog
+  bullets, and since #69 the agent, its model and that model's *provenance*, the
+  context window, the task source and the repo slug) and hands them over. Injectable options carry the rest: `columns`,
   defaulting to `stdout?.columns`; `readCache`, defaulting to `readVersionCache`;
   and `readChangelog`, defaulting to `readChangelogEntries`, with a `changelogFs`
   beneath it so the default wiring is testable too. The last two are seams for the
@@ -247,12 +248,31 @@ first of them fed by a generator that is not published at all:
   `whatsNew` entry in that object with the signature untouched. #75 added the
   second caller on that same seam: `ralph doctor` passes `os`, `agent` and
   `cachedLatest` and gets the `os` / `agent` / `cached` rows for them, while
-  `ralph start` passes none of the three and is unchanged to the byte — because
+  `ralph start` passed none of the three and was unchanged to the byte — because
   each of those rows is **gated on its fact being present**, unlike every older
   row, which says `unknown` when it was not given one. A caller that never asked
   a question has no answer to report, and `os      unknown` in a pasted bug
   report would send a reader hunting a platform-detection bug that does not
-  exist. `cachedLatest` is deliberately a separate fact from `latestVersion`
+  exist. #69 then landed five more facts on the same seam and made `agent` the
+  one both callers pass, and the gate is what kept `doctor`'s box byte-identical
+  regardless: `agent` is no longer a lone fact but a **sentence** built from
+  three (`agent`, `model`, `provenance`), and a caller that passes no
+  `provenance` gets the bare `claude` row it has printed since #75 — decided
+  *first*, before anything about the model. Keep that ordering. `doctor` is a
+  diagnostic about an **installation**, and `claude — model resolves at first
+  run` in a pasted bug report would be a sentence about a run `doctor` never
+  looked at. The wording per provenance lives here rather than in the resolver
+  (`MODEL_SUFFIX`, and `MODEL_UNKNOWN` for the tag that names no model), and it
+  is deliberately not *imported* from `banner-model.js` — this module's import
+  list is one line long on purpose — so `banner-compose.test.js` holds the two
+  together instead: it enumerates `MODEL_PROVENANCE` and demands a **distinct**
+  sentence for every tag in it, which makes a fourth tag with no wording a red
+  test rather than a row nobody wrote. `context` is the one **numeric** row in
+  the box, which is why it has a gate of its own (`textOr` is the wrong one for a
+  number, and coercing one to check it would run a hostile `valueOf` on a value
+  that came out of a JSON log); it also fixes the label gutter at eight, since
+  `context` is the longest label this box will ever draw.
+  `cachedLatest` is deliberately a separate fact from `latestVersion`
   rather than a second reading of it: `latestVersion` is advice and draws a row
   only when there is something to act on, `cachedLatest` is a *reading of the
   cache* and always draws one, including the "nobody has checked yet" state a
@@ -280,6 +300,49 @@ first of them fed by a generator that is not published at all:
   pre-banner one, and an assertion about what a non-TTY run does *not* print has to
   name the sprite rather than ANSI in general (`expectNoSprite` in
   `lib/commands/start.banner.qa.test.js`, whose comment says why).
+- `lib/banner-model.js` — the two facts the box cannot simply be *handed* (#69):
+  which model the agent will use, and which repository the loop will read issues
+  from. Every other row is a lookup the caller already holds; these two are
+  questions, and they have answers of different quality — which is the whole
+  reason `resolveBannerModel` returns a **`provenance`** alongside the model, and
+  why `MODEL_PROVENANCE` (`last-run` / `configured` / `unknown`) is exported and
+  frozen. That tag is a **correctness requirement, not a garnish**: the box must
+  never state a model with more confidence than its source warrants, so if you add
+  a fourth kind of evidence, add a sentence for it in `banner-compose.js` in the
+  same commit — the spec next door will tell you if you forget. Pure and total in
+  the same way the composer is, and asserted so by a static read: no clock, no
+  `process`, no fs. Both files it reasons about arrive as **text**, which is what
+  makes every case in its spec a string literal rather than a fixture on disk (see
+  [test hermeticity](#test-hermeticity-41)) — there is no `.ralph` directory, no
+  git remote and no previous run anywhere in that suite. Four rules worth keeping.
+  **The log answers for Claude, the config answers for Codex:** Codex's stream
+  carries no model id, so what the log holds for a Codex run is the configured
+  `RALPH_CODEX_MODEL` one run staler, and consulting it would also let a log full
+  of Claude runs put a Claude model on a Codex row the first time a project
+  switched agents. **The newest parseable event decides, full stop:** an event
+  with no model, or one belonging to a *different* agent, answers `unknown` rather
+  than sending the scan further back, because an older run's model is not a fact
+  about the last run and tagging it `last-run` would be exactly the overstatement
+  the tag exists to prevent. Do not "improve" that into a search. A truncated or
+  garbage trailing line is skipped, which is the normal state of a file the loop
+  appends to with `>>` and can be killed mid-write. **The window map is imported,
+  not copied:** `resolveContextWindow` comes from `lib/issue-event.js`, the very
+  function that resolves `context_window` when an event is *written*, so the box
+  and the log cannot come to disagree about the same model id — a second prefix map
+  here is how they would. **And it never throws**, on the same grounds as the rest
+  of the banner: every input is type-checked rather than coerced, because
+  `String(value)` on a hostile bag runs its `toString` and these values come from
+  an ambient environment and two files nobody reads as bytes. `resolveBannerRepo`
+  is the same discipline applied to a grammar: `GH_REPO` decides when it is set
+  (it decides for `gh`, so it decides for the loop), otherwise `origin`'s url out
+  of `.git/config`, parsed line by line rather than with one whole-file regex — and
+  a bracket line the parser cannot read **closes** the origin section rather than
+  leaving it open, because attributing a fork's `[remote "upstream"]` keys to
+  `origin` would put a repository on screen that the loop is not about to read. A
+  slug it cannot resolve is `null`, which the composer's gate turns into no row;
+  `unknown` would be a claim, and a missing row is not. #69 changed **nothing**
+  about the telemetry: no new event field, no changed event shape — the box is a
+  reader of `issues.jsonl` and never a writer of it.
 - `lib/changelog.js` — `CHANGELOG.md` **as data**, for the box's what's-new rows:
   text in, ordered release entries out, and nothing else. Pure, and it takes a
   *string* rather than a path, so every shape it has to survive (an empty file, a
@@ -333,8 +396,15 @@ first of them fed by a generator that is not published at all:
   `ralph.config.sh` (text-parsed with `parseConfigVar`, never sourced) at the **top**
   of `startCommand`, above the picture that file decides, and puts the warning on
   stderr behind the same `⚠️` prefix `ralph init` uses for a mistyped `RALPH_AGENT`.
-  Only the read moved — `TASK_SOURCE` and `RALPH_DIGEST_INTERVAL` are still derived at
-  the preflight step that uses them, out of that same one read. Since #75 and #76
+  Only the read moved, and #69 moved exactly one derivation up after it: `TASK_SOURCE`
+  is now resolved beside the banner's other facts, because the box *names* it (the
+  `source` row), and the preflight step that spends it reads that same binding rather
+  than resolving a second one. `RALPH_DIGEST_INTERVAL` is still derived at the step that
+  uses it, out of that same one read, and #69's three knobs — `RALPH_AGENT`,
+  `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — are text-parsed out of it too, at the
+  box's call site. All of those take the **file over the environment**, matching the loop,
+  which sources `ralph.config.sh` with `set -a`; `RALPH_BANNER` is the one exception in
+  the other direction and the paragraph above is why. Since #75 and #76
   this resolver has **three** callers, reading different parts of one answer:
   `lib/commands/doctor.js` does the same text-parsed read of the same file with the
   same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
@@ -488,17 +558,45 @@ to catch path/template bugs that unit tests can't surface.
      prefixed onto the same command animates anyway, because the environment wins
      over the file here — the opposite way round to `TASK_SOURCE`, and the one thing
      about this knob a contributor is most likely to assume backwards.
-   - The box's **`update` row is the one line that depends on machine state**: it is
-     printed only when the global update-check cache already holds something newer
-     than the tarball you just installed, so on a machine where nothing has ever
-     checked there is nothing to see and that is not a failure. Resize the window
+   - The box's **`update` row depends on machine state**, and since #69 it is not the
+     only row that does (see the next item): it is printed only when the global
+     update-check cache already holds something newer than the tarball you just
+     installed, so on a machine where nothing has ever checked there is nothing to see
+     and that is not a failure. Resize the window
      too, and walk the whole ladder: under 60 columns the box must narrow and clip
      its values with `…`, never wrapping a line or running its right border ragged;
      under 44 it must drop the border entirely and print bare `label   value` rows;
      and under 26 the sprite must go as well — whole, not clipped — leaving those
      bare rows behind it. No width may wrap a line, tear a row, or lose the version.
-     And `RALPH_NO_UPDATE_CHECK=1 ralph start` must leave the box with its title,
-     its `cwd`, and its what's-new rows alone.
+     And `RALPH_NO_UPDATE_CHECK=1 ralph start` must leave every other row of the box —
+     its title, `agent`, `context`, `cwd`, `source`, `repo` and its what's-new rows —
+     alone.
+   - The **`agent`, `context`, `source` and `repo` rows** (#69), which are the rows a
+     hermetic suite can only assert against injected text. On the **first**
+     `ralph start` in a fresh project there is no `.ralph/metrics/issues.jsonl` yet, so
+     the row must read ``agent   claude — model resolves at first run`` and there must
+     be **no `context` row at all** — never `claude — null`, never `context unknown`,
+     and never a model id guessed from anywhere. Run it again once an issue has
+     completed and the row must name the model that actually ran, tagged `(last run)`,
+     with a `context` row holding that model's window (`1M tokens` for opus or sonnet).
+     The check that it is *evidence* and not a default: `tail -1
+     .ralph/metrics/issues.jsonl | jq .model,.context_window` must print exactly what
+     the two rows say. On a **Codex** project (`RALPH_AGENT=codex` with a
+     `RALPH_CODEX_MODEL` set) the row must instead read
+     ``codex — gpt-5-codex (configured)`` on the very first start with no run behind
+     it, and must **not** turn into a Claude model id in a repo that has Claude runs in
+     its log — that is the confusion the `configured` path exists to prevent, and it is
+     only reproducible on a real project that switched agents. `source` must match
+     `TASK_SOURCE`, and `repo` must be `origin`'s `owner/name`. Two deliberate
+     asymmetries to confirm rather than file: in a **folder-mode** project there is
+     **no `repo` row whatever** (not an empty one), and `GH_REPO=someone/else ralph
+     start` must print `someone/else` even though `origin` says otherwise, because that
+     is what every `gh` call in the loop is about to read. A checkout with no `origin`
+     — or one whose `origin` is a local path — must print **no `repo` row** rather than
+     `unknown`. Last, the thing only a terminal shows: the box must land **as fast as
+     it always did**. That slug is read from `.git/config` on purpose and `gh repo
+     view` is deliberately never called; if the box ever pauses before it appears,
+     somebody has put a network round trip in front of the first paint.
    - The box's **`new` rows** are read from the `CHANGELOG.md` inside the tarball you
      just installed, and this step is the only place that read happens for real — the
      hermetic suite injects an fs and never touches the file. They must show the three
