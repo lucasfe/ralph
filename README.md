@@ -58,7 +58,7 @@ In a git repo on the branch you want Ralph to work from:
 
 ```bash
 ralph init      # one-time: detect stack, write config, slash command, gitignore
-ralph doctor    # verify required deps are on PATH, and report installed vs cached latest
+ralph doctor    # verify required deps are on PATH, under an identity box you can paste
 ralph start     # launch the loop in a detached tmux session
 ralph status    # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend, digest
 ralph digest    # narrate in prose what the loop is doing, and log it to .ralph/digest.log
@@ -82,24 +82,53 @@ coding-agent picker (see below), and even that is skipped when a
 `--agent` flag is passed or stdin is not a TTY (it defaults to `claude`).
 
 `ralph doctor` checks the deps required by the agent and task source you
-configured, and prints one version line directly under its header:
-`version: 0.17.0 — cached latest: 0.18.0 — update available (run npm i -g
-@lucasfe/ralph)` when the cache holds something newer, `version: 0.17.0 —
-cached latest: 0.17.0 — up to date` when it holds the version you already have
-(or an older one — a local build ahead of the registry is not stale), and
-`version: 0.17.0 — cached latest: unknown (no update check cached yet)` when
-nothing usable is cached. The "latest" half is **read** from the same global
-`update-check.json` the weekly check writes, whether that check ran under
-`ralph start` or under a scheduled `ralph cycle` (see
-[Updating Ralph](#updating-ralph)): `doctor` never queries the registry,
-never writes that file, and applies neither of the two 7-day windows it holds —
-it reports whatever the last check left behind, however old, and running it
-neither refreshes the check nor spends the week's update question. That keeps
-it usable offline and on a half-broken install, which is when you reach for
-it. The line is **additive output only** — `doctor`'s exit code still answers
-for the deps alone, so a wrapper or CI step gating on `ralph doctor` does not
-start failing the day a release lands — and it is printed **above** the dep
-report, so it survives the early exit on a missing required dep.
+configured, and heads its report with the same **identity box** `ralph start`
+opens with — described a few paragraphs down, and here carrying the facts a
+diagnostic is asked for, in one block to paste into a bug report:
+
+```
+╭─ ralph 0.22.0 ───────────────────────────────────────────╮
+│ os      mac                                              │
+│ agent   claude                                           │
+│ cached  0.23.0 available — run `ralph update`            │
+│ cwd     /Users/you/repos/your-project                    │
+╰──────────────────────────────────────────────────────────╯
+```
+
+The installed version is the box's **title**; `os` is the platform Ralph
+detected, `agent` is the agent whose CLI it validated, and `cwd` is where you
+ran it. The `cached` row answers "am I current?", and it has three readings:
+``0.23.0 available — run `ralph update` `` (yellow) when the cache holds
+something newer, `0.22.0 — up to date` (green) when it holds the version you
+already have — or an older one, since a local build ahead of the registry is not
+stale — and `unknown (no update check cached yet)` when nothing usable is
+cached. That number is **read** from the same global `update-check.json` the
+weekly check writes, whether that check ran under `ralph start` or under a
+scheduled `ralph cycle` (see [Updating Ralph](#updating-ralph)): `doctor` never
+queries the registry, never writes that file, and applies neither of the two
+7-day windows it holds — it reports whatever the last check left behind, however
+old, and running it neither refreshes the check nor spends the week's update
+question. That keeps it usable offline and on a half-broken install, which is
+when you reach for it.
+
+The box is **additive output only** — `doctor`'s exit code still answers for the
+deps alone, so a wrapper or CI step gating on `ralph doctor` does not start
+failing the day a release lands — and it is printed **above** the dep report, so
+it survives the early exit on a missing required dep. It is the box and nothing
+else: no sprite, no animation and no cursor movement at any setting, because
+this is output people pipe, quote and diff. A mistyped `RALPH_AGENT` still gets
+its one warning line, printed directly **under** the box whose `agent` row it
+explains.
+
+[`RALPH_BANNER`](#configuration-reference) governs this box too, read from the
+same `ralph.config.sh` line and overridden by the same environment variable
+`ralph start` obeys (the environment wins): `RALPH_BANNER=off ralph doctor`
+prints no box and not one blank line, so the output starts at the first dep
+line, and on that path the update-check cache is not read at all. One difference
+from `ralph start` is deliberate: a value `doctor` does not recognize falls back
+to the full box **silently**, with no warning on either stream, because wording
+one would cost this command a dependency it is built not to have. `ralph start`
+is where that typo is reported.
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
@@ -183,6 +212,13 @@ default rather than degrading, so a pipe (where there is no column count to read
 gets the box it always did. A fact Ralph could not read (the version, on an
 install with an unreadable `package.json`) reads `unknown` rather than being
 guessed at.
+
+`ralph doctor` heads its own report with this same box — same composer, same
+width ladder, same `RALPH_BANNER` setting — carrying the rows a diagnostic needs
+(`os`, `agent`, `cached`) where `ralph start` carries `update` and the what's-new
+bullets. Which rows a box holds is a question of which facts the command
+resolved, so neither command grows the other's; see the `ralph doctor` paragraph
+above for that box and its `cached` row.
 
 How much of that banner you get is the one thing about it that is yours to
 choose. [`RALPH_BANNER`](#configuration-reference) in `ralph.config.sh` takes
@@ -487,8 +523,9 @@ To switch an existing project, edit `RALPH_AGENT` in `ralph.config.sh` by hand
 in `.ralph/state.json` and re-runs config validation once under the new agent —
 so the switch self-heals even though the rest of the config is unchanged.
 `ralph doctor`
-reports which agent it validated (`Ralph doctor — platform: … — agent: codex`)
-and checks that agent's CLI — Claude needs `claude`; Codex needs `codex`.
+reports which agent it validated in the `agent` row of the identity box it opens
+with (`agent   codex`) and checks that agent's CLI — Claude needs `claude`;
+Codex needs `codex`.
 
 Nothing else in `ralph.config.sh` changes between agents. The two agents share
 the same team roles, triage tiers, PR flow, and telemetry; only the
@@ -851,8 +888,8 @@ prints the same one-line notice, on stdout — which launchd captures in
 one registry query and one question a week between them, not six a day — and
 being asked by one of the two commands this week means the other will not ask
 again until the window rolls over. `ralph doctor` is the exception that draws
-from neither: it *reads* that same file for its `cached latest:` line and
-stamps neither window, so running `doctor` never spends the week's question.
+from neither: it *reads* that same file for the `cached` row of its identity box
+and stamps neither window, so running `doctor` never spends the week's question.
 
 A scheduled cycle is **notice-only**: launchd attaches no terminal, so the
 question below is never asked and its window is never spent. **Ralph never
@@ -947,15 +984,18 @@ project entirely, so deleting `.ralph/state.json` or the whole `.ralph/`
 directory resets **neither** window. `.ralph/state.json` does still carry a
 `last_seen_release` field (the state writer requires it), but nothing in the
 update path reads it any more: it is a leftover of the old per-release dedupe,
-not a knob. `ralph doctor` reads the update-check file for its `cached latest:`
-line, and only reads it: it makes no registry query and stamps neither window,
-so running `doctor` neither refreshes the weekly check nor consumes the week's
-question. The `update` row of the identity box
+not a knob. `ralph doctor` reads the update-check file for the `cached` row of
+its identity box, and only reads it: it makes no registry query and stamps
+neither window, so running `doctor` neither refreshes the weekly check nor
+consumes the week's question. The `update` row of the identity box
 [`ralph start`](#quick-start) opens with reads it the same way — one field,
 `latest_version`, no query and no stamp, so it can never move either window — with
 one difference from `doctor`: it is silenced by
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables), and on that path the file is
-not opened at all.
+not opened at all. `doctor`'s row has a switch of its own instead, and it is the
+one that removes the whole box: under
+[`RALPH_BANNER=off`](#configuration-reference) there is no row to fill, so that
+run does not open the file either.
 
 ## What survives an update
 
@@ -988,7 +1028,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | Variable              | Default                              | Purpose                                                                 |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
-| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. |
+| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report, whether that command prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` takes the identical fallback **silently**: the default box, and not a word about the typo on either stream, because wording one would cost the command a dependency it is deliberately built without — so `ralph start` is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` reads the box half of this setting and nothing else: it draws no sprite and no animation at any value, `full` and `static` are the same picture there, and `off` means no box and not one blank line where it would have been. |
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
@@ -1038,9 +1078,9 @@ command line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, both the interactive update prompt and the `update` row of the identity box [`ralph start`](#quick-start) opens with, which is served from that same cache and therefore does not read it either. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate `ralph doctor`'s version line, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the line reports `cached latest: unknown`. That the box's row reads that very same file and *is* gated is the deliberate half of the distinction: `doctor`'s line is a diagnostic a user asked for, while the row is the same nagging this variable exists to switch off, printed above every single run. |
-| `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line — the one-second splash with it, so a run under this variable spends no time and writes no cursor movement on an animation nobody would have seen. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box under the sprite — that is facts rather than decoration and prints on every run bar one an explicit [`RALPH_BANNER=off`](#configuration-reference) silenced — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. |
-| `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally. |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, both the interactive update prompt and the `update` row of the identity box [`ralph start`](#quick-start) opens with, which is served from that same cache and therefore does not read it either. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate the `cached` row of the identity box [`ralph doctor`](#quick-start) heads its report with, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the row reads `unknown (no update check cached yet)`. That `start`'s `update` row reads that very same file and *is* gated is the deliberate half of the distinction: `doctor`'s row is a diagnostic a user asked for, while `start`'s is the same nagging this variable exists to switch off, printed above every single run. The switch that does silence `doctor`'s row is [`RALPH_BANNER=off`](#configuration-reference), which takes the whole box with it. |
+| `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line — the one-second splash with it, so a run under this variable spends no time and writes no cursor movement on an animation nobody would have seen. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box under the sprite — that is facts rather than decoration and prints on every run bar one an explicit [`RALPH_BANNER=off`](#configuration-reference) silenced — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. The box [`ralph doctor`](#quick-start) heads its report with is coloured by picocolors' rule rather than this presence one, exactly like the ✓ / ✗ marks under it — so `NO_COLOR=1 ralph doctor` is plain from top to bottom, a piped `ralph doctor` emits not one escape byte *unless* `FORCE_COLOR` or `CI` is set (picocolors keeps colour on a non-TTY for both — its rule, not this one, and it paints the ✓ / ✗ marks and the `cached` row alike), and `NO_COLOR= ralph doctor` on a terminal keeps the colour on both the marks and the box's `cached` row. |
+| `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run of `ralph start` **or** of [`ralph doctor`](#quick-start), which heads its report with the same identity box: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally — in `ralph start`. `ralph doctor` falls back the same way and **says nothing at all**: the two commands share the knob and its precedence, not the warning, so a typo you never see reported here is one `ralph start` will name for you. `full` and `static` are indistinguishable in `doctor`, which draws no sprite at any value. |
 | `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
@@ -1318,21 +1358,25 @@ silences nothing: the windows live in the global cache, and the
 `last_seen_release` field still present in that state file no longer drives
 update notices — it is not a knob to reach for.
 
-**`ralph doctor` reports `cached latest: unknown`.** — Nothing usable is
+**`ralph doctor`'s `cached` row reads `unknown (no update check cached
+yet)`.** — Nothing usable is
 in the update-check cache yet, which is the normal state on a fresh
 install: that file is written only by the weekly check — which runs in
 `ralph start` and in `ralph cycle`, and nowhere else — and `doctor`
 deliberately makes no registry query of its own. Run `ralph start` once, or
-let the next scheduled cycle run, and the line fills in on the next
+let the next scheduled cycle run, and the row fills in on the next
 `doctor`; to learn the latest version right now,
 `ralph update` asks the registry directly (and installs nothing when you
-are already current). The line also reads `unknown` when the cache file
+are already current). The row also reads `unknown` when the cache file
 is unreadable or hand-mangled into something that is not a version, and
 it stays `unknown` for as long as
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables) is set, because the
 check that would populate it never runs. Either way it is a missing
 answer, never a failure: `doctor`'s exit code is decided by the dep
-report alone.
+report alone. The row names the question it could not answer rather than
+printing a bare `unknown` beside a version number, so a pasted report
+cannot be misread as "the installed version is unknown" — that fact is the
+box's title, and it says `ralph unknown` when it is the one missing.
 
 **No issues are picked up.** — Check the queue filter Ralph uses:
 `state:open -label:claude-working -label:claude-failed -label:do-not-ralph`.

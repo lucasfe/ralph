@@ -126,9 +126,11 @@ lockstep.
 `ralph start` plays a one-second pixel-sprite splash as its first output on a
 colour terminal, settles it on a still frame, and prints an identity box under it
 on every run — or as much of that as `RALPH_BANNER` asked for (see
-[the README](./README.md#quick-start)). Eight published modules under `lib/` back
-the two halves and the setting that governs them, the first of them fed by a
-generator that is not published at all:
+[the README](./README.md#quick-start)). Since #75 `ralph doctor` heads its report
+with that same box, out of the same composer and the same setting, and with none
+of the pixels: two commands share this half, one shares both. Eight published
+modules under `lib/` back the two halves and the setting that governs them, the
+first of them fed by a generator that is not published at all:
 
 - `lib/sprite-data.js` — **GENERATED. Do not edit by hand.** It is the committed
   asset: a palette plus one row-per-pixel grid per frame. Regenerate it, never
@@ -207,7 +209,22 @@ generator that is not published at all:
   slices add **rows, not parameters**: `composeBanner`'s three arguments (`facts`,
   `width`, `capabilities`) are the seam, and a new fact belongs in the object
   `start` already builds — which is exactly how #70's what's-new rows landed, as a
-  `whatsNew` entry in that object with the signature untouched. The `width`
+  `whatsNew` entry in that object with the signature untouched. #75 added the
+  second caller on that same seam: `ralph doctor` passes `os`, `agent` and
+  `cachedLatest` and gets the `os` / `agent` / `cached` rows for them, while
+  `ralph start` passes none of the three and is unchanged to the byte — because
+  each of those rows is **gated on its fact being present**, unlike every older
+  row, which says `unknown` when it was not given one. A caller that never asked
+  a question has no answer to report, and `os      unknown` in a pasted bug
+  report would send a reader hunting a platform-detection bug that does not
+  exist. `cachedLatest` is deliberately a separate fact from `latestVersion`
+  rather than a second reading of it: `latestVersion` is advice and draws a row
+  only when there is something to act on, `cachedLatest` is a *reading of the
+  cache* and always draws one, including the "nobody has checked yet" state a
+  diagnostic must not swallow. Keep them apart, or `ralph start` grows a row and
+  `doctor` loses a verdict. `os` rather than `platform` is arithmetic, not taste:
+  the label gutter is eight columns and `padEnd` does not grow, so `platform`
+  would print `platformmac`. The `width`
   argument is the one that came home to roost: `bannerLayout(width)` is the whole
   degradation ladder in one pure, total function — box from `BOX_MIN_WIDTH` (44)
   up, sprite from `SPRITE_MIN_WIDTH` (26) up, and any width that cannot be used at
@@ -278,7 +295,17 @@ generator that is not published at all:
   of `startCommand`, above the picture that file decides, and puts the warning on
   stderr behind the same `⚠️` prefix `ralph init` uses for a mistyped `RALPH_AGENT`.
   Only the read moved — `TASK_SOURCE` and `RALPH_DIGEST_INTERVAL` are still derived at
-  the preflight step that uses them, out of that same one read.
+  the preflight step that uses them, out of that same one read. Since #75 this
+  resolver has **two** callers, reading different parts of one answer:
+  `lib/commands/doctor.js` does the same text-parsed read of the same file with the
+  same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
+  share a name — but reads `box` alone. It passes **no `isTTY`**, so no arrangement of
+  its arguments can authorise a sprite, and it **drops the warning deliberately**:
+  wording one safely means `oneLine` from `lib/digest.js`, which imports execa, and
+  `doctor` is the command people run when things are already broken — it takes no exec
+  dependency and opens no socket, and a QA spec walks its whole import graph to keep it
+  that way. Do not "fix" that silence into a warning; a typo costs a `doctor` user
+  nothing, and `ralph start` names it.
 
 **The committed art is a placeholder.** This repository carries no Wreck-It Ralph
 GIF and never did — #66 made the source a developer-supplied *input*, which is why
@@ -342,14 +369,26 @@ to catch path/template bugs that unit tests can't surface.
 4. **Run `ralph doctor`** and confirm that:
    - The dep summary is correct for the OS (`brew install ...` on
      macOS, `apt install ...` on Linux/WSL).
-   - The version line under the header names the tarball version you
-     just installed. Its `cached latest:` half comes from the global
-     update-check cache, which is written by the weekly check in
-     `ralph start` and in `ralph cycle` — so it reads `unknown (no update
-     check cached yet)` on a machine where neither has run, and reads a
-     real version on a machine with scheduled cycles installed. Both are
-     expected here; neither is a failure. `doctor` must return immediately
-     either way: it makes no registry query.
+   - The **identity box** heads the output (#75) — above the dep report and
+     above the abort on a missing required dep — with the tarball version you
+     just installed as its title and `os`, `agent`, `cached` and `cwd` rows
+     under it. No sprite, no animation and no cursor movement belong anywhere
+     in it, at any `RALPH_BANNER` value, and a mistyped `RALPH_AGENT` puts its
+     warning line *under* the closing `╰──╯`.
+   - The `cached` row comes from the global update-check cache, which is
+     written by the weekly check in `ralph start` and in `ralph cycle` — so it
+     reads `unknown (no update check cached yet)` on a machine where neither
+     has run, and a real version on a machine with scheduled cycles installed:
+     `<version> — up to date`, or ``<version> available — run `ralph update` ``
+     when the cache is ahead of the tarball. All three are expected here; none
+     is a failure. `doctor` must return immediately either way: it makes no
+     registry query.
+   - `RALPH_BANNER=off ralph doctor` prints **no box and not one blank line**,
+     so the output starts at the first dep line, while
+     `RALPH_BANNER=loud ralph doctor` prints the default box and **no warning
+     on either stream** — the one place this knob behaves differently from
+     `ralph start`, and the thing a contributor is most likely to "fix" by
+     accident.
 5. **Pick a real open issue** in the project and run `ralph start`.
    Watch via the `tmux attach` command `ralph start` prints (the session is
    per-project: `ralph-<repo>-<hash>`). Verify that:
