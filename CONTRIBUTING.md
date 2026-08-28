@@ -125,9 +125,10 @@ lockstep.
 
 `ralph start` plays a one-second pixel-sprite splash as its first output on a
 colour terminal, settles it on a still frame, and prints an identity box under it
-on every run (see
-[the README](./README.md#quick-start)). Seven published modules under `lib/` back
-the two halves, the first of them fed by a generator that is not published at all:
+on every run — or as much of that as `RALPH_BANNER` asked for (see
+[the README](./README.md#quick-start)). Eight published modules under `lib/` back
+the two halves and the setting that governs them, the first of them fed by a
+generator that is not published at all:
 
 - `lib/sprite-data.js` — **GENERATED. Do not edit by hand.** It is the committed
   asset: a palette plus one row-per-pixel grid per frame. Regenerate it, never
@@ -181,8 +182,11 @@ the two halves, the first of them fed by a generator that is not published at al
   holds no gate either: `renderSplashFrames` answers with an empty list on a pipe,
   under `NO_COLOR` and below 26 columns, and an empty list plays *nothing* — not a
   sleep, not a cursor toggle, not one byte. `cycles: 1` is byte-for-byte the
-  unanimated banner, which is all the `RALPH_BANNER=static` mode of #74 — not shipped
-  yet, and not to be documented as if it were — will need from it. The two seams are
+  unanimated banner, and that is the whole of `RALPH_BANNER=static` (#74): the mode
+  resolver hands this module the same frames and a `cycles` of 1, and adds nothing
+  else here — no mode, no knob, no notion of `full`/`static`/`off`. Keep it that way;
+  a `RALPH_BANNER` read in this file would put the policy in two places, and the one
+  that matters is `lib/banner-mode.js`'s. The two seams are
   this module's defaults and **`start.js` forwards them rather than defaulting them
   itself**, so `sleep` and `signals` are named once, here, where the spec asserts them.
   The consequence for a contributor: any test that drives `startCommand` over a TTY
@@ -248,6 +252,33 @@ the two halves, the first of them fed by a generator that is not published at al
   there is no round trip in front of the first paint — and what makes
   `ralph changelog` answerable offline, from any directory. Keep it that way if
   you touch either file.
+- `lib/banner-mode.js` — the *policy* (#74), and the one module here that sits above
+  both halves: how much of all of the above the user actually asked for. One pure
+  function — `resolveBannerMode({ configured, override, isTTY, color, width })` —
+  returning the three decisions `start.js` needs (the effective `mode`, whether there
+  is a `sprite`, whether the `box` prints at all) plus a `warning` it does **not**
+  print, for the same reason `resolveAgent` returns one: a module that wrote to stderr
+  could not be asserted as a table, and only the caller knows which stream a warning
+  belongs on. Three rules worth keeping. **Precedence is environment over config**,
+  deliberately the opposite of the `TASK_SOURCE` line in `start.js`, because a task
+  source is a property of the repository while a banner is a property of one
+  invocation — do not "harmonize" the two, and do not describe precedence in the docs
+  as if one rule covered both. **The capability cap runs downward only:** `full` into
+  a pipe behaves as `off`, and no value, spelling or combination can put a sprite on a
+  non-terminal — the only hatch is still the programmatic one `sprite-banner.js`
+  documents. **And the cap stops at the sprite:** `mode` is what the terminal can
+  effect, `box` is what the user *requested*, which is why they are two answers rather
+  than one — a piped `ralph start` has printed the identity box since #68, and only an
+  explicit `off` may take it away. It holds no threshold of its own (`bannerLayout`
+  answers the sprite rung, exactly as `sprite-banner.js` asks it) and no opinion about
+  what the box *looks* like: an earlier draft of #74 resolved the frame here and passed
+  it down as a capability, which made two owners of one decision, so it is gone. The
+  impure half is the caller's, and it moved for this: `start.js` reads
+  `ralph.config.sh` (text-parsed with `parseConfigVar`, never sourced) at the **top**
+  of `startCommand`, above the picture that file decides, and puts the warning on
+  stderr behind the same `⚠️` prefix `ralph init` uses for a mistyped `RALPH_AGENT`.
+  Only the read moved — `TASK_SOURCE` and `RALPH_DIGEST_INTERVAL` are still derived at
+  the preflight step that uses them, out of that same one read.
 
 **The committed art is a placeholder.** This repository carries no Wreck-It Ralph
 GIF and never did — #66 made the source a developer-supplied *input*, which is why
@@ -346,6 +377,20 @@ to catch path/template bugs that unit tests can't surface.
      sprite while the ✅ / ⚠️ lines stay coloured — the divergence from
      picocolors is intentional, so this is the pass condition, not a bug — and the
      box must survive it too, losing only the yellow on its `update` row.
+   - **The three `RALPH_BANNER` modes** (#74), which are the other thing only a real
+     terminal can show you. `RALPH_BANNER=static ralph start` must land the settled
+     frame **once**, with no visible redraw and no flicker, and the box under it — the
+     same picture `full` ends on, arrived at without the second of animation.
+     `RALPH_BANNER=off ralph start` must print **nothing** above its first preflight
+     line: no sprite, no box, not one blank line, and the rest of the run unchanged.
+     `RALPH_BANNER=loud ralph start` must draw the **full** banner anyway and put one
+     `⚠️` line on stderr — so `RALPH_BANNER=loud ralph start 2>/dev/null` shows the
+     banner and no warning at all, which is the check that stdout stayed clean. Then
+     write `RALPH_BANNER="off"` into the project's `ralph.config.sh` and confirm both
+     directions: a bare `ralph start` draws nothing, while a `RALPH_BANNER=full`
+     prefixed onto the same command animates anyway, because the environment wins
+     over the file here — the opposite way round to `TASK_SOURCE`, and the one thing
+     about this knob a contributor is most likely to assume backwards.
    - The box's **`update` row is the one line that depends on machine state**: it is
      printed only when the global update-check cache already holds something newer
      than the tarball you just installed, so on a machine where nothing has ever

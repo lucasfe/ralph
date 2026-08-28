@@ -18,6 +18,25 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # commits straight to DEV_BRANCH (no PR/merge). Unset falls back to "github".
 TASK_SOURCE="{{TASK_SOURCE}}"
 
+# How much of the startup banner `ralph start` draws. "full" (the default) plays the
+# one-second sprite splash, settles on its final frame, and prints the identity box
+# under it. "static" draws the same picture with none of the animation — the settled
+# frame, once, in a single write. "off" prints nothing at all, not even the box. Unset
+# or empty means "full"; an unrecognized value also means "full" and warns on stderr,
+# so a typo here costs you a line of output and never the run.
+#
+# The terminal only ever caps this DOWNWARD. A pipe, a launchd log, a NO_COLOR run or a
+# window narrower than the sprite draws no sprite whatever this says — and still prints
+# the box, because a log is exactly where "which version, which directory" is the
+# question being asked. Only an explicit "off" takes the box away.
+#
+# An environment variable of the same name WINS over this line, which is deliberately
+# the opposite of TASK_SOURCE above: a task source is a property of the repo, a banner
+# is a property of one invocation. So `RALPH_BANNER=off ralph start` silences a single
+# run inside a wrapper script, a cron entry or a CI job without editing a committed
+# file that every other run in this repo shares.
+RALPH_BANNER="full"
+
 # Model id for the Codex agent (ignored when RALPH_AGENT=claude). Leave
 # unset/commented to let Codex use its configured default. Example:
 # RALPH_CODEX_MODEL="gpt-5-codex"
