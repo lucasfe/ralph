@@ -97,7 +97,14 @@ program
   .option('--json', 'Print the snapshot as a single JSON document instead of the human view')
   .action(async (opts) => {
     try {
-      const result = await statusCommand({ json: Boolean(opts.json) })
+      // #76: currentVersion titles the identity box above the report — the same
+      // pkg.version `start`, `cycle` and `doctor` get, so one source of truth answers
+      // "which Ralph printed this" wherever it is asked. Ignored under `--json`, whose
+      // document is unchanged by the banner in any mode.
+      const result = await statusCommand({
+        json: Boolean(opts.json),
+        currentVersion: pkg.version,
+      })
       process.exit(result.exitCode ?? 0)
     } catch (e) {
       if (e instanceof StatusAbort) {

@@ -60,7 +60,7 @@ In a git repo on the branch you want Ralph to work from:
 ralph init      # one-time: detect stack, write config, slash command, gitignore
 ralph doctor    # verify required deps are on PATH, under an identity box you can paste
 ralph start     # launch the loop in a detached tmux session
-ralph status    # what is Ralph on right now: run, task in flight, queue, pace, ETA, spend, digest
+ralph status    # under an identity box: run, task in flight, queue, pace, ETA, spend, digest
 ralph digest    # narrate in prose what the loop is doing, and log it to .ralph/digest.log
 ralph stop      # kill this project's tmux session when you want Ralph to halt
 ralph update    # update Ralph itself to the latest published version (any directory)
@@ -213,12 +213,15 @@ gets the box it always did. A fact Ralph could not read (the version, on an
 install with an unreadable `package.json`) reads `unknown` rather than being
 guessed at.
 
-`ralph doctor` heads its own report with this same box — same composer, same
-width ladder, same `RALPH_BANNER` setting — carrying the rows a diagnostic needs
-(`os`, `agent`, `cached`) where `ralph start` carries `update` and the what's-new
-bullets. Which rows a box holds is a question of which facts the command
-resolved, so neither command grows the other's; see the `ralph doctor` paragraph
-above for that box and its `cached` row.
+`ralph doctor` and `ralph status` head their own reports with this same box —
+same composer, same width ladder, same `RALPH_BANNER` setting — each carrying the
+rows it has facts for: `doctor` the ones a diagnostic needs (`os`, `agent`,
+`cached`), `status` the `cwd` under the version in the title and nothing else,
+where `ralph start` carries `update` and the what's-new bullets. Which rows a box
+holds is a question of which facts the command resolved, so no command grows
+another's; see the `ralph doctor` paragraph above for that box and its `cached`
+row, and the `ralph status` paragraph below for why that one is the shortest of
+the three.
 
 How much of that banner you get is the one thing about it that is yours to
 choose. [`RALPH_BANNER`](#configuration-reference) in `ralph.config.sh` takes
@@ -283,7 +286,44 @@ the install rather than from your project, so it costs no network call and needs
 no Ralph project to answer.
 
 `ralph status` answers "what is Ralph on right now?" without attaching to
-anything. It reads the run-state record the loop keeps at
+anything. Its human view opens with the same **identity box** `ralph start` and
+`ralph doctor` head their output with — the one described above — holding two
+facts and no more:
+
+```
+╭─ ralph 0.22.0 ───────────────────────────────────────────╮
+│ cwd     /Users/you/repos/your-project                    │
+╰──────────────────────────────────────────────────────────╯
+```
+
+That shortness is the decision. This is the readout people screenshot and paste,
+and a table carrying a pace, an ETA and a night's spend says everything about a
+run except **which** run it was and **where** — so the version in the title and
+the `cwd` row are exactly the two things the numbers below cannot say for
+themselves. There is deliberately no `update` row: "a newer Ralph is waiting" is
+advice for the two commands a reader can act on it from — `ralph start` offers to
+install it, `ralph doctor` reports what is cached — rather than for a view you
+refresh on a timer. There are no `os` / `agent` rows either: those belong to a
+command diagnosing a machine, and this one is reporting a run. And
+`cwd` is the **git toplevel** rather than your working directory, because that is
+the path the record, the cycle lock, `issues.jsonl` and `.ralph/digest.log` are
+all keyed on: the one line that takes a reader back to the run being reported,
+whichever subdirectory it was typed in.
+
+It is the box and nothing else — no sprite, no animation and no cursor movement
+at any setting, because this is output people pipe, quote and diff — and it is
+**additive output only**: one blank line separates it from the report, no line of
+the report changes because of it, and the exit code is still `0` in all four
+modes. [`RALPH_BANNER`](#configuration-reference) governs it exactly as it governs
+the other two, read from the same `ralph.config.sh` line and overridden by the
+same environment variable (the environment wins). `RALPH_BANNER=off` takes the
+blank line away with the box, so the report starts at its `▸ ralph` line byte for
+byte as it did before the box existed. And one mode prints no box whatever the
+setting says — **`never-run`**, because the box identifies a run and that mode has
+none, which is also what keeps it the readout that reads nothing at all,
+`ralph.config.sh` included.
+
+Under the box it reads the run-state record the loop keeps at
 `.ralph/run-state.json` and prints the run and how long it has been going, the
 task in flight and for how long, the **live** queue depth, the pace the run is
 holding, an ETA with a range and a wall-clock finish time, the spend so far and
@@ -300,7 +340,8 @@ happened. See
 [Run state](#run-state--ralphrun-statejson-and-ralph-status).
 `ralph status --json` prints that same snapshot as a single JSON document on
 stdout instead, so a shell prompt, a status line, or a notifier can read it
-without re-parsing the metrics file — see
+without re-parsing the metrics file. The identity box does not reach that path at
+all: no box, no blank line, one document, at every `RALPH_BANNER` value. See
 [Machine-readable output](#machine-readable-output--ralph-status---json).
 
 `ralph digest` answers the same question one resolution coarser: it asks a
@@ -1028,7 +1069,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | Variable              | Default                              | Purpose                                                                 |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
-| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report, whether that command prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` takes the identical fallback **silently**: the default box, and not a word about the typo on either stream, because wording one would cost the command a dependency it is deliberately built without — so `ralph start` is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` reads the box half of this setting and nothing else: it draws no sprite and no animation at any value, `full` and `static` are the same picture there, and `off` means no box and not one blank line where it would have been. |
+| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report and [`ralph status`](#quick-start)'s human view, whether either of those commands prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` and `ralph status` take the identical fallback **silently**: the default box, and not a word about the typo on either stream — `doctor` because wording one would cost it a dependency it is deliberately built without, `status` because it has no stderr channel at all, which is what keeps its `--json` output pipeable — so `ralph start` is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` and `ralph status` read the box half of this setting and nothing else: neither draws a sprite or an animation at any value, `full` and `static` are the same picture in both, and `off` means no box and not one blank line where it would have been — so `RALPH_BANNER=off ralph status` prints the report starting at its `▸ ralph` line, byte for byte as it did before the box existed. `ralph status` adds the only two exceptions in either direction: its `never-run` mode prints no box at any value, because the box identifies a run and that mode has none, and `ralph status --json` prints its one document at every value, since this setting reaches the human view alone. |
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
@@ -1080,7 +1121,7 @@ command line.
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, both the interactive update prompt and the `update` row of the identity box [`ralph start`](#quick-start) opens with, which is served from that same cache and therefore does not read it either. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate the `cached` row of the identity box [`ralph doctor`](#quick-start) heads its report with, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the row reads `unknown (no update check cached yet)`. That `start`'s `update` row reads that very same file and *is* gated is the deliberate half of the distinction: `doctor`'s row is a diagnostic a user asked for, while `start`'s is the same nagging this variable exists to switch off, printed above every single run. The switch that does silence `doctor`'s row is [`RALPH_BANNER=off`](#configuration-reference), which takes the whole box with it. |
 | `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line — the one-second splash with it, so a run under this variable spends no time and writes no cursor movement on an animation nobody would have seen. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box under the sprite — that is facts rather than decoration and prints on every run bar one an explicit [`RALPH_BANNER=off`](#configuration-reference) silenced — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. The box [`ralph doctor`](#quick-start) heads its report with is coloured by picocolors' rule rather than this presence one, exactly like the ✓ / ✗ marks under it — so `NO_COLOR=1 ralph doctor` is plain from top to bottom, a piped `ralph doctor` emits not one escape byte *unless* `FORCE_COLOR` or `CI` is set (picocolors keeps colour on a non-TTY for both — its rule, not this one, and it paints the ✓ / ✗ marks and the `cached` row alike), and `NO_COLOR= ralph doctor` on a terminal keeps the colour on both the marks and the box's `cached` row. |
-| `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run of `ralph start` **or** of [`ralph doctor`](#quick-start), which heads its report with the same identity box: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally — in `ralph start`. `ralph doctor` falls back the same way and **says nothing at all**: the two commands share the knob and its precedence, not the warning, so a typo you never see reported here is one `ralph start` will name for you. `full` and `static` are indistinguishable in `doctor`, which draws no sprite at any value. |
+| `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run of `ralph start`, of [`ralph doctor`](#quick-start) **or** of [`ralph status`](#quick-start) — the latter two head their reports with the same identity box: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally — in `ralph start`. `ralph doctor` and `ralph status` fall back the same way and **say nothing at all**: the three commands share the knob and its precedence, not the warning, so a typo you never see reported here is one `ralph start` will name for you (`status` could not report it if it wanted to — it writes to stderr in no mode, which is what keeps `ralph status --json` pipeable). `full` and `static` are indistinguishable in both, neither of which draws a sprite at any value. In `ralph status` this reaches the human view alone: `--json` prints its one document whatever the value, and the `never-run` mode prints no box at any value, having no run to identify. |
 | `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
@@ -1599,6 +1640,11 @@ or a reboot never got to write a terminal record); a terminal record is
 writes anything — `status` is a read-only view, so consulting a run can never
 disturb it.
 
+Three of the four are headed by the **identity box** described in
+[the quick start](#quick-start); `never-run` is the exception, having no run to
+identify. The readouts below are the report alone, as
+[`RALPH_BANNER=off`](#configuration-reference) prints it.
+
 A run can prove it is alive two ways, because the loop has two launchers:
 `ralph start` leaves a tmux session, and `ralph cycle` (including every scheduled
 run) holds the cycle lock instead. Both count — a draining scheduled run reads
@@ -1652,8 +1698,8 @@ narrated it either: the digest window is opened by `ralph start`, and a schedule
 An **`interrupted`** run prints the same six lines with the mode swapped and
 `restart    ralph start` in place of the attach pair — there is nothing left to
 attach to or kill, and the `in flight` line names the issue the run died on.
-**`idle`** and **`never-run`** are one line each, deliberately: the run is over,
-or there has not been one.
+**`idle`** and **`never-run`** are one line of report each, deliberately: the run
+is over, or there has not been one.
 
 ```
 ▸ ralph — idle · last run ralph-ralph-b36ff7b1-1718700000 ended 14:02 (partial: 2 ok, 1 failed)
@@ -1713,7 +1759,11 @@ reports the same run from any subdirectory of the repo — the loop writes the
 record at its `PROJECT_ROOT`, and a cwd-anchored read two directories down would
 report `never-run` about a live run and then advise the `ralph start` that would
 put a second loop on it. Outside a git work tree it falls back to the current
-directory, which for anything but a Ralph project root means `never-run`.
+directory, which for anything but a Ralph project root means `never-run`. That
+toplevel is also what the identity box's `cwd` row prints, which is the whole
+reason the row is worth a line: it names the directory the record, the cycle lock,
+`issues.jsonl` and `.ralph/digest.log` are all keyed on, not the subdirectory the
+command was typed in.
 
 #### The digest section
 
@@ -1815,9 +1865,9 @@ whole entry before it rather than printing a heading with nothing under it.
 #### Machine-readable output — `ralph status --json`
 
 `ralph status --json` prints **one JSON document on stdout and nothing else** —
-no heading, no advice, no trailing blank line, one compact newline-terminated
-line — so a shell prompt, a tmux status line, or a custom notifier can be driven
-off `ralph status --json | jq` instead of re-parsing
+no heading, no advice, no identity box, no trailing blank line, one compact
+newline-terminated line — so a shell prompt, a tmux status line, or a custom
+notifier can be driven off `ralph status --json | jq` instead of re-parsing
 `.ralph/metrics/issues.jsonl` by hand. It is the second readout above seen from
 the other side — the same document, broken one section per line here for reading,
 from a machine whose clock is UTC so its finish time reads as the same wall
@@ -1895,7 +1945,10 @@ because there is nothing to say — a missing record (including a cwd outside a
 work tree) resolves to a mode, and a failed queue count or an unreadable,
 half-written `issues.jsonl` resolves to a `null` leaf, which tells a consumer
 more than a line of prose it would have to parse. Whatever happens, stdout stays
-one parseable document.
+one parseable document. The identity box that heads the human view is not on this
+path at all — the document is returned before the box is composed — so the
+[`RALPH_BANNER`](#configuration-reference) setting, in `ralph.config.sh` or in the
+environment, cannot put a byte in front of it at any value.
 
 All three instants are **ISO-8601 UTC truncated to the second**
 (`2026-08-26T04:40:00Z`, not `…:00.000Z`): `jq`'s `fromdate` parses

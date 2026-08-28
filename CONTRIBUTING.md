@@ -127,8 +127,9 @@ lockstep.
 colour terminal, settles it on a still frame, and prints an identity box under it
 on every run — or as much of that as `RALPH_BANNER` asked for (see
 [the README](./README.md#quick-start)). Since #75 `ralph doctor` heads its report
-with that same box, out of the same composer and the same setting, and with none
-of the pixels: two commands share this half, one shares both. Eight published
+with that same box, and since #76 `ralph status` heads its human view with it
+too — out of the same composer and the same setting, and with none of the pixels
+in either: three commands share this half, one shares both. Eight published
 modules under `lib/` back the two halves and the setting that governs them, the
 first of them fed by a generator that is not published at all:
 
@@ -224,7 +225,11 @@ first of them fed by a generator that is not published at all:
   diagnostic must not swallow. Keep them apart, or `ralph start` grows a row and
   `doctor` loses a verdict. `os` rather than `platform` is arithmetic, not taste:
   the label gutter is eight columns and `padEnd` does not grow, so `platform`
-  would print `platformmac`. The `width`
+  would print `platformmac`. #76 added the third caller, and it is the argument
+  for this seam rather than a strain on it: `ralph status` passes `version` and
+  `cwd` and nothing else, and gets a one-row box out of the same composer with no
+  new parameter, no new row, and not a line changed in this module — which is what
+  "rows, not parameters" was supposed to buy. The `width`
   argument is the one that came home to roost: `bannerLayout(width)` is the whole
   degradation ladder in one pure, total function — box from `BOX_MIN_WIDTH` (44)
   up, sprite from `SPRITE_MIN_WIDTH` (26) up, and any width that cannot be used at
@@ -295,8 +300,8 @@ first of them fed by a generator that is not published at all:
   of `startCommand`, above the picture that file decides, and puts the warning on
   stderr behind the same `⚠️` prefix `ralph init` uses for a mistyped `RALPH_AGENT`.
   Only the read moved — `TASK_SOURCE` and `RALPH_DIGEST_INTERVAL` are still derived at
-  the preflight step that uses them, out of that same one read. Since #75 this
-  resolver has **two** callers, reading different parts of one answer:
+  the preflight step that uses them, out of that same one read. Since #75 and #76
+  this resolver has **three** callers, reading different parts of one answer:
   `lib/commands/doctor.js` does the same text-parsed read of the same file with the
   same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
   share a name — but reads `box` alone. It passes **no `isTTY`**, so no arrangement of
@@ -305,7 +310,16 @@ first of them fed by a generator that is not published at all:
   `doctor` is the command people run when things are already broken — it takes no exec
   dependency and opens no socket, and a QA spec walks its whole import graph to keep it
   that way. Do not "fix" that silence into a warning; a typo costs a `doctor` user
-  nothing, and `ralph start` names it.
+  nothing, and `ralph start` names it. `lib/commands/status.js` is the third, on the
+  same read, the same precedence, the same absent `isTTY` and the same `box`-alone
+  answer — and it drops the warning for a reason of its own, simpler and stronger
+  than `doctor`'s: that command has **no stderr channel at all** (no `stderr` in its
+  deps bag, deliberately), which is what keeps `ralph status --json` pipeable. Do not
+  give it one in order to word a banner typo. It is also the one caller that does not
+  always ask: `never-run` short-circuits *before* the resolver, because that mode is
+  pinned as reading nothing — `ralph.config.sh` included — so resolving there would
+  answer "draw the default box" out of a config nobody opened, and the box names a
+  run that mode does not have.
 
 **The committed art is a placeholder.** This repository carries no Wreck-It Ralph
 GIF and never did — #66 made the source a developer-supplied *input*, which is why
@@ -467,12 +481,24 @@ to catch path/template bugs that unit tests can't surface.
      they must show real numbers instead of `unknown` (on a Codex project
      `spend` stays `unknown`, which is correct — the Codex stream carries no
      cost).
+   - The **identity box** heads that same human view (#76), above the `▸ ralph`
+     line, with the tarball version as its title and a single `cwd` row under it —
+     no `update`, `os` or `agent` row, and no sprite, no animation and no cursor
+     movement at any `RALPH_BANNER` value. That row is the git **toplevel**, so the
+     subdirectory run above must print the *same* `cwd` as the root run rather than
+     the directory you typed it in. `RALPH_BANNER=off ralph status` must print no
+     box and not one blank line, so the output starts at `▸ ralph`, while
+     `RALPH_BANNER=loud ralph status` prints the default box and **no warning on
+     either stream** — as in `doctor`, and here for the stronger reason that this
+     command writes to stderr in no mode at all.
    - `ralph status --json | jq .` prints one document and no `jq` error, and —
      once `eta.finish_at` is non-null —
      `ralph status --json | jq '.eta.finish_at | fromdate'` prints an epoch
      number. The hermetic suite pins the document's shape but never runs `jq`,
      so this is the one place the timestamp format meets the parser it is
-     truncated to the second for.
+     truncated to the second for. It must stay one document with the box turned
+     **on** as well (`RALPH_BANNER=full ralph status --json | jq .`): a frame on
+     that path is a broken parse for every consumer downstream.
    - The startup box's `Projection:` lines, for the same reason. On the **first**
      `ralph start` in a fresh project there is no `.ralph/metrics/issues.jsonl`
      yet, so the block is correctly **absent** — never `~0 min/task · ~$0/task`.
