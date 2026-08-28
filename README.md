@@ -118,7 +118,14 @@ it survives the early exit on a missing required dep. It is the box and nothing
 else: no sprite, no animation and no cursor movement at any setting, because
 this is output people pipe, quote and diff. A mistyped `RALPH_AGENT` still gets
 its one warning line, printed directly **under** the box whose `agent` row it
-explains.
+explains — and **exactly one line, whatever you set**. The warning quotes your
+value back at you untrimmed and in its original case, so three trailing spaces
+are visible as three trailing spaces, but every control character in it — a
+newline, an `ESC`, a `NUL` — is replaced with the Unicode replacement character
+`U+FFFD` and the echo is capped at 200 characters. So no value can break the
+warning across two lines, forge an extra row of the box above it, or move your
+terminal's cursor: a `ralph doctor` report pasted into a bug report holds only
+lines `doctor` composed.
 
 [`RALPH_BANNER`](#configuration-reference) governs this box too, read from the
 same `ralph.config.sh` line and overridden by the same environment variable
@@ -126,9 +133,9 @@ same `ralph.config.sh` line and overridden by the same environment variable
 prints no box and not one blank line, so the output starts at the first dep
 line, and on that path the update-check cache is not read at all. One difference
 from `ralph start` is deliberate: a value `doctor` does not recognize falls back
-to the full box **silently**, with no warning on either stream, because wording
-one would cost this command a dependency it is built not to have. `ralph start`
-is where that typo is reported.
+to the full box **silently**, with no warning on either stream, because a typo in
+a purely **cosmetic** knob does not earn a line in a diagnostic. `ralph start` —
+the command the setting is actually about — is where that typo is reported.
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
 `gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
@@ -247,7 +254,10 @@ Values are case-insensitive and surrounding whitespace is ignored; unset or empt
 means `full`, and a value Ralph does not recognize also means `full` and says so
 in one line on **stderr** — a typo costs you a line of output and never the run,
 and nothing it prints reaches stdout, so `ralph start | tee` is unaffected either
-way. An [environment variable of the same name](#environment-variables) **wins**
+way. That warning quotes the value it did not recognize, flattened to one line and
+with every control character in it replaced by `U+FFFD`, so a stray `ESC` in the
+committed line is shown to you rather than obeyed by your terminal.
+An [environment variable of the same name](#environment-variables) **wins**
 over the file, deliberately the opposite way round to
 [`TASK_SOURCE`](#choosing-the-task-source): a task source is a property of the
 repository, while a banner is a property of one invocation, so
@@ -561,7 +571,10 @@ The `--agent` value is case-insensitive and trimmed, and it is **validated
 before anything is written**: an invalid value (a typo, a model name, anything
 that is not `claude` or `codex`) is **rejected** with
 `❌ Unknown agent '<x>'. Valid agents: claude, codex.` and a nonzero exit, so a
-mistyped flag never silently falls back to `claude`.
+mistyped flag never silently falls back to `claude`. `<x>` is the value you
+passed, echoed back untrimmed and in its original case — with every control
+character in it replaced by `U+FFFD` and the echo capped at 200 characters, so
+the rejection is one line of stderr no matter what the flag carried.
 
 When you run `ralph init` in an interactive terminal **without** `--agent`, it
 prompts `Use Codex instead of Claude Code? [y/N]:` — answer `y`/`yes` for
@@ -629,7 +642,10 @@ ralph init                    # interactive prompt on a TTY, else defaults to gi
 The `--source` value is case-insensitive and trimmed, and it is **validated
 before anything is written**: an invalid value is **rejected** with
 `❌ Unknown task source '<x>'. Valid sources: github, folder.` and a nonzero
-exit, so a mistyped flag never silently falls back.
+exit, so a mistyped flag never silently falls back. `<x>` is sanitised exactly as
+the [`--agent` rejection](#choosing-the-coding-agent) is — your value, untrimmed
+and in its original case, with control characters replaced by `U+FFFD` and the
+echo capped at 200 characters — so the rejection is always one line.
 
 When you run `ralph init` in an interactive terminal **without** `--source`, it
 prompts `Draw tasks from a local .ralph/tasks/ folder instead of GitHub? [y/N]:`
@@ -1081,7 +1097,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | Variable              | Default                              | Purpose                                                                 |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. |
-| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report and [`ralph status`](#quick-start)'s human view, whether either of those commands prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` and `ralph status` take the identical fallback **silently**: the default box, and not a word about the typo on either stream — `doctor` because wording one would cost it a dependency it is deliberately built without, `status` because it has no stderr channel at all, which is what keeps its `--json` output pipeable — so `ralph start` is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` and `ralph status` read the box half of this setting and nothing else: neither draws a sprite or an animation at any value, `full` and `static` are the same picture in both, and `off` means no box and not one blank line where it would have been — so `RALPH_BANNER=off ralph status` prints the report starting at its `▸ ralph` line, byte for byte as it did before the box existed. `ralph status` adds the only two exceptions in either direction: its `never-run` mode prints no box at any value, because the box identifies a run and that mode has none, and `ralph status --json` prints its one document at every value, since this setting reaches the human view alone. |
+| `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report and [`ralph status`](#quick-start)'s human view, whether either of those commands prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` and `ralph status` take the identical fallback **silently**: the default box, and not a word about the typo on either stream — `doctor` because a typo in a purely cosmetic knob does not earn a line in a diagnostic, `status` because it has no stderr channel at all, which is what keeps its `--json` output pipeable — so `ralph start`, the command the setting is actually about, is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` and `ralph status` read the box half of this setting and nothing else: neither draws a sprite or an animation at any value, `full` and `static` are the same picture in both, and `off` means no box and not one blank line where it would have been — so `RALPH_BANNER=off ralph status` prints the report starting at its `▸ ralph` line, byte for byte as it did before the box existed. `ralph status` adds the only two exceptions in either direction: its `never-run` mode prints no box at any value, because the box identifies a run and that mode has none, and `ralph status --json` prints its one document at every value, since this setting reaches the human view alone. |
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
