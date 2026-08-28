@@ -5,6 +5,26 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.23.0](https://github.com/lucasfe/ralph/compare/v0.22.0...v0.23.0) (2026-08-28)
+
+
+### Features
+
+* `ralph changelog` command, rendering the shipped changelog ([#71](https://github.com/lucasfe/ralph/issues/71)) ([#102](https://github.com/lucasfe/ralph/issues/102)) ([e521fcb](https://github.com/lucasfe/ralph/commit/e521fcb7467742d757f02ce375d64af90740c648))
+* `RALPH_BANNER` setting with environment override ([#74](https://github.com/lucasfe/ralph/issues/74)) ([#105](https://github.com/lucasfe/ralph/issues/105)) ([532f486](https://github.com/lucasfe/ralph/commit/532f4867b567497d22d250a0af32c8b3e0cdfd5a))
+* banner width degradation — unbox under 44 columns, drop sprite under 26 ([#72](https://github.com/lucasfe/ralph/issues/72)) ([#103](https://github.com/lucasfe/ralph/issues/103)) ([58e9ff4](https://github.com/lucasfe/ralph/commit/58e9ff4a6415591e0aefe1b761e1d557e31ae210))
+* identity box in `ralph doctor` ([#75](https://github.com/lucasfe/ralph/issues/75)) ([#106](https://github.com/lucasfe/ralph/issues/106)) ([4a217ca](https://github.com/lucasfe/ralph/commit/4a217ca5392fb267cc513aadfcc34151759f2bb0))
+* identity box in `ralph status` ([#76](https://github.com/lucasfe/ralph/issues/76)) ([#109](https://github.com/lucasfe/ralph/issues/109)) ([19257ff](https://github.com/lucasfe/ralph/commit/19257ff5b522b2e85f1467e2b997c423373bf6b4))
+* one-shot splash animation that settles to a static frame ([#73](https://github.com/lucasfe/ralph/issues/73)) ([#104](https://github.com/lucasfe/ralph/issues/104)) ([32a10f4](https://github.com/lucasfe/ralph/commit/32a10f467f2fe854491d346ebd56f81a553b9eff))
+* the banner's identity box with version and update hint ([#68](https://github.com/lucasfe/ralph/issues/68)) ([#100](https://github.com/lucasfe/ralph/issues/100)) ([5c85e01](https://github.com/lucasfe/ralph/commit/5c85e01f21779c0f1f2b5d5e753c9ca3858b3847))
+* What's new bullets in the banner, parsed from the shipped CHANGELOG ([#70](https://github.com/lucasfe/ralph/issues/70)) ([#101](https://github.com/lucasfe/ralph/issues/101)) ([fd4b3ba](https://github.com/lucasfe/ralph/commit/fd4b3bad4b42817854b9f44cff8b28b66d6355b1))
+
+
+### Bug Fixes
+
+* sanitise the RALPH_AGENT echo so no value can forge a line ([#108](https://github.com/lucasfe/ralph/issues/108)) ([#112](https://github.com/lucasfe/ralph/issues/112)) ([2aeadba](https://github.com/lucasfe/ralph/commit/2aeadba145d45d7eae7f6f562f88a190a3d56a30))
+* scope the banner's no-escape assertions to the sprite, not all ANSI ([#67](https://github.com/lucasfe/ralph/issues/67)) ([#98](https://github.com/lucasfe/ralph/issues/98)) ([5d2de88](https://github.com/lucasfe/ralph/commit/5d2de880d3667177a8fb3ffc1df75ef68230014e))
+
 ## [0.22.0](https://github.com/lucasfe/ralph/compare/v0.21.0...v0.22.0) (2026-08-27)
 
 
