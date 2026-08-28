@@ -59,7 +59,7 @@ In a git repo on the branch you want Ralph to work from:
 ```bash
 ralph init      # one-time: detect stack, write config, slash command, gitignore
 ralph doctor    # verify required deps are on PATH, under an identity box you can paste
-ralph start     # launch the loop in a detached tmux session
+ralph start     # under the sprite and identity box: launch the loop in a detached tmux session
 ralph status    # under an identity box: run, task in flight, queue, pace, ETA, spend, digest
 ralph digest    # narrate in prose what the loop is doing, and log it to .ralph/digest.log
 ralph stop      # kill this project's tmux session when you want Ralph to halt
@@ -171,13 +171,17 @@ printed at all — none of its escape sequences, no cursor movement, not even a
 blank line where it would have been, and nothing waited for a frame nobody was
 going to see — and every other line of `ralph start`'s output, plus its exit
 code, is byte-for-byte what the same run prints on a terminal. There is no flag
-and no variable that turns the sprite **on**: a non-terminal never gets it. A
-terminal narrower than the sprite itself — under **26 columns** — silences it the
-same way, and drops it *whole* rather than clipping it, because half a face with
-a torn edge is not a smaller sprite. Those are the terminal's reasons; you have
-one of your own, and it is [`RALPH_BANNER`](#configuration-reference) — the
-setting described a few paragraphs down, which can hold the splash still on its
-settled frame or drop the whole banner, sprite and box together.
+and no variable that turns the sprite **on**: a non-terminal never gets it. None
+of that is yours to configure, and gating it on the terminal rather than on a
+setting is what makes it so: a piped run, a launchd job and a CI transcript come
+out clean by default, with no flag to remember in a wrapper script and nothing to
+set in a plist or a CI job for the sake of a readable log. A terminal narrower
+than the sprite itself — under **26 columns** — silences it the same way, and
+drops it *whole* rather than clipping it, because half a face with a torn edge is
+not a smaller sprite. Those are the terminal's reasons; you have one of your own,
+and it is [`RALPH_BANNER`](#configuration-reference) — the setting described a few
+paragraphs down, which can hold the splash still on its settled frame or drop the
+whole banner, sprite and box together.
 
 Directly under it, and on **every** run bar one an explicit
 [`RALPH_BANNER=off`](#configuration-reference) silenced, comes the **identity
@@ -194,6 +198,14 @@ and what changed in the release you are on.
 │ more    run `ralph changelog` for the rest               │
 ╰──────────────────────────────────────────────────────────╯
 ```
+
+The **title** is the Ralph that is about to run — the installed version, read out
+of the package's own `package.json` — and `cwd` is the directory you ran the
+command in. Those two rows are on every box the three commands draw, though
+`ralph status`'s `cwd` names the git toplevel instead of the directory you typed
+in, for the reason its own paragraph below gives. `update`, `new` and `more` each
+appear only when Ralph has the fact behind them, and each has a paragraph of its
+own below.
 
 Unlike the sprite the box is **not** gated on the terminal, because it is facts
 rather than decoration: a launchd log or a CI transcript is exactly where "which
