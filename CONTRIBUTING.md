@@ -339,11 +339,15 @@ first of them fed by a generator that is not published at all:
   `lib/commands/doctor.js` does the same text-parsed read of the same file with the
   same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
   share a name — but reads `box` alone. It passes **no `isTTY`**, so no arrangement of
-  its arguments can authorise a sprite, and it **drops the warning deliberately**:
-  wording one safely means `oneLine` from `lib/digest.js`, which imports execa, and
-  `doctor` is the command people run when things are already broken — it takes no exec
-  dependency and opens no socket, and a QA spec walks its whole import graph to keep it
-  that way. Do not "fix" that silence into a warning; a typo costs a `doctor` user
+  its arguments can authorise a sprite, and it **drops the warning deliberately**. That
+  used to be half a constraint: wording one safely meant `oneLine`, which lived in
+  `lib/digest.js` and so behind execa, and `doctor` is the command people run when
+  things are already broken — it takes no exec dependency and opens no socket, and a QA
+  spec walks its whole import graph to keep it that way. #108 removed the constraint
+  (`oneLine` now lives in `lib/one-line.js`, which imports nothing, and `doctor` reaches
+  it transitively for the `RALPH_AGENT` warning it *does* print) and left the judgement,
+  which was always the better half: a typo in a **cosmetic** knob does not earn a line in
+  a diagnostic. Do not "fix" that silence into a warning; it costs a `doctor` user
   nothing, and `ralph start` names it. `lib/commands/status.js` is the third, on the
   same read, the same precedence, the same absent `isTTY` and the same `box`-alone
   answer — and it drops the warning for a reason of its own, simpler and stronger
@@ -422,7 +426,13 @@ to catch path/template bugs that unit tests can't surface.
      just installed as its title and `os`, `agent`, `cached` and `cwd` rows
      under it. No sprite, no animation and no cursor movement belong anywhere
      in it, at any `RALPH_BANNER` value, and a mistyped `RALPH_AGENT` puts its
-     warning line *under* the closing `╰──╯`.
+     warning line *under* the closing `╰──╯` — **one** line, whatever the value
+     was (#108). Worth typing once, because it is the defect that issue closed:
+     `RALPH_AGENT=$'codx\nos      linux' ralph doctor` must print a box with its
+     real `os` row and no second one, and a warning holding a visible `U+FFFD`
+     where the newline was. Every echo of a user's value in `doctor` and `init`
+     goes through `oneLineEcho` from `lib/one-line.js` for this; if you add
+     another one, use it.
    - The `cached` row comes from the global update-check cache, which is
      written by the weekly check in `ralph start` and in `ralph cycle` — so it
      reads `unknown (no update check cached yet)` on a machine where neither
