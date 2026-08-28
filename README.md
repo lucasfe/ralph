@@ -60,7 +60,7 @@ In a git repo on the branch you want Ralph to work from:
 ralph init      # one-time: detect stack, write config, slash command, gitignore
 ralph doctor    # verify required deps are on PATH, under an identity box you can paste
 ralph start     # under the sprite and identity box: launch the loop in a detached tmux session
-ralph status    # under an identity box: run, task in flight, queue, pace, ETA, spend, digest
+ralph status    # under an identity box: run, progress, task table, queue, pace, ETA, spend, digest
 ralph digest    # narrate in prose what the loop is doing, and log it to .ralph/digest.log
 ralph stop      # kill this project's tmux session when you want Ralph to halt
 ralph update    # update Ralph itself to the latest published version (any directory)
@@ -346,8 +346,10 @@ none, which is also what keeps it the readout that reads nothing at all,
 `ralph.config.sh` included.
 
 Under the box it reads the run-state record the loop keeps at
-`.ralph/run-state.json` and prints the run and how long it has been going, the
-task in flight and for how long, the **live** queue depth, the pace the run is
+`.ralph/run-state.json` and prints the run and how long it has been going, how far
+through the queue it is — tasks done over a denominator recounted on every call,
+the task in flight and for how long, and a bar — a **per-task table** of what the
+run has worked through, the **live** queue depth, the pace the run is
 holding, an ETA with a range and a wall-clock finish time, the spend so far and
 where it projects to, and the attach / kill lines for the session — or, for a
 scheduled `ralph cycle` run, the log to follow instead, since that run has no
@@ -1359,8 +1361,10 @@ with no interval configured still shows a digest you asked for by hand (see
 **You detached and cannot tell whether Ralph is still working.** — Run
 `ralph status`. It reads the run-state record the loop writes
 (`.ralph/run-state.json`), reconciles it against whether that run is still
-alive, and names the run, the issue in flight and for how long, the live queue
-depth, the pace, ETA, and spend the run is holding, and — if anything has narrated
+alive, and names the run, how far through the queue it is — tasks done over a live
+denominator, and the issue in flight and for how long — a table of the tasks it has
+worked through, the live queue depth, the pace, ETA, and spend the run is holding,
+and — if anything has narrated
 the run — the latest [`ralph digest`](#the-digest-section) entry for it, from any
 subdirectory of the repo and without attaching to anything. **`interrupted`** there
 means a run started and never wrote a terminal
@@ -1681,7 +1685,11 @@ session to attach to:
 
 ```
 ▸ ralph — running · run ralph-ralph-b36ff7b1-1718700000 (started 16:20, 12min ago)
-  in flight  #031 (4min)
+  progress   0/7 done · #031 in flight (4min)  [────────] 0%
+
+  task                 verdict     cost      time
+  #031 digest section  🔄 live     –         ~4min
+
   queue      6 waiting
   pace       ~84 min/task
   eta        ~9h44m left → ~02:16  (±1h30m)
@@ -1693,7 +1701,13 @@ session to attach to:
 
 ```
 ▸ ralph — running · run ralph-ralph-b36ff7b1-1718700000 (started 16:20, 3h12m ago)
-  in flight  #031 (40min)
+  progress   2/9 done · #031 in flight (40min)  [██──────] 22%
+
+  task                   verdict     cost      time
+  #029 run-state record  ✅ pass     $34.45    97min
+  #030 pace and ETA      ✅ pass     $28.40    71min
+  #031 digest section    🔄 live     –         ~40min
+
   queue      6 waiting
   pace       ~84 min/task · $31.4/task
   eta        ~9h08m left → ~04:40  (±1h30m)
@@ -1716,8 +1730,10 @@ one has, and in how much each run has to say about itself — never in the id: a
 cycle builds its `run_id` from the same per-project session name a `ralph start`
 run would use, so what tells them apart is whether there is a session to attach
 to. The scheduled run above is twelve minutes old and has finished nothing yet,
-which is why its pace is the all-time fallback and it has no spend of its own to
-report (see [Pace, ETA, and spend](#pace-eta-and-spend) below). Nothing has
+which is why its bar is empty, its table is the one row for the task in flight, its
+pace is the all-time fallback and it has no spend of its own to
+report (see [The progress line and the task table](#the-progress-line-and-the-task-table)
+and [Pace, ETA, and spend](#pace-eta-and-spend) below). Nothing has
 narrated it either: the digest window is opened by `ralph start`, and a scheduled
 `ralph cycle` opens none, so a cycle run has a digest block only if you ran
 `ralph digest` against it by hand (see
@@ -1742,9 +1758,11 @@ all three are the record's own never-lie-with-a-zero discipline seen from the
 rendering side. A task number is **zero-padded to three digits** — `#031` — so
 consecutive readouts align down the column, and a wider number is never cut to
 fit it (`#1234`); a `number` the record could not supply as one reads `#?`. The
-`in flight` line reads `none yet` before the run has picked up its first task,
-and reads it for a `current` that is *present but empty* too, since neither of
-those names a task to report. And the `idle` line spends its `?` exactly where
+`progress` line reads `nothing in flight` before the run has picked up its first
+task, and reads it for a `current` that is *present but empty* too, since neither
+of those names a task to report — and neither is counted into the denominator
+either, so six waiting and nothing being worked on reads `0/6 done` rather than
+`0/7`. And the `idle` line spends its `?` exactly where
 `queue_at_start` does: a truncated or externally-written record that never
 recorded `ok`/`failed` reads `(partial: ? ok, ? failed)` rather than a `0` that
 would claim a run failed nothing.
@@ -1754,7 +1772,133 @@ The queue depth is **live**, counted the way `ralph start` counts it — the sam
 `gh` call at all). A failed count degrades to `queue      unknown`; it never
 fails the command, and it never reads as `0 waiting`. Only the live views pay
 for it: `idle` and `never-run` skip the count entirely — no `gh` call, no
-directory scan.
+directory scan. It is also the **denominator** the `progress` line counts against,
+and it is bought **first** — before the one other subprocess a live view may
+spend, the issue-title lookup described next — because it is the number the view
+cannot do without, and the titles are only prose.
+
+#### The progress line and the task table
+
+The two blocks between the heading and the queue count answer the two questions a
+reader who left a run unattended actually has — *how much of this is done?* and
+*what has it done?* — and between them they replace the single
+`in flight  #031 (40min)` row the live view used to open with. That row named the
+task and nothing else, which is half a sentence: which issue is being worked on
+only means something beside how much of the queue is left.
+
+```
+  progress   2/9 done · #031 in flight (40min)  [██──────] 22%
+```
+
+The fraction, the bar and the percentage are **one fact drawn three ways** —
+computed once, from the same snapshot the rest of the view is rendered from, so they
+cannot disagree with each other or with the table under them. The denominator is the
+**live** queue: `completed + in flight + waiting`, recounted on every call rather
+than frozen at the record's `queue_at_start`, because issues are opened and closed
+while a run is going and a denominator fixed at launch drifts quietly away from the
+truth.
+
+The task in flight is **named in the line and counted in the total, never in the
+numerator**. `3/9` while `#031` is still running would mean the fraction cannot be
+trusted to move when something actually finishes, which is the one thing it is for.
+Before the run picks up its first task the clause reads `nothing in flight` and the
+task drops out of the total with it, so six waiting reads `0/6 done`.
+
+A segment is **absent rather than faked**, the same discipline the three derived
+lines below follow. A failed queue count leaves no denominator, so the line reads
+`2/unknown done` and the bar and the percentage stay away entirely — a bar is a
+picture *of* a denominator, and drawing one against a guess is worse than drawing
+none. The completed count survives on its own, because it is a tally of the rows the
+table is built from, and naming which half is missing beats dropping both. Both ends
+of the bar are **reserved**: short of finished a run always leaves
+one cell empty and never reads `100%` — `99%` is the ceiling — and a run that has
+finished one of sixty still fills one cell and reads at least `1%`, because erasing
+a task that really ran is the `$0.00` mistake in another alphabet. Everything in
+between rounds **down** — a progress reading should never round up to a milestone
+the run has not reached.
+
+Under it, one row per task the run has touched, in the order
+`.ralph/metrics/issues.jsonl` recorded them, with the task in flight last:
+
+```
+  task                   verdict     cost      time
+  #029 run-state record  ✅ pass     $34.45    97min
+  #030 pace and ETA      ✅ pass     $28.40    71min
+  #031 digest section    🔄 live     –         ~40min
+```
+
+| Column | What it says |
+| --- | --- |
+| `task` | The zero-padded number, and the issue title beside it when one could be looked up. The number is the fact and the title is context, so a row with no title is the number alone rather than a gap, and the column is only ever as wide as the widest title actually on show. |
+| `verdict` | `✅ pass`, `❌ fail`, `❔ unknown` for a task the loop closed without recording one, and `🔄 live` for the one still running. Marker **and** word, never the marker alone: the glyph is what you scan for down the column, and the word is what survives a terminal without the font, a `grep`, and a reader who cannot see colour or emoji at all. |
+| `cost` | What the task recorded, to the cent, or `–` when nothing was recorded. Never `$0.00`, which is the whole reason this column is worth a table: a reader scanning it must never have to wonder whether a row was free or unmeasured. A positive amount under a cent reads `<$0.01`, exactly as it does in the `spend` line. |
+| `time` | Minutes, rather than the `3h12m` the run-scale spans use, because this column is read *down* — against the other rows and against the `~84 min/task` pace line below it, which is the unit that comparison happens in. The task in flight wears a `~`, since its number is still moving. |
+
+The table is **capped at eight closed rows** plus the one in flight, which is the
+same number [the digest block](#the-digest-section) caps its body at, so a view with
+two variable-height blocks elides by one rule you learn once. Without a cap the whole
+view would be as tall as the run is long: a night that worked through sixty issues
+would put the queue count, the pace, the ETA, the spend, the digest and the
+attach/kill pair below the fold. The rows kept are the **most recent** ones — a live
+view answers "what just happened" — and what was dropped is named, with somewhere to
+go for it, directly under the header where the missing rows would have been:
+
+```
+  … 52 earlier tasks in .ralph/metrics/issues.jsonl
+```
+
+That cap is a **display** decision and nothing else. The `progress` line above still
+counts every task, so `60/67 done` over eight rows is the table eliding rather than
+the fraction lying.
+
+A run **between** tasks with nothing closed yet gets no table at all — not even the
+blank lines that fence it — because a header over no rows is furniture. Neither do
+the three modes that print the report card or the one-line greeting: an
+`interrupted` run's history belongs to its card, not to a table with a `🔄 live` row
+in it.
+
+**Where the titles come from, and what they cost.** Nothing Ralph writes records an
+issue title — neither the
+[per-issue events](#per-issue-stream--ralphmetricsissuesjsonl) nor the run-state
+record carries one — so the live view looks them up with one extra call,
+`gh issue list --state all --limit 100 --json number,title`, made at the git
+toplevel after the queue count. `--state all` is the whole difference between it and
+the count: the table's closed rows are issues this run has just *closed*, so an
+open-only query would title the queue and leave every row above it blank.
+
+That call is gated **tighter** than the queue count, on three independent
+conditions:
+
+| Only when | Why |
+| --- | --- |
+| the mode is `running` | The other three modes print the report card or the greeting, so a lookup for them would buy prose that nothing renders. |
+| `--json` is off | [The document](#machine-readable-output--ralph-status---json) publishes no titles and no rows, so the call would buy a consumer nothing — and skipping it keeps `--json` the cheap surface a shell prompt can poll on a timer. |
+| the task source is `github` | A folder task's title lives inside its own file, and folder mode is deliberately `gh`-free: it is the mode for repos that have no GitHub at all. |
+
+And it is a **courtesy, never a fact**. Every way the lookup can fail — `gh`
+missing, unauthenticated, timed out, or answering with something that is not a list
+of issues — resolves to no titles at all, and every row then renders as its number,
+which is exactly what folder mode renders on purpose. Nothing is said about it,
+because `ralph status` writes to stderr in no mode; the command still exits `0` with
+the table intact.
+
+A title is also the **second** piece of text in this view that Ralph did not write —
+the other is [the digest narration](#the-digest-section) — and it is the less
+trustworthy of the two, so it is scrubbed harder. A narration comes out of a file
+this repo's own model wrote; an issue title on a public repository is prose anybody
+at all can author, arriving over a pipe into a terminal that obeys some of what it
+is sent. So escape sequences are taken **whole** rather than by their leading byte —
+removing the escape alone would leave `[31mred` sitting on the line as ordinary text
+— and the control, format, surrogate, private-use and line-separator characters go
+with them, each replaced by a **space** so that a scrubbed sequence cannot fuse the
+words either side of it into one. What is left is collapsed on whitespace, which is
+what turns a newline forged into a title back into part of one cell rather than a
+row of its own, and then truncated to **24 columns** with a trailing `…` — columns
+as a terminal draws them, so that a CJK or emoji title cannot bend the grid around
+itself — with a second cut at 64 code points, for text whose drawn width is a lie: a
+thousand stacked combining marks measure almost no columns at all and are still a
+blot on one cell. A title that scrubs away to nothing is no title, and the row is
+its number.
 
 #### Pace, ETA, and spend
 
@@ -1863,7 +2007,10 @@ own — a URL, a base64 blob, a minified stack out of a log tail — is broken a
 width rather than left to overflow. Eight rows means eight rows, and one long word
 cannot push the attach/kill pair the cap exists to protect off the screen.
 
-**This is the one part of `ralph status` that is not Ralph's own text.** Every
+**This is one of the two parts of `ralph status` that are not Ralph's own text** —
+the other is the issue titles in
+[the task table](#the-progress-line-and-the-task-table), scrubbed harder still,
+for the reason given there. Every
 other row is a number this repo computed, an id it generated, or one of its own
 words; the narration — and the model name beside it — come out of a file that
 holds model output and that a human can edit. So on the way to a terminal every
@@ -1924,6 +2071,17 @@ two surfaces cannot drift apart, and everything in
 one thing cut short above is `digest.text`, which carries the run's whole
 narration: the document is that block of prose in full, and it is elided here
 because nothing else in the document is prose.
+
+A projection of the snapshot is not the whole of it, and the one thing left out is
+deliberate: the document publishes **no per-task rows and no issue titles**, so
+[the task table](#the-progress-line-and-the-task-table) has no counterpart here and
+the extra `gh` call that titles it is never made under `--json`. The keys below are
+the one thing about this command that cannot be fixed after release, and a run's
+task-by-task history is already on disk, one line per task, in
+[`issues.jsonl`](#per-issue-stream--ralphmetricsissuesjsonl) — which is where a
+consumer that wants the rows reads them, and where the table's own elision line
+points a human. `progress.completed` and `tasks.current` are what the document says
+about the same fact instead, and they have said it since **0.20.0**, unchanged.
 
 | Field | Meaning |
 | --- | --- |

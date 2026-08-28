@@ -358,14 +358,21 @@ exit 0
       now: startedMs + 40 * 60000,
     })
     expect(lines[0]).toContain(`run ${midRun.run_id}`)
-    expect(lines).toContain('  in flight  #002 (40min)')
+    // #56's two readings of the same record — the sentence and the row. Both are asserted
+    // because they are read from DIFFERENT fields of it (the progress line from
+    // `current.number` and `current.started_at`, the row from the task rows the snapshot
+    // builds), and a drift in either is a field name the loop and the CLI disagree about.
+    // `0/3` is 0 done + 1 in flight + 2 waiting: the loop really has finished nothing yet
+    // at this point of the run.
+    expect(lines).toContain('  progress   0/3 done · #002 in flight (40min)  [────────] 0%')
+    expect(lines).toContain('  #002  🔄 live     –         ~40min')
     expect(lines).toContain('  queue      2 waiting')
     expect(lines).toContain('  attach     tmux attach -t ralph-test')
     expect(lines.join('\n')).not.toContain('#?')
-    // Scoped to the lines the RECORD drives: #57's pace/eta/spend block reads
-    // `unknown` here on purpose, because this renders with no issues.jsonl behind
-    // it — which is the honest answer, not a drift.
-    expect(lines.slice(0, 3).join('\n')).not.toContain('unknown')
+    // Scoped to the lines the RECORD drives — the heading, the progress line and the table
+    // — because #57's pace/eta/spend block reads `unknown` here on purpose: this renders
+    // with no issues.jsonl behind it, which is the honest answer and not a drift.
+    expect(lines.slice(0, 6).join('\n')).not.toContain('unknown')
   })
 })
 

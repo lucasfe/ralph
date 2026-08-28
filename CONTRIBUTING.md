@@ -516,8 +516,9 @@ to catch path/template bugs that unit tests can't surface.
      closes the issue, and emits the end-of-run summary on stdout.
    - `logs/ralph-issue-N.log` exists for the issue.
    - `ralph status` — run once from the project root and once from a
-     subdirectory — reports `running`, the same run id both times, the issue
-     in flight, and a live queue depth. This step is the only place the loop's
+     subdirectory — reports `running`, the same run id both times, a `progress`
+     line naming the issue in flight, and a live queue depth. This step is the
+     only place the loop's
      run-state writes are exercised for real: `.ralph/run-state.json` is
      written by `templates/ralph.sh`, which the unit suite can only drive
      against stubs. The same holds for `.ralph/metrics/issues.jsonl`, which
@@ -525,6 +526,19 @@ to catch path/template bugs that unit tests can't surface.
      they must show real numbers instead of `unknown` (on a Codex project
      `spend` stays `unknown`, which is correct — the Codex stream carries no
      cost).
+   - The **task table** under that line (#56), which is the other half of what
+     `issues.jsonl` backs and the one place its `gh issue list --state all` title
+     lookup meets a real GitHub: before the first issue completes the table is the
+     header and one `🔄 live` row, and after it a closed row appears with a
+     verdict, a cost and a duration — never `$0.00` where nothing was recorded, and
+     on a Codex project a `–` in the `cost` column for the same reason `spend`
+     reads `unknown`. The rows must carry **issue titles** rather than bare
+     numbers, which is what proves the extra call resolved; numbers alone mean it
+     failed, and it fails silently by design, so the unit suite cannot tell you.
+     Then break it on purpose: with `gh auth logout` the same view must still print
+     the whole table, numbered rather than titled, with nothing on stderr and exit
+     `0`. On a **folder-mode** project the rows are numbers for good — that mode
+     makes no `gh` call at all.
    - The **identity box** heads that same human view (#76), above the `▸ ralph`
      line, with the tarball version as its title and a single `cwd` row under it —
      no `update`, `os` or `agent` row, and no sprite, no animation and no cursor

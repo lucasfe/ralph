@@ -89,7 +89,7 @@ program
   // gets before running the command — and a summary naming fewer lines than the view
   // prints undersells it, which is what this one did between #57 and #64.
   .description(
-    'Show what the Ralph loop is working on right now (run, task in flight, queue, pace, ETA, spend)',
+    'Show what the Ralph loop is working on right now (run, progress, task table, queue, pace, ETA, spend)',
   )
   // #58: the same snapshot the human view prints, as one JSON document on stdout —
   // so a shell prompt, a status line or a custom notifier can be driven off `ralph
