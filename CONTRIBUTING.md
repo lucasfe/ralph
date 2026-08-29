@@ -422,8 +422,16 @@ first of them fed by a generator that is not published at all:
   than leaving it open, because attributing a fork's `[remote "upstream"]` keys to
   `origin` would put a repository on screen that the loop is not about to read. A
   slug it cannot resolve is `null`, which the composer's gate turns into no row;
-  `unknown` would be a claim, and a missing row is not. Pure the way the rest of
-  this list is pure and one step further — it **imports nothing at all** — and
+  `unknown` would be a claim, and a missing row is not. **What "set" means is the
+  caller's business and has never been visible in this module:** #120 made
+  `bannerRepoSlug` resolve that value out of `ralph.config.sh` **over** the process
+  environment — the loop's own precedence, on the presence test the `banner-mode.js`
+  entry below argues for `RALPH_AGENT` — and this module still takes one string and
+  asks nothing about where it was found. A committed `GH_REPO=""` therefore arrives as the blank it is,
+  and a blank is not "set" here, which is exactly the `origin` row the loop's own `gh`
+  calls will resolve for that file. That the grammar was unchanged by #120, and would
+  be unchanged by the next such decision, is what the seam is for. Pure the way the
+  rest of this list is pure and one step further — it **imports nothing at all** — and
   asserted so by a static read of its own. The config file arrives as an argument,
   which is what makes every case across its three **behavioural** specs a string
   literal rather than a fixture on disk (see
@@ -509,23 +517,37 @@ first of them fed by a generator that is not published at all:
   `source` row), and the preflight step that spends it reads that same binding rather
   than resolving a second one. `RALPH_DIGEST_INTERVAL` is still derived at the step that
   uses it, out of that same one read, and #69's three knobs — `RALPH_AGENT`,
-  `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — are text-parsed out of it too. Two of
-  those three are still parsed at the box's own call site; `RALPH_AGENT` is not, since
-  #118 moved its `resolveAgent` call up beside the banner's warning. The command now has
+  `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — are text-parsed out of it too, with a
+  **fourth** since #120: `GH_REPO`, behind the `repo` row. That one is `gh`'s variable
+  rather than Ralph's and no template declares it, which is the whole case for having
+  read only the environment and is not enough — a project that has one has it because
+  somebody committed it, and `set -a` then makes it decide for every `gh` command the
+  loop runs, so a row whose stated guarantee is that it names what the loop will read
+  has to read it the same way round. That read sits inside `bannerRepoSlug`, which is
+  the only reason that helper takes `configText`, so three of those four are parsed at
+  the box's own call site; `RALPH_AGENT` is not, since #118 moved its `resolveAgent`
+  call up beside the banner's warning. The command now has
   to *warn* about a mistyped value as well as name the resolved one, and the box spends
   that same binding rather than resolving a second time — two sites resolving one value
   are two owners of one decision, and a box naming one agent under a warning naming
   another fallback is exactly the confusion #69 was filed about. All of those take the
   **file over the environment**, matching the loop, which sources `ralph.config.sh` with
   `set -a`; `RALPH_BANNER` is the one exception in
-  the other direction and the paragraph above is why. For `RALPH_AGENT` that precedence is
-  a **presence** test rather than a truthiness one — `configAssignsVar(text, 'RALPH_AGENT')
-  ? parseConfigVar(…) : null`, then `??` onto the environment — because `parseConfigVar`
-  answers `''` both for a file that never mentions the knob and for one that blanks it,
-  while bash treats those two as opposites: `set -a` exports a blank assignment *over* an
-  inherited value. Do not "simplify" it back to a `||`. That reads the environment for a
-  `RALPH_AGENT=""` the loop will mask, which warns about a value no run will read and puts
-  an agent in the box the loop is not about to launch. Since #75 and #76
+  the other direction and the paragraph above is why. For **two** of them —
+  `RALPH_AGENT` (#118) and `GH_REPO` (#120) — that precedence is a **presence** test
+  rather than a truthiness one — `configAssignsVar(text, name)
+  ? parseConfigVar(…) : null`, then `??` onto the environment — because
+  `parseConfigVar` answers `''` both for a file that never mentions the knob and for
+  one that blanks it, while bash treats those two as opposites: `set -a` exports a
+  blank assignment *over* an inherited value. Do not "simplify" either back to a
+  `||`. On `RALPH_AGENT` that reads the environment for a `RALPH_AGENT=""` the loop
+  will mask, which warns about a value no run will read and puts an agent in the box
+  the loop is not about to launch. On `GH_REPO` it names a whole **repository** no
+  call in the run will touch: a blank assignment masks the environment, so the loop's
+  `gh` reads an empty variable, treats it as unset and resolves its base repository
+  from `origin` — and `resolveBannerRepo` treats a blank `ghRepo` the same way, which
+  is why handing the blank straight through is what puts `origin`'s slug on the row
+  while a `||` would reach past it into the environment. Since #75 and #76
   this resolver has **three** callers, reading different parts of one answer:
   `lib/commands/doctor.js` does the same text-parsed read of the same file with the
   same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
@@ -712,12 +734,23 @@ to catch path/template bugs that unit tests can't surface.
      asymmetries to confirm rather than file: in a **folder-mode** project there is
      **no `repo` row whatever** (not an empty one), and `GH_REPO=someone/else ralph
      start` must print `someone/else` even though `origin` says otherwise, because that
-     is what every `gh` call in the loop is about to read. A checkout with no `origin`
-     — or one whose `origin` is a local path — must print **no `repo` row** rather than
-     `unknown`. Last, the thing only a terminal shows: the box must land **as fast as
-     it always did**. That slug is read from `.git/config` on purpose and `gh repo
-     view` is deliberately never called; if the box ever pauses before it appears,
-     somebody has put a network round trip in front of the first paint.
+     is what every `gh` call in the loop is about to read. That check has a
+     **committed half** since #120, and it is the half only a real sourcing shell
+     settles: write `GH_REPO="someone/else"` into the project's `ralph.config.sh`
+     and `GH_REPO=other/one ralph start` must still print `someone/else`, because
+     the loop sources that file *after* inheriting your environment. Then blank the
+     committed line — `GH_REPO=` — and with that same environment value still on
+     the command line the row must print **`origin`'s** slug and not `other/one`,
+     since a blank assignment masks the environment in the sourcing shell, so the
+     loop's `gh` reads an empty variable as unset and resolves its base repository
+     from `origin`. Attach and run `gh repo view --json nameWithOwner` inside the
+     loop's own window if either answer surprises you: that `gh` is the oracle for
+     this row, and the box exists to agree with it. A checkout with no `origin` —
+     or one whose `origin` is a local path — must print **no `repo` row** rather
+     than `unknown`. Last, the thing only a terminal shows: the box must land **as
+     fast as it always did**. That slug is read from `.git/config` on purpose and
+     `gh repo view` is deliberately never called; if the box ever pauses before it
+     appears, somebody has put a network round trip in front of the first paint.
    - **A mistyped `RALPH_AGENT`, on both mouths** (#118), which is a real terminal's
      business twice over. Write `RALPH_AGENT="codx"` into the project's
      `ralph.config.sh` and run `ralph start`: exactly one `⚠️  RALPH_AGENT='codx'
