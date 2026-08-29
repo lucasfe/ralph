@@ -1369,3 +1369,175 @@ exit 0
     },
   )
 })
+
+// ---------------------------------------------------------------------------
+// Issue #127 — TASK_SOURCE=jira. The loop SELECTS a Jira ticket and CLAIMS it, so a run
+// visibly takes ownership on the board before anything else can happen. Three arms of the
+// script are involved and all three are exercised here through the real JS bridges: the
+// source normalizer, `queue_count`, and the selection block.
+//
+// `acli` IS A STUB ON PATH, and that is the whole point of testing it here: no test in this
+// repo may run the real Atlassian CLI (there is none in CI, and a claim is a WRITE to
+// somebody's board), but the argv Ralph sends and the JSON it parses are exactly what
+// lib/jira-queue.js produces, and this suite is where bash, that module and the run record
+// are proven to agree. The stub also models the ONE behaviour that makes the loop
+// terminate: once the ticket carries `in-progress`, the composed query stops matching it,
+// so the next count is 0.
+//
+// The AGENT IS NOT INVOKED for a Jira ticket yet — #127 ships selection and the claim — so
+// the `claude` stub here records any invocation in order to prove there was none.
+// TASK_SOURCE and JIRA_JQL arrive via env (no ralph.config.sh) for the same reason as the
+// folder suite: it keeps the lazy-validation block skipped so the test isolates the loop.
+// ---------------------------------------------------------------------------
+describe('ralph.sh jira task source — issue #127', () => {
+  const JQL = 'project = RALPH AND statusCategory != Done'
+
+  const acliLog = () => join(workdir, 'acli-called.log')
+  const claimedFlag = () => join(workdir, 'acli-claimed')
+  const claudeLog = () => join(workdir, 'claude-called.log')
+
+  const readLog = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '')
+  const acliCalls = () => readLog(acliLog()).split('\n').filter(Boolean)
+
+  // The acli stub: one script answering the four argv shapes lib/jira-queue.js sends. The
+  // `--count` and search arms read the claim flag the `edit` arm writes, which is this
+  // fixture's stand-in for Jira honouring the `in-progress` exclusion.
+  function seedJiraStubs({ summary = 'Do the thing', labels = '["frontend","p2"]' } = {}) {
+    writeStub(
+      'node',
+      `#!/bin/bash
+case "$*" in
+  *jira-queue.js*) exec "${REAL_NODE}" "$@" ;;
+  *run-state.js*) exec "${REAL_NODE}" "$@" ;;
+  *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+  *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
+esac
+echo "PROMPT"
+exit 0
+`,
+    )
+    writeStub(
+      'acli',
+      `#!/bin/bash
+echo "$*" >> "${acliLog()}"
+case "$*" in
+  *--count*)
+    if [ -f "${claimedFlag()}" ]; then echo 0; else echo 1; fi ;;
+  *"--limit 1"*)
+    if [ -f "${claimedFlag()}" ]; then
+      echo '[]'
+    else
+      echo '[{"key":"FOO-123","fields":{"summary":"${summary}"}}]'
+    fi ;;
+  *" view "*)
+    echo '{"key":"FOO-123","fields":{"labels":${labels}}}' ;;
+  *" edit "*)
+    touch "${claimedFlag()}" ;;
+esac
+exit 0
+`,
+    )
+    writeStub('jq', `#!/bin/bash\ncat > /dev/null 2>/dev/null || true\nexit 0\n`)
+    writeStub('gh', `#!/bin/bash\necho "$*" >> "${join(workdir, 'gh-called.log')}"\nexit 0\n`)
+    writeStub('claude', `#!/bin/bash\ncat > /dev/null\necho "$*" >> "${claudeLog()}"\nexit 0\n`)
+  }
+
+  const runJira = (extraEnv = {}) =>
+    runLoop({ timeout: 20000, extraEnv: { TASK_SOURCE: 'jira', JIRA_JQL: JQL, ...extraEnv } })
+
+  it('selects the top ticket, claims it with in-progress, and names the key in the iteration line', () => {
+    seedJiraStubs()
+    const res = runJira()
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+    // The iteration line names the TICKET, not a number Ralph derived from it.
+    expect(res.stdout).toContain('==> Iteration for FOO-123 (1 remaining)')
+
+    // The count and the pick both went through the COMPOSED query — Ralph's exclusion and
+    // its ordering, not the user's clause alone.
+    const calls = acliCalls()
+    const counted = calls.find((c) => c.includes('--count'))
+    const picked = calls.find((c) => c.includes('--limit 1'))
+    expect(counted, calls.join('\n')).toContain(JQL)
+    expect(counted).toContain('labels NOT IN (in-progress, failed, do-not-ralph)')
+    expect(picked, calls.join('\n')).toContain('--fields key,summary')
+    expect(picked).toContain('ORDER BY created ASC')
+
+    // The claim is read-then-union, and it is unattended.
+    expect(calls.some((c) => c.startsWith('jira workitem view --key FOO-123'))).toBe(true)
+    const edit = calls.find((c) => c.includes(' edit '))
+    expect(edit, calls.join('\n')).toContain('--labels frontend,p2,in-progress')
+    expect(edit).toContain('--yes')
+  })
+
+  it('records the ticket as the in-flight task in .ralph/run-state.json', () => {
+    seedJiraStubs()
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    const record = JSON.parse(readFileSync(join(workdir, '.ralph', 'run-state.json'), 'utf8'))
+    expect(record.source).toBe('jira')
+    expect(record.current).toMatchObject({ task_key: 'FOO-123', number: 123, iteration: 1 })
+    expect(typeof record.current.started_at).toBe('string')
+  })
+
+  it('invokes neither gh nor the agent — #127 ships selection and the claim only', () => {
+    seedJiraStubs()
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(
+      existsSync(join(workdir, 'gh-called.log')),
+      `gh was invoked in jira mode:\n${readLog(join(workdir, 'gh-called.log'))}`,
+    ).toBe(false)
+    expect(
+      existsSync(claudeLog()),
+      `the agent was invoked for a jira ticket:\n${readLog(claudeLog())}`,
+    ).toBe(false)
+  })
+
+  it('exits on an empty Jira queue without spawning a pick', () => {
+    seedJiraStubs()
+    // The flag the `edit` arm writes is what makes the stub's queue empty, so seeding it
+    // up front is a board on which every candidate is already claimed.
+    writeFileSync(claimedFlag(), '')
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    expect(res.stdout).not.toContain('Iteration for')
+    expect(acliCalls().some((c) => c.includes('--limit 1'))).toBe(false)
+  })
+
+  it('counts nothing and claims nothing when JIRA_JQL is unset — no query, no acli', () => {
+    // jira-jql.js refuses an empty eligibility clause, because Ralph's half alone selects
+    // every work item on the site. The loop must read that refusal as an empty queue.
+    seedJiraStubs()
+    const res = runJira({ JIRA_JQL: '' })
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    expect(acliCalls(), acliCalls().join('\n')).toEqual([])
+  })
+
+  it('warns and does not abort when the claim fails, leaving the ticket eligible', () => {
+    seedJiraStubs()
+    // An acli that reads fine and refuses to write: the claim's failure mode that matters,
+    // since a ticket nobody could claim must not take the run down with it.
+    writeStub(
+      'acli',
+      `#!/bin/bash
+echo "$*" >> "${acliLog()}"
+case "$*" in
+  *--count*) echo 1 ;;
+  *"--limit 1"*) echo '[{"key":"FOO-123","fields":{"summary":"Do the thing"}}]' ;;
+  *" view "*) echo '{"key":"FOO-123","fields":{"labels":[]}}' ;;
+  *" edit "*) echo "permission denied" >&2; exit 1 ;;
+esac
+exit 0
+`,
+    )
+    const res = runJira()
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).toContain('==> Iteration for FOO-123 (1 remaining)')
+    expect(res.stderr).toContain('FOO-123')
+  })
+})
