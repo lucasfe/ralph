@@ -383,22 +383,33 @@ there for the same reader: the one running Ralph in several checkouts of the sam
 project, or in a fork, who wants to know which one this loop is about to work on
 before it starts working.
 
-That slug is resolved **locally and cheaply** — [`GH_REPO`](#environment-variables)
-if the environment set it, which is what `gh` itself honours first, otherwise
-`origin`'s url out of the `.git/config` in the directory you ran the command in.
-`gh repo view` would know authoritatively, and it is deliberately not asked: this
-row prints *before* the first preflight line, and no decoration is worth putting a
-network round trip in front of the first paint or hanging a start on a bad
-connection. The trade is worth knowing about, because it is visible: `gh` resolves
-its base repository from more than `origin` (a `gh repo set-default`, an upstream
-remote), so in a checkout where the two disagree **this row shows what git says**.
-And when the answer is not cheaply knowable — no `.git` at all, an `origin` that is
-a local path or a bundle rather than a GitHub repository, a `GH_REPO` that is not a
-slug — the row is simply **absent** rather than reading `unknown`: "this checkout
-does not cheaply say" is not the same claim as "there is no repo", and only the
-missing row tells the truth. The `.git/config` read happens only when there is a
-box to draw, so [`RALPH_BANNER=off`](#configuration-reference) costs not one byte
-of output and not one read for this row either.
+That slug is resolved **locally and cheaply**, out of two places in the order the
+loop itself reads them: a [`GH_REPO`](#environment-variables) assignment in
+`ralph.config.sh` **first**, then `GH_REPO` in the environment, and `origin`'s url
+out of the `.git/config` in the directory you ran the command in when neither
+assigns it. `GH_REPO` ahead of `origin` is what `gh` itself honours; the file ahead
+of the environment is the same way round as the three knobs above, and for the same
+reason — the loop *sources* that file with `set -a`, so a committed `GH_REPO`
+decides for every `gh` command it runs, and a row that read past it could name a
+repository no call in the run is about to touch. "Silent" also means here what it
+means for `RALPH_AGENT`: **no assignment at all**. A blank `GH_REPO=` line is a
+value like any other and keeps your environment out of this row — and because a
+blank value reads as unset to `gh`, which then resolves its base repository from
+`origin`, that line hands the row to `origin`'s url rather than to whatever your
+shell exported. `gh repo view` would know authoritatively, and it is deliberately
+not asked: this row prints *before* the first preflight line, and no decoration is
+worth putting a network round trip in front of the first paint or hanging a start
+on a bad connection. The trade is worth knowing about, because it is visible: `gh`
+resolves its base repository from more than `origin` (a `gh repo set-default`, an
+upstream remote), so in a checkout where the two disagree **this row shows what
+git says**. And when the answer is not cheaply knowable — no `.git` at all, an
+`origin` that is a local path or a bundle rather than a GitHub repository, a
+`GH_REPO` that is not a slug — the row is simply **absent** rather than reading
+`unknown`: "this checkout does not cheaply say" is not the same claim as "there is
+no repo", and only the missing row tells the truth. The `.git/config` read happens
+only when there is a box to draw, so
+[`RALPH_BANNER=off`](#configuration-reference) costs not one byte of output and not
+one read for this row either.
 
 The `new` rows are the newest release in the `CHANGELOG.md` that **ships inside
 the installed package** — its first three bullets, in the order a reader of the
@@ -1263,12 +1274,16 @@ recorded on the last validation:
 ### Environment variables
 
 Not every setting lives in `ralph.config.sh`. The variables below are
-read from the **process environment** — with two exceptions, each noted in
+read from the **process environment** — with three exceptions, each noted in
 its own row: `ralph start` does text-parse `RALPH_DIGEST_MODEL` out of
 `ralph.config.sh`, but only to forward it into the digest window it opens,
-and `RALPH_BANNER` is a genuine two-source setting whose committed value
+`RALPH_BANNER` is a genuine two-source setting whose committed value
 this variable overrides for one run (its
-[configuration-reference row](#configuration-reference) is the full story).
+[configuration-reference row](#configuration-reference) is the full story),
+and `GH_REPO` is a two-source setting the other way round — a `GH_REPO`
+line in that file **beats** this variable for the one row Ralph reads it
+for, because the loop sources the file and a committed value therefore
+decides for every `gh` call the row is about.
 Otherwise, putting these in `ralph.config.sh` has no effect: the Node CLI
 never sources that file (it
 text-parses individual assignments out of it), and these variables are
@@ -1284,7 +1299,7 @@ command line.
 | `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line — the one-second splash with it, so a run under this variable spends no time and writes no cursor movement on an animation nobody would have seen. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box under the sprite — that is facts rather than decoration and prints on every run bar one an explicit [`RALPH_BANNER=off`](#configuration-reference) silenced — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. The box [`ralph doctor`](#quick-start) heads its report with is coloured by picocolors' rule rather than this presence one, exactly like the ✓ / ✗ marks under it — so `NO_COLOR=1 ralph doctor` is plain from top to bottom, a piped `ralph doctor` emits not one escape byte *unless* `FORCE_COLOR` or `CI` is set (picocolors keeps colour on a non-TTY for both — its rule, not this one, and it paints the ✓ / ✗ marks and the `cached` row alike), and `NO_COLOR= ralph doctor` on a terminal keeps the colour on both the marks and the box's `cached` row. |
 | `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run of `ralph start`, of [`ralph doctor`](#quick-start) **or** of [`ralph status`](#quick-start) — the latter two head their reports with the same identity box: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally — in `ralph start`. `ralph doctor` and `ralph status` fall back the same way and **say nothing at all**: the three commands share the knob and its precedence, not the warning, so a typo you never see reported here is one `ralph start` will name for you (`status` could not report it if it wanted to — it writes to stderr in no mode, which is what keeps `ralph status --json` pipeable). `full` and `static` are indistinguishable in both, neither of which draws a sprite at any value. In `ralph status` this reaches the human view alone: `--json` prints its one document whatever the value, and the `never-run` mode prints no box at any value, having no run to identify. |
 | `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
-| `GH_REPO`               | unset (`origin` decides) | Not Ralph's variable but [`gh`'s](https://cli.github.com/manual/gh_help_environment), and it is listed here because Ralph reads it for one row: the `repo` row of the identity box [`ralph start`](#quick-start) opens with, which names the repository the loop will read issues from. Set, it **decides** — because it decides for every `gh` command the loop runs, so a box that named `origin`'s slug while the loop read someone else's would be wrong in exactly the situation that row was added for. `gh`'s own spelling is accepted (`[HOST/]OWNER/REPO`, with the host dropped), a blank value counts as unset, and a value that is not a slug at all draws **no row** rather than falling back to `origin`: naming a repository the loop will not use is worse than naming none. Unset, the slug comes from `origin`'s url in the `.git/config` of the directory you ran the command in — read locally, never with `gh repo view`, because that row prints before the first preflight line and no decoration may put a network round trip in front of the first paint. This is a **github-mode** row only: a `TASK_SOURCE=folder` run draws none, whatever this is set to. |
+| `GH_REPO`               | unset (the `ralph.config.sh` line, then `origin`) | Not Ralph's variable but [`gh`'s](https://cli.github.com/manual/gh_help_environment), and it is listed here because Ralph reads it for one row: the `repo` row of the identity box [`ralph start`](#quick-start) opens with, which names the repository the loop will read issues from. Set, it **decides over `origin`** — because it decides for every `gh` command the loop runs, so a box that named `origin`'s slug while the loop read someone else's would be wrong in exactly the situation that row was added for. It does **not** decide over the file: a `GH_REPO` assignment in `ralph.config.sh` wins over this variable, which is deliberately the opposite way round to [`RALPH_BANNER`](#configuration-reference) and the same way round as the loop, since the loop *sources* that file with `set -a` — a committed value is what those very `gh` calls will read, so the row follows it. It wins **even when it is blank**, which is the surprising half: `GH_REPO=` in that file masks whatever your shell exported in the shell that sources it, `gh` reads the empty value as unset and resolves its base repository from `origin`, and so does this row. The environment answers only where the file assigns the knob **nothing at all** — a commented-out line, or no line — which is also the only case bash falls through on. `gh`'s own spelling is accepted (`[HOST/]OWNER/REPO`, with the host dropped), a blank value counts as unset whichever source it came from, and a value that is not a slug at all draws **no row** rather than falling back to `origin`: naming a repository the loop will not use is worse than naming none. With neither source naming one, the slug comes from `origin`'s url in the `.git/config` of the directory you ran the command in — read locally, never with `gh repo view`, because that row prints before the first preflight line and no decoration may put a network round trip in front of the first paint. This is a **github-mode** row only: a `TASK_SOURCE=folder` run draws none, whatever this is set to. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
 on a negatively-named flag.** Only `0` and `false` keep the check **on**
