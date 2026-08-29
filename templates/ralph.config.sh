@@ -24,16 +24,26 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # issues via `gh`; "folder" draws tasks from the local `.ralph/tasks/` tree and
 # commits straight to DEV_BRANCH (no PR/merge). Unset falls back to "github".
 #
-# "jira" is the third value, and it is HALF A LOOP: it now COUNTS from your Jira
-# project (see JIRA_JQL below) but still does not SELECT from it. `ralph status` and
-# `ralph cycle` take the queue depth by running your JQL through `acli`, so the
-# number you see, and the decision to start a cycle at all, come from Jira. What
-# happens after that does not: nothing resolves a Jira ticket into a task yet, so
-# the loop STILL RUNS THE GITHUB PATH — it reads open GitHub issues, still needs an
-# authenticated `gh`, and still opens PRs. Expect the depth to be Jira's and the
-# work to be GitHub's until ticket selection lands. `ralph start` is the one command
-# that still counts GitHub issues under this value, because the loop it launches
-# still works them, so its number can differ from `ralph status`'s meanwhile.
+# "jira" is the third value, and it is NOT A WHOLE LOOP YET: it now COUNTS, SELECTS
+# and CLAIMS from your Jira project (see JIRA_JQL below) — each iteration takes the
+# oldest eligible ticket, records it as the task in flight, and adds the
+# `in-progress` label, which is the label the query excludes, so the queue drains.
+# WHAT IS MISSING IS THE WORK: no agent is invoked for a Jira ticket, so nothing is
+# coded, committed or opened as a PR, and a run walks the queue labelling tickets
+# and then exits "Queue empty". The loop runs no `gh` command at all under this
+# value. `ralph start` has NOT moved with it: it still requires an authenticated
+# `gh`, and it still counts GitHub issues to decide whether to launch — so its
+# number can differ from `ralph status`'s, and an empty GitHub queue stops a launch
+# that had Jira tickets waiting. `ralph cycle` counts Jira, like `ralph status`.
+#
+# THE CLAIM IS A WRITE TO YOUR BOARD AND NOTHING TAKES IT BACK: no Ralph command ever
+# removes `in-progress` again. That write is what drains the queue rather than handing
+# the same ticket out forever, so it is not incidental — but since no agent runs,
+# labelling is ALL a run does, and one pass can walk your whole eligible queue, label
+# every ticket in it, and leave the board reading as fully in flight with nothing done.
+# Ralph then reads that queue as empty until you strip the label yourself, in Jira.
+# There is no Jira analog yet of the `claude-working` cleanup the github source does.
+# So point a NARROW JIRA_JQL at this while it is half built.
 #
 # The prerequisites are checkable BEFORE they are needed. A jira run wants
 # Atlassian's `acli` on PATH and an authenticated session (`acli jira auth login`),
@@ -42,10 +52,14 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # (reported, never enforced — it cannot fail doctor). An `acli` that is missing,
 # logged out, or answering something unparseable costs you the COUNT and never the
 # run: the depth reads as zero (or as "unknown" in `ralph status`), so a cycle
-# exits saying the queue is empty instead of failing.
+# exits saying the queue is empty instead of failing. In the loop the same failure
+# reads as an empty queue at SELECTION time (it stops, having worked nothing) and as
+# a warning at CLAIM time (the ticket stays eligible and the loop moves on).
 TASK_SOURCE="{{TASK_SOURCE}}"
 
-# Jira eligibility query, used when TASK_SOURCE="jira" and ignored otherwise. Write
+# Jira eligibility query, used when TASK_SOURCE="jira" and ignored otherwise. ONE query
+# answers both questions the source asks — how deep the queue is, and which ticket is
+# next — so a count and a selection can never disagree about what is eligible. Write
 # the half that is YOURS — which work items are candidates for Ralph — and nothing
 # about labels or ordering:
 #
@@ -57,7 +71,9 @@ TASK_SOURCE="{{TASK_SOURCE}}"
 # labels IS EMPTY)` is added — the `IS EMPTY` half matters, because in JQL a
 # `NOT IN` never matches a work item whose labels are unset, and without it a
 # freshly filed unlabelled ticket would be invisible to Ralph. The exclusion is what
-# keeps the loop off work already in flight, already failed, or marked hands-off.
+# keeps the loop off work already in flight, already failed, or marked hands-off — and
+# its `in-progress` half is the very label the loop WRITES when it claims a ticket, so
+# claiming is what makes the next pass skip it. One mechanism, not two conventions.
 #
 # ORDERING IS RELOCATED, NOT REFUSED. Jira requires ORDER BY to be the last clause,
 # so if your query ends with one it is moved back to the end after the exclusion is
@@ -67,8 +83,9 @@ TASK_SOURCE="{{TASK_SOURCE}}"
 #
 # EMPTY MEANS NOT CONFIGURED, and it is deliberately not "everything": a query of
 # Ralph's half alone would select every work item on the Jira site and report a queue
-# depth that belongs to somebody else's board. So an empty value counts nothing, runs
-# no `acli`, and `ralph status` says the queue depth is unknown.
+# depth that belongs to somebody else's board. So an empty value counts nothing, selects
+# nothing, runs no `acli`, and `ralph status` says the queue depth is unknown; a loop
+# started with it exits "Queue empty" on its first pass.
 #
 # A `#` ANYWHERE IN YOUR QUERY NEEDS SINGLE QUOTES — searching for a ticket reference
 # (`summary ~ "#123"`) is the case that hits this. Ralph reads this file without sourcing

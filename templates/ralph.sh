@@ -333,15 +333,31 @@ iter=0
 
 SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge'
 
-# --- Task source dispatch (#565) --------------------------------------------
-# Ralph draws work from either GitHub issues (the default, unchanged) or a local
-# `.ralph/tasks/` folder tree (TASK_SOURCE=folder). The source is read from the
-# env sourced from ralph.config.sh. Any value other than an explicit `folder`
-# resolves to github, mirroring lib/task-source.js's resolveSource (an unset /
-# unknown value => github, the zero-regression path). The github branch of every
-# helper below is byte-for-byte the code the loop has always run.
+# --- Task source dispatch (#565, #127) --------------------------------------
+# Ralph draws work from GitHub issues (the default, unchanged), a local
+# `.ralph/tasks/` folder tree (TASK_SOURCE=folder), or a Jira project
+# (TASK_SOURCE=jira, #127). The source is read from the env sourced from
+# ralph.config.sh. Any value other than an EXACT `folder` or `jira` resolves to
+# github — unset and unknown both take that zero-regression path. The github
+# branch of every helper below is byte-for-byte the code the loop has always run.
+#
+# THIS COMPARE IS EXACT AND lib/task-source.js's resolveSource IS NOT: that one
+# trims and lowercases first, so `JIRA`, `Jira` and ` folder` are recognised by
+# `ralph status`, `cycle`, `doctor` and the prompt builder, and NOT here. This
+# comment used to claim the two mirror each other; they do not. The divergence
+# predates the jira arm (`FOLDER` has had it since #565) and is left for a slice
+# that fixes both values at once — it is pinned, with the per-site cost, in
+# test/loop.jira.adversarial.test.js.
+#
+# BASH HOLDS NO JIRA KNOWLEDGE OF ITS OWN: no JQL, no `acli`, no label name, not
+# even the key grammar. lib/jira-queue.js owns all of it and is shelled out to,
+# exactly as folder mode shells out to lib/folder-queue.js — which is what keeps
+# the query composition (lib/jira-jql.js) testable in one place instead of being
+# half-written in a shell string nothing can unit-test.
 if [ "${TASK_SOURCE:-github}" = "folder" ]; then
   TASK_SOURCE="folder"
+elif [ "${TASK_SOURCE:-github}" = "jira" ]; then
+  TASK_SOURCE="jira"
 else
   TASK_SOURCE="github"
 fi
@@ -349,7 +365,14 @@ TASKS_ROOT="$PROJECT_ROOT/.ralph/tasks"
 
 # Number of items waiting in the queue.
 queue_count() {
-  if [ "$TASK_SOURCE" = "folder" ]; then
+  if [ "$TASK_SOURCE" = "jira" ]; then
+    # An UNSET JIRA_JQL counts 0 and spawns no acli: lib/jira-jql.js refuses an
+    # empty eligibility clause (Ralph's half of the query alone would select every
+    # work item on the Jira site), and the CLI exits non-zero without printing, so
+    # `|| echo 0` is what the loop reads. An unconfigured Jira source is an empty
+    # queue, never somebody else's board.
+    node "$RALPH_PKG_DIR/lib/jira-queue.js" count "${JIRA_JQL:-}" 2>/dev/null || echo 0
+  elif [ "$TASK_SOURCE" = "folder" ]; then
     node "$RALPH_PKG_DIR/lib/folder-queue.js" count "$TASKS_ROOT" 2>/dev/null || echo 0
   else
     gh issue list --search "$SEARCH_QUERY" --limit 100 --json number -q '. | length'
@@ -402,6 +425,12 @@ clear_working_label() {
 # and the loop would burn API calls forever. We break out instead.
 prev_num=""
 
+# The in-flight task's Jira key (#127) — `FOO-123`, and empty for every other
+# source. Declared HERE, outside the loop, because `set -u` is on and the ONE
+# shared `begin-task` call below passes it for all three sources; only the jira
+# arm ever assigns it.
+task_key=""
+
 while :; do
   count=$(queue_count)
   if [ "$count" = "0" ]; then
@@ -409,7 +438,32 @@ while :; do
     break
   fi
 
-  if [ "$TASK_SOURCE" = "folder" ]; then
+  if [ "$TASK_SOURCE" = "jira" ]; then
+    # Jira mode (#127): select the oldest eligible ticket (key + summary, tab
+    # separated — the same shape folder mode's `pick` prints, cut the same way, so
+    # a summary full of spaces can never be read as part of the key).
+    #
+    # THE ITERATION LINE NAMES THE TICKET, not a number: `FOO-123` is what a reader
+    # can look up on the board, and the numeric handle in the run record is derived
+    # from it for the readers that predate Jira (lib/jira-key.js explains why).
+    # No `[agent: ...]` suffix, unlike the two arms below — #127 ships selection
+    # and the claim, and no agent is invoked for a Jira ticket yet, so naming one
+    # here would be a promise the loop does not keep.
+    pick=$(node "$RALPH_PKG_DIR/lib/jira-queue.js" pick "${JIRA_JQL:-}" 2>/dev/null)
+    task_key="${pick%%$'\t'*}"
+    if [ -z "$task_key" ]; then
+      # The count said there was work and the pick found none: a ticket claimed by
+      # somebody else between the two calls, or an acli that stopped answering.
+      # Either way there is nothing to work on, which is the same finding as an
+      # empty queue.
+      echo "Queue empty, exiting."
+      break
+    fi
+    # No numeric handle from bash: lib/run-state.js derives one from the key, and
+    # `''` is the record's documented "unknown" for every value bash cannot supply.
+    num=""
+    echo "==> Iteration for $task_key ($count remaining)"
+  elif [ "$TASK_SOURCE" = "folder" ]; then
     # Folder mode: select the lowest-numbered task in afk/todo (id + path). The
     # AGENT owns the happy-path moves (todo→in-progress→done) and commits
     # directly to $DEV_BRANCH — no branch, no PR. Bash owns only the failure /
@@ -427,11 +481,46 @@ while :; do
   fi
 
   # Run state (#55): the in-flight task, updated at the top of every iteration so
-  # `ralph status` can say what Ralph is on and for how long. ONE call for BOTH
-  # task sources — $num is set by either branch above — and best-effort like the
+  # `ralph status` can say what Ralph is on and for how long. ONE call for ALL
+  # THREE task sources — $num and $task_key are set by the branches above, and
+  # each source leaves empty the one it does not have — and best-effort like the
   # `begin` call.
   iter=$((iter + 1))
-  node "$RALPH_PKG_DIR/lib/run-state.js" begin-task "$PROJECT_ROOT" "$num" "$iter" || true
+  node "$RALPH_PKG_DIR/lib/run-state.js" begin-task "$PROJECT_ROOT" "$num" "$iter" "$task_key" || true
+
+  if [ "$TASK_SOURCE" = "jira" ]; then
+    # CLAIM THE TICKET, and stop there — #127 ships selection and the claim, so no
+    # agent is invoked for a Jira ticket yet and none of the outcome handling below
+    # applies. This block is where the next slice picks up.
+    #
+    # The claim adds the `in-progress` label, which is the label the composed query
+    # EXCLUDES (lib/jira-jql.js), so a claimed ticket drops out of the next count
+    # and the queue drains. lib/jira-queue.js does it as read-then-union so a
+    # team's own labels survive it, and passes `--yes` so an unattended run is
+    # never blocked on a confirmation prompt.
+    #
+    # A FAILED CLAIM WARNS AND CARRIES ON, like every other best-effort call in this
+    # file: the ticket stays eligible, and the guard below is what stops the loop
+    # from handing it out forever. Aborting the run instead would let one
+    # unwritable ticket take a whole scheduled cycle down with it. stderr is NOT
+    # suppressed here — the CLI's own sentence names the ticket and what acli said,
+    # and that line is the only record of why the board never changed.
+    if ! node "$RALPH_PKG_DIR/lib/jira-queue.js" claim "$task_key"; then
+      echo "⚠️  Could not claim $task_key. Leaving it eligible and moving on." >&2
+    fi
+
+    # Zero-progress guard, the analog of the two below: a successful claim removes
+    # the ticket from the query, so re-selecting the SAME key means the board did
+    # not change (the claim failed, or Jira has not caught up) and the queue can
+    # never drain. `prev_num` carries the key in this mode — one variable, since a
+    # run works one source.
+    if [ "$task_key" = "$prev_num" ]; then
+      echo "❌ ralph.sh: no progress on $task_key (re-selected). Aborting the loop." >&2
+      break
+    fi
+    prev_num="$task_key"
+    continue
+  fi
 
   # Stream the agent's JSON to jq, but keep stderr OUT of the JSON pipe: any
   # non-JSON line the agent prints to stderr (auth/credit/rate-limit errors,
