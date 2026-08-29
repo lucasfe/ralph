@@ -494,10 +494,17 @@ while :; do
     # dispatch). The block still returns to the top of the loop rather than falling
     # through: NONE of the outcome handling below applies to a Jira ticket, because
     # it is written against gh (PR merge state, `claude-working`/`claude-failed`
-    # labels, `Closes #N`). Jira's own bookkeeping — a done transition, a done
-    # label and a comment carrying the commit SHA (#129), the `failed` sweep for an
-    # iteration that produced nothing (#130), and per-ticket telemetry (#131) — is
-    # not wired yet, which is why nothing here reads `claude_failed`.
+    # labels, `Closes #N`). Jira's own bookkeeping is not all here either, and the
+    # half that IS here is not in this file: #129 gave the SUCCESS path a `done`
+    # label, a comment carrying the commit SHA, and — only where JIRA_DONE_STATUS
+    # names a status this project's workflow accepts — a transition, and the AGENT
+    # makes all of them itself, as step 7 of prompt-team-jira.md, calling
+    # `lib/jira-queue.js complete` and `comment`. It is the agent's job because only
+    # the agent knows whether the work landed and what SHA it landed as — this file
+    # cannot read either out of an exit code it does not inspect. What is still
+    # missing is the FAILURE half (#130's `failed` sweep for an iteration that
+    # produced nothing) and per-ticket telemetry (#131), which is why nothing here
+    # reads `claude_failed`.
     #
     # The claim adds the `in-progress` label, which is the label the composed query
     # EXCLUDES (lib/jira-jql.js), so a claimed ticket drops out of the next count

@@ -24,37 +24,43 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # issues via `gh`; "folder" draws tasks from the local `.ralph/tasks/` tree and
 # commits straight to DEV_BRANCH (no PR/merge). Unset falls back to "github".
 #
-# "jira" is the third value, and it is NOT A WHOLE LOOP YET — but it now does the
-# work. Each iteration COUNTS, SELECTS and CLAIMS from your Jira project (see JIRA_JQL
-# below): it takes the oldest eligible ticket, records it as the task in flight, adds
-# the `in-progress` label — the label the query excludes, so the queue drains — and
+# "jira" is the third value, and it is NOT A WHOLE LOOP YET — but a ticket now goes all
+# the way round. Each iteration COUNTS, SELECTS and CLAIMS from your Jira project (see
+# JIRA_JQL below): it takes the oldest eligible ticket, records it as the task in flight,
+# adds the `in-progress` label — the label the query excludes, so the queue drains — and
 # then INVOKES THE AGENT on that ticket. The agent is handed the KEY and reads the work
 # item itself through `acli`, then resolves it and commits straight to DEV_BRANCH with
 # the key in the commit message: no branch, no PR, no merge, the same delivery shape as
 # the folder source. The loop runs no `gh` command at all under this value.
 #
-# WHAT IS MISSING IS THE BOOKKEEPING, at both ends. THE COMMIT STAYS LOCAL: nothing in
-# the loop pushes it, so `git log DEV_BRANCH` on the machine that ran Ralph is the only
-# place that work exists. And nothing is written back to the board: no transition to a
-# done status, no done label, no comment carrying the commit SHA, and no `failed` label
-# on an iteration that produced nothing. THE COMMANDS THAT START THE LOOP have NOT moved
-# with it either, and BOTH of them still want `gh`: `ralph start` and `ralph cycle` each
-# abort unless `gh auth status` succeeds, however little the run itself uses it. On top of
-# that, `ralph start` still counts GitHub issues to decide whether to launch — so its
-# number can differ from `ralph status`'s, and an empty GitHub queue stops a launch that
-# had Jira tickets waiting. `ralph cycle` is the one that already counts Jira, like
-# `ralph status`. So a jira repo still needs `gh` installed and logged in, even though
-# `ralph doctor` no longer lists it here.
+# AND A TICKET IT RESOLVED IS THEN RECORDED ON YOUR BOARD: labelled `done`, stripped of
+# `in-progress`, given a comment carrying the commit SHA, the branch and the test/lint
+# result — and transitioned to JIRA_DONE_STATUS, which ships EMPTY, so until you set it
+# (below) the ticket is recorded without being moved on the board. That comment is
+# the whole audit trail, and it has to be, because THE COMMIT STAYS LOCAL: nothing in the
+# loop pushes it, so `git log DEV_BRANCH` on the machine that ran Ralph is the only place
+# the work itself exists, and the ticket is the only thing that says where to look.
 #
-# THE CLAIM IS A WRITE TO YOUR BOARD AND NOTHING TAKES IT BACK: no Ralph command ever
-# removes `in-progress` again. That write is what drains the queue rather than handing
-# the same ticket out forever, so it is not incidental — but with no completion
-# bookkeeping, one pass over your whole eligible queue leaves every ticket in it reading
-# as in flight, and which of them were actually resolved is discoverable only from the
-# local commits and the per-ticket logs (`logs/ralph-issue-<KEY>.log`). Ralph then reads
-# that queue as empty until you strip the label yourself, in Jira. There is no Jira
-# analog yet of the `claude-working` cleanup the github source does. So point a NARROW
-# JIRA_JQL at this while it is half built.
+# WHAT IS STILL MISSING IS THE FAILURE HALF. An iteration that produced nothing leaves a
+# comment saying why and NOTHING ELSE: no `failed` label, and `in-progress` stays on. So
+# a ticket Ralph tried and could not finish stops being eligible and stays that way until
+# you strip the label yourself, in Jira — there is no Jira analog yet of the
+# `claude-working` cleanup the github source does. The per-ticket log
+# (`logs/ralph-issue-<KEY>.log`) is where that attempt is recorded in full.
+#
+# THE COMMANDS THAT START THE LOOP have NOT moved with it either, and BOTH of them still
+# want `gh`: `ralph start` and `ralph cycle` each abort unless `gh auth status` succeeds,
+# however little the run itself uses it. On top of that, `ralph start` still counts GitHub
+# issues to decide whether to launch — so its number can differ from `ralph status`'s, and
+# an empty GitHub queue stops a launch that had Jira tickets waiting. `ralph cycle` is the
+# one that already counts Jira, like `ralph status`. So a jira repo still needs `gh`
+# installed and logged in, even though `ralph doctor` no longer lists it here.
+#
+# EVERY LABEL RALPH WRITES IS A WRITE TO YOUR BOARD, and only one of them comes back off
+# on its own: a completion removes the `in-progress` it added, and a failed iteration does
+# not. So point a NARROW JIRA_JQL at this while the failure half is unbuilt — a pass over
+# a wide query can leave you a row of tickets reading as in flight that nothing but you
+# will clear.
 #
 # The prerequisites are checkable BEFORE they are needed. A jira run wants
 # Atlassian's `acli` on PATH and an authenticated session (`acli jira auth login`),
@@ -78,13 +84,15 @@ TASK_SOURCE="{{TASK_SOURCE}}"
 #
 # RALPH APPENDS ITS OWN HALF and you cannot turn that off. Your clause is wrapped in
 # parentheses (so an `OR` in it keeps its meaning against the `AND` that follows),
-# then the exclusion `AND (labels NOT IN (in-progress, failed, do-not-ralph) OR
+# then the exclusion `AND (labels NOT IN (in-progress, done, failed, do-not-ralph) OR
 # labels IS EMPTY)` is added — the `IS EMPTY` half matters, because in JQL a
 # `NOT IN` never matches a work item whose labels are unset, and without it a
 # freshly filed unlabelled ticket would be invisible to Ralph. The exclusion is what
-# keeps the loop off work already in flight, already failed, or marked hands-off — and
-# its `in-progress` half is the very label the loop WRITES when it claims a ticket, so
-# claiming is what makes the next pass skip it. One mechanism, not two conventions.
+# keeps the loop off work already in flight, already finished, already failed, or
+# marked hands-off — and its `in-progress` and `done` halves are the very labels Ralph
+# WRITES, when it claims a ticket and when it records one as complete. So claiming is
+# what makes the next pass skip a ticket in flight, and completing is what makes the
+# queue drain. One mechanism, not two conventions.
 #
 # ORDERING IS RELOCATED, NOT REFUSED. Jira requires ORDER BY to be the last clause,
 # so if your query ends with one it is moved back to the end after the exclusion is
@@ -107,6 +115,40 @@ TASK_SOURCE="{{TASK_SOURCE}}"
 # quotes, JIRA_JQL='summary ~ "#123"', or write the JQL literal with them,
 # JIRA_JQL="summary ~ '#123'". A query with no `#` in it is unaffected.
 JIRA_JQL=""
+
+# Jira completion status, used when TASK_SOURCE="jira" and ignored otherwise. The status
+# Ralph asks Jira to move a ticket to once the work is committed — the third of the three
+# things it writes to the board when it finishes one, beside the `done` label and a comment
+# carrying the commit SHA.
+#
+# THERE IS NO DEFAULT BECAUSE THERE IS NO ANSWER THAT IS RIGHT EVERYWHERE. Status names come
+# from your project's own workflow: "Done" on one board, "Resolved", "Closed", "Complete" or
+# "Ready for Release" on the next. Write the name exactly as your workflow spells it,
+# capitalisation included:
+#
+# JIRA_DONE_STATUS="Done"
+#
+# A REFUSED TRANSITION COSTS YOU A BOARD MOVE AND NEVER THE RUN. A Jira workflow can decline
+# the move for reasons Ralph cannot see or satisfy — there is no transition to that status
+# from where the ticket sits, or the transition needs a field filled in first, or a validator
+# says no. When that happens Ralph WARNS on stderr, naming the ticket and the status, and
+# then finishes the job anyway: it still labels the ticket `done`, still comments the SHA,
+# and still counts the ticket as resolved. A workflow Ralph cannot drive is not a task Ralph
+# failed. What you are left with is one ticket to move by hand, and the warning tells you
+# which.
+#
+# THE LABEL IS WHAT ACTUALLY DRAINS THE QUEUE, which is why the transition is allowed to
+# fail. Jira labels are freeform and no workflow rule can veto one, so `done` goes on
+# whatever your workflow thinks — and `done` is in the exclusion Ralph appends to JIRA_JQL
+# (above), so a completed ticket stops being eligible on the next pass. The only thing that
+# can actually fail a completion is that label write; if it fails, Ralph says so and the
+# ticket stays in the queue, which is the honest outcome.
+#
+# EMPTY OR UNSET MEANS "DO NOT TRANSITION" — the default, and not an error. Ralph skips the
+# move, warns once, and still labels and comments. So a repo that never sets this still gets
+# a draining queue and an audit trail on every ticket; what it does not get is tickets moving
+# on the board.
+JIRA_DONE_STATUS=""
 
 # How much of the startup banner `ralph start` draws. "full" (the default) plays the
 # one-second sprite splash, settles on its final frame, and prints the identity box

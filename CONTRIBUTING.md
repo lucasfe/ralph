@@ -230,10 +230,13 @@ Ralph ships **four** orchestrator templates:
 - `templates/prompt-team-jira.md` — the Jira orchestrator (#128), selected the
   same way when `TASK_SOURCE=jira`. **Derived from the folder template**, because
   the two share a delivery shape: direct commit to `DEV_BRANCH`, no feature
-  branch, no PR, no auto-merge. What is forked is the intake and the ticket's
-  name — the agent is handed a key through `{{RALPH_TASK_KEY}}` (the one variable
-  no other template uses) and reads its own work item with
-  `acli jira workitem view`, never `gh`.
+  branch, no PR, no auto-merge. What is forked is the intake, the ticket's
+  name and the completion — the agent is handed a key through `{{RALPH_TASK_KEY}}`
+  (the one variable no other template uses) and reads its own work item with
+  `acli jira workitem view`, never `gh`; and where folder mode's completion is a
+  file move, this template's step 7 records the ticket on the board through
+  `lib/jira-queue.js complete` and `comment` (#129) — the only board writes it is
+  allowed to make, and never before the commit exists.
 
 The last two are picked by source rather than by agent: `build-prompt.js` keeps a
 `SOURCE_TEMPLATES` map (`{ folder, jira }`) whose entry **overrides** the
@@ -306,15 +309,21 @@ delegation instructions differently — just keep the shared structure in lockst
 - **No test has ever spoken to a real Jira site, and none should.** The `acli`
   the suite drives is a bash script on a prepended `PATH`, and it never comes off
   `PATH` — not even in the test about a missing binary, which makes the stub answer
-  the way an absent command does instead. A claim is a **write** to somebody's
-  board, so this is a standing rule and not a gap to close: if you need to see the
-  real thing, do it by hand against a throwaway project, never from the suite.
+  the way an absent command does instead. Four of the seven `acli` invocations are
+  **writes** to somebody's board — the claim's label, the completion's transition
+  and label removal, and the comment (#129) — so this is a standing rule and not a
+  gap to close: if you need to see the real thing, do it by hand against a throwaway
+  project, never from the suite.
 - **The `acli` interface is transcribed, not measured.** The flag spellings, the
-  fields `search` accepts, the ordering assumption behind `--limit 1`, and the JSON
-  envelope a work item arrives in are all what Atlassian's documentation describes.
-  `lib/jira-queue.js` keeps every argv in one place and says so at each one — that
+  fields `search` accepts, the ordering assumption behind `--limit 1`, the `--yes`
+  on `comment create` (extrapolated from the three writes documented as taking one),
+  and the JSON envelope a work item arrives in are all what Atlassian's
+  documentation describes — or, in that one case, what it does not.
+  `lib/jira-acli.js` keeps every argv in one place and says so at each one — that
   is where a field-reported usage error is fixed, and the comments naming which
-  lines are unmeasured are load-bearing. Do not delete them.
+  lines are unmeasured are load-bearing. Do not delete them. `lib/jira-queue.js`
+  above it holds the verbs and their policy: what a failure MEANS for a queue, and
+  which failures a caller must hear about.
 - **Keep the README's live-Jira callout honest** — the same rule as the Codex one
   above. `TASK_SOURCE="jira"` carries a warning that none of it has run against a
   live Jira; do not upgrade that claim until a real run against a real project has

@@ -71,12 +71,12 @@ So, without exception:
    ```
 
    Two honest warnings about that argv, each costing you one retry at most. The
-   `--key` and `--json` spellings are TRANSCRIBED from Ralph's own Jira module, the
-   only place in Ralph that builds an `acli jira workitem` argv — and no test has ever
-   run a real `acli`, so nothing has verified them. `--fields "*all"` is transcribed from
-   nowhere: that module only ever asks for `labels` or `key,summary`. So if `acli`
-   answers with a usage error instead of a work item, read
-   `acli jira workitem view --help` and use what it prints; if only the field
+   `--key` and `--json` spellings are TRANSCRIBED from Ralph's own acli layer
+   (`lib/jira-acli.js`), the only place in Ralph that builds an `acli jira workitem`
+   argv — and no test has ever run a real `acli`, so nothing has verified them.
+   `--fields "*all"` is transcribed from nowhere: that module only ever asks for
+   `labels` or `key,summary`. So if `acli` answers with a usage error instead of a work
+   item, read `acli jira workitem view --help` and use what it prints; if only the field
    selector is rejected, drop it and fetch the whole item. Do not guess twice.
 
    Read the summary, the description, and the **labels** (step 3b keys off
@@ -284,9 +284,9 @@ reviewers** instead of a single pass:
 6. **Commit to `{{DEV_BRANCH}}`**: `git add <specific files> && git commit -m
    "fix: <description> ({{RALPH_TASK_KEY}})"`. Stage ONLY code/tests — both the
    new/updated tests and the implementation in the same commit so the TDD pair is
-   reviewable together. **The message must name `{{RALPH_TASK_KEY}}`**: until the
-   next slice writes the SHA back to the board, that key in the subject is the ONLY
-   link between this commit and the ticket it resolves.
+   reviewable together. **The message must name `{{RALPH_TASK_KEY}}`**: that key in
+   the subject and the step-7 comment below are the two links between this commit and
+   the ticket it resolves, and this one is the half that lives in the repository.
 
    **The commit stays local.** Nothing pushes it — not you, and not the loop that
    invoked you: Ralph's loop script runs no `push` on any of its three task-source
@@ -337,26 +337,97 @@ reviewers** instead of a single pass:
    > <list each unresolved blocking finding>
    ```
 
-   Then **stop**. There is no step 7: closing the ticket out on the board —
-   transitioning it to a done status, labelling it, and commenting the SHA — is a
-   separate slice that is not wired yet, so anything you did on the board here
-   would be bookkeeping nothing else knows about.
+7. **Record the ticket as done on the board**: the commit exists now, so — and only
+   now — close `{{RALPH_TASK_KEY}}` out in Jira. **Never before the commit**: a ticket
+   marked done for work that was never committed is worse than one left in flight,
+   because the queue has drained and the evidence has not.
+
+   First mark it complete:
+
+   ```
+   node "$RALPH_PKG_DIR/lib/jira-queue.js" complete "{{RALPH_TASK_KEY}}"
+   ```
+
+   **Keep the quotes around the key.** The key was chosen by a remote system, and an
+   unquoted one carrying a space would reach the command as two arguments, of which it
+   reads the first — completing a ticket nobody named. Quoted, whatever the board
+   called it arrives whole.
+
+   That one command makes **up to three** board writes: it transitions the ticket to
+   the status this repo configured (`JIRA_DONE_STATUS` in `ralph.config.sh`), adds the
+   `done` label, and takes `in-progress` back off. Up to, because **this repo may not
+   have configured a status at all** — `JIRA_DONE_STATUS` ships empty, and when it is
+   empty the command deliberately skips the transition and makes the label write, plus
+   the `in-progress` removal if the ticket still carries it. Run it and read its
+   output; do **not** write any of it yourself with `acli`, because every flag it needs
+   is already spelled in Ralph's acli layer (`lib/jira-acli.js`, named in step 1) and a
+   second spelling is a second thing to get wrong.
+
+   **A board move that did not happen is not a failure** — but read the whole warning
+   before concluding that, because the sentence reporting it has two endings and only
+   one of them means what that heading says. Your project's workflow decides which
+   status moves exist and what they require, and Ralph cannot know either, so there are
+   two causes, either of which can start that sentence:
+
+   - `Jira refused to transition …` — the workflow would not make the move;
+   - `JIRA_DONE_STATUS is not set, so … was not moved on the board` — the likelier of
+     the two, because that knob ships empty; nothing was even attempted.
+
+   **The ending is what classifies the run**, because the `done` label — not the board
+   status — is what takes the ticket out of Ralph's queue, and the command only knows
+   whether that label landed by the time it writes this line:
+
+   - ends `— it is labelled done and out of Ralph's queue, so moving it on the board is
+     yours to do by hand`: the ticket **is** complete. Carry on to the comment, and
+     somebody moves it on the board by hand.
+   - ends `, and the done label could not be written either, so it is still in Ralph's
+     queue and this ticket is NOT complete`: the ticket is **not** complete, whatever
+     the board now shows. Go to "Failed".
+
+   The command exits non-zero for only two reasons — it was handed something that is not
+   a usable work item key, or the `done` label could not be written — so its exit code
+   agrees with that second ending. Both you must report: go to "Failed" if it does.
+
+   Then comment the commit back onto the ticket:
+
+   ```
+   node "$RALPH_PKG_DIR/lib/jira-queue.js" comment "{{RALPH_TASK_KEY}}" "<body>"
+   ```
+
+   **The comment is the only audit trail that leaves this machine.** The commit message
+   names the ticket (step 6), but nothing pushed that commit and no PR was opened, so it
+   is readable only by somebody sitting at this checkout. The ticket is the one artifact
+   that outlives this invocation. The body must carry, in prose you write:
+
+   - the **commit SHA** — take it from `git rev-parse --short HEAD`, never from memory;
+   - the **branch** it is on, `{{DEV_BRANCH}}`, and that the commit is **local and
+     unpushed** on the machine that ran Ralph;
+   - the **test and lint result** from step 5 (`{{TEST_CMD}}` and `{{LINT_CMD}}`,
+     naming what was skipped if either was empty);
+   - one line on what changed, for a reader who will not have the diff in front of
+     them.
+
+   Quote the whole body as **one argument**, and the key as well. A failed comment
+   cannot undo the work, so the command always exits 0 and prints its reason on stderr
+   if the post did not land — read that line, and do not retry it more than once.
+
+   Then **stop**.
 
 ## Failed (at any point)
 
-- Leave a short reason **on the ticket, as a comment**. That comment is the Jira
-  analog of the `## Ralph failure` note folder mode appends to its task file: the
-  ticket is the only artifact that outlives this invocation, so a reason left
-  anywhere else is a reason nobody reads. `acli jira workitem comment` is the
-  subcommand; unlike the `view` argv in step 1, no part of Ralph spells its flags
-  out, so run `acli jira workitem comment --help` first and use what it prints. Find
-  the **non-interactive flag** in that output and pass it. Ralph's own writes spell it
-  `--yes` — every write in `lib/jira-queue.js` carries one — but that is read off
-  `edit` and is not verified for `comment`, so take the spelling from `--help` rather
-  than from here. It is not optional either way: this loop runs unattended, usually in
-  a detached tmux pane with no terminal to answer on, so a write that stops to confirm
-  hangs the whole iteration until something kills it — and the reason you came here to
-  record is then never written at all.
+- Leave a short reason **on the ticket, as a comment** — the same command step 7
+  uses, and for the same reason: the ticket is the only artifact that outlives this
+  invocation, so a reason left anywhere else is a reason nobody reads.
+
+  ```
+  node "$RALPH_PKG_DIR/lib/jira-queue.js" comment "{{RALPH_TASK_KEY}}" "<reason>"
+  ```
+
+  Say what you tried, where it stopped, and what a human would have to decide. It
+  always exits 0; a comment that could not be posted prints its reason on stderr.
+- Do **not** mark the ticket complete. `complete` is step 7's command and step 7
+  only: it labels the ticket `done`, which takes it out of Ralph's queue for good,
+  and a ticket nobody resolved must stay in the queue.
 - Do **not** label the ticket `failed`, and do not remove `in-progress`. Sweeping
   a ticket this invocation could not finish belongs to the outer bash, and that
   sweep is not wired yet — a label you invent here is a label nothing will ever
@@ -377,10 +448,12 @@ reviewers** instead of a single pass:
   than work it.
 - NEVER `rm -rf` on an absolute path. Use `rm` on a specific file.
 - NEVER merge PRs directly. Jira mode opens no PRs.
-- NEVER transition `{{RALPH_TASK_KEY}}` to another status, resolve it, close it,
-  or add a done label. Jira mode tracks completion through a commit that names the
-  key (step 6) and nothing else; writing a transition here would be a board change
-  no other part of the loop expects.
+- NEVER write to `{{RALPH_TASK_KEY}}` with `acli` yourself — no transition, no
+  label, no comment, no edit of any kind. Every board write this invocation is
+  allowed to make goes through `lib/jira-queue.js`, and only the two calls step 7
+  names (`complete`, then `comment`); that module owns every flag, and a write you
+  spell yourself is a board change nothing else in the loop knows about. Completion
+  itself is permitted by that path and by no other, and only after the commit.
 - NEVER emit your final message while a dispatched subagent is still
   running. See "Dispatch discipline" — the session is terminated at the
   background-wait ceiling and the whole invocation is lost.

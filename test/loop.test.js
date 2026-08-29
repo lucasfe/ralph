@@ -1475,7 +1475,7 @@ exit 0
     const counted = calls.find((c) => c.includes('--count'))
     const picked = calls.find((c) => c.includes('--limit 1'))
     expect(counted, calls.join('\n')).toContain(JQL)
-    expect(counted).toContain('labels NOT IN (in-progress, failed, do-not-ralph)')
+    expect(counted).toContain('labels NOT IN (in-progress, done, failed, do-not-ralph)')
     expect(picked, calls.join('\n')).toContain('--fields key,summary')
     expect(picked).toContain('ORDER BY created ASC')
 
