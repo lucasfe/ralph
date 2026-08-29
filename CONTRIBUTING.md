@@ -216,42 +216,71 @@ The duplication is the instrument; do not "DRY" it away.
 - Follow strict semver: patch = bug fix, minor = additive feature,
   major = breaking with migration notes added to `CHANGELOG.md`.
 
-## Orchestrator templates: edit both, always
+## Orchestrator templates: edit them all, always
 
-Ralph ships **three** orchestrator templates:
+Ralph ships **four** orchestrator templates:
 
 - `templates/prompt-team.md` — the Claude Code orchestrator (GitHub source).
 - `templates/prompt-team-codex.md` — the Codex orchestrator (GitHub source).
 - `templates/prompt-team-folder.md` — the folder-mode orchestrator (#565),
   selected by `build-prompt.js` when `TASK_SOURCE=folder`. It composes the
-  **same** shared role files as the other two but forks the intake and
+  **same** shared role files as the others but forks the intake and
   completion prose: it reads a local task file, moves it `todo → in-progress`,
   commits straight to `DEV_BRANCH`, and moves the file to `done/` (no PR/merge).
-  It is **not** covered by `template-parity.test.js` (that test asserts only the
-  Claude ↔ Codex pair), so its shared skeleton can drift — keep it in sync by
-  hand when you touch a role placeholder or a numbered step that all templates
-  share.
+- `templates/prompt-team-jira.md` — the Jira orchestrator (#128), selected the
+  same way when `TASK_SOURCE=jira`. **Derived from the folder template**, because
+  the two share a delivery shape: direct commit to `DEV_BRANCH`, no feature
+  branch, no PR, no auto-merge. What is forked is the intake and the ticket's
+  name — the agent is handed a key through `{{RALPH_TASK_KEY}}` (the one variable
+  no other template uses) and reads its own work item with
+  `acli jira workitem view`, never `gh`.
 
-The shared specialist roles (`templates/roles/*.md`) are composed into all via
+The last two are picked by source rather than by agent: `build-prompt.js` keeps a
+`SOURCE_TEMPLATES` map (`{ folder, jira }`) whose entry **overrides** the
+agent-selected orchestrator, so a `folder` or `jira` repo gets its own template
+whatever `RALPH_AGENT` says, while `github` keeps the agent's.
+
+The shared specialist roles (`templates/roles/*.md`) are composed into all four via
 the same `{{ROLE_DEV}}` / `{{ROLE_QA}}` / `{{ROLE_REVIEW}}` / `{{ROLE_WRITER}}` /
-`{{ROLE_EXPLORER}}` placeholders, and all consume the same `{{INSTALL_CMD}}`,
-`{{TEST_CMD}}`, branch, merge, and `{{RALPH_HEAVY_TIER}}` variables. Only the
-**orchestrator body** is forked — it describes how each agent delegates (Claude
-Code's subagents vs. Codex's sequential-persona degradation) and, for the
-folder template, how intake/completion differ from the GitHub flow, so the
-bodies are deliberately not identical.
+`{{ROLE_EXPLORER}}` placeholders, and all four consume the same `{{INSTALL_CMD}}`,
+`{{TEST_CMD}}`, branch and `{{RALPH_HEAVY_TIER}}` variables. The **merge**
+variables are the exception, and deliberately so: `{{PR_TARGET}}` and
+`{{MERGE_STRATEGY}}` appear only in the two GitHub templates, because a
+commit-direct template that interpolated a merge strategy would be describing a
+flow its own mode does not have. Only the **orchestrator body** is forked — it
+describes how each agent delegates (Claude Code's subagents vs. Codex's
+sequential-persona degradation) and, for the folder and Jira templates, how
+intake/completion differ from the GitHub flow, so the bodies are deliberately not
+identical.
 
 **When you change one orchestrator template, change the others to match.** Any
 edit to a shared placeholder, a numbered step heading, the `## Absolute
 restrictions` block, or a PR-body section name must land in **all** the files it
-applies to. `lib/template-parity.test.js` enforces this **for the Claude ↔ Codex
-pair** in CI: it asserts that both GitHub templates carry the same role
-placeholders, variables, step headings, restriction rules, and PR-body sections,
-so a one-sided edit fails the suite instead of shipping a skewed Codex prompt.
-The folder template is **not** in that assertion, so keep it in sync by hand.
-The forked orchestrator prose is not asserted, so you are free to word each
-agent's delegation instructions differently — just keep the shared structure in
-lockstep.
+applies to. `lib/template-parity.test.js` enforces this in CI over **two pairs**,
+not one:
+
+- **Claude ↔ Codex** (#554) — both GitHub templates carry the same role
+  placeholders, variables, step headings, restriction rules, and PR-body
+  sections, so a one-sided edit fails the suite instead of shipping a skewed
+  Codex prompt.
+- **folder ↔ Jira** (#128) — both commit-direct templates carry the same role
+  placeholders, shared variables, step headings and commit-summary sections, and
+  **neither** may reference a PR/merge variable. The two places they are asserted
+  to *differ* are pinned as well, so the divergence stays deliberate:
+  `{{RALPH_TASK_KEY}}` is Jira-only, and the folder-only `.ralph/tasks/hitl/`
+  lane is swapped for the `do-not-ralph` label in the restrictions.
+
+Separately, the `## Dispatch discipline` section is asserted across the three
+**Claude-driven** templates (`prompt-team.md`, `prompt-team-folder.md`,
+`prompt-team-jira.md`) — including the paragraph that names what an orphaned
+dispatch already cost — and asserted **absent** from the Codex one, which degrades
+to sequential personas and so has no pending dispatch to orphan.
+
+What no assertion ties together is the **Claude ↔ folder** relationship outside
+that section, so a `prompt-team.md` edit to a step all four share can still leave
+the commit-direct pair behind: keep that one in sync by hand. The forked
+orchestrator prose is not asserted either, so you are free to word each agent's
+delegation instructions differently — just keep the shared structure in lockstep.
 
 ### Codex maturity, sandbox, and network — do not "tighten" these
 
@@ -271,6 +300,25 @@ lockstep.
   because the loop must run `gh`, `npm`, and `git push` every iteration.
   Disabling network access breaks the loop — no PR can be opened or merged. Do
   not "harden" it away.
+
+### Jira maturity — the stub is the only Jira Ralph has met
+
+- **No test has ever spoken to a real Jira site, and none should.** The `acli`
+  the suite drives is a bash script on a prepended `PATH`, and it never comes off
+  `PATH` — not even in the test about a missing binary, which makes the stub answer
+  the way an absent command does instead. A claim is a **write** to somebody's
+  board, so this is a standing rule and not a gap to close: if you need to see the
+  real thing, do it by hand against a throwaway project, never from the suite.
+- **The `acli` interface is transcribed, not measured.** The flag spellings, the
+  fields `search` accepts, the ordering assumption behind `--limit 1`, and the JSON
+  envelope a work item arrives in are all what Atlassian's documentation describes.
+  `lib/jira-queue.js` keeps every argv in one place and says so at each one — that
+  is where a field-reported usage error is fixed, and the comments naming which
+  lines are unmeasured are load-bearing. Do not delete them.
+- **Keep the README's live-Jira callout honest** — the same rule as the Codex one
+  above. `TASK_SOURCE="jira"` carries a warning that none of it has run against a
+  live Jira; do not upgrade that claim until a real run against a real project has
+  happened (#136).
 
 ## The sprite banner: generated asset, placeholder art
 

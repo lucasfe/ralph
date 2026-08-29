@@ -1371,10 +1371,11 @@ exit 0
 })
 
 // ---------------------------------------------------------------------------
-// Issue #127 — TASK_SOURCE=jira. The loop SELECTS a Jira ticket and CLAIMS it, so a run
-// visibly takes ownership on the board before anything else can happen. Three arms of the
-// script are involved and all three are exercised here through the real JS bridges: the
-// source normalizer, `queue_count`, and the selection block.
+// Issues #127 + #128 — TASK_SOURCE=jira. The loop SELECTS a Jira ticket and CLAIMS it (#127),
+// so a run visibly takes ownership on the board before anything else can happen, and then
+// HANDS THAT TICKET TO THE AGENT (#128). Four arms of the script are involved and all four
+// are exercised here through the real JS bridges: the source normalizer, `queue_count`, the
+// selection block, and the claim-then-dispatch block.
 //
 // `acli` IS A STUB ON PATH, and that is the whole point of testing it here: no test in this
 // repo may run the real Atlassian CLI (there is none in CI, and a claim is a WRITE to
@@ -1384,17 +1385,24 @@ exit 0
 // terminate: once the ticket carries `in-progress`, the composed query stops matching it,
 // so the next count is 0.
 //
-// The AGENT IS NOT INVOKED for a Jira ticket yet — #127 ships selection and the claim — so
-// the `claude` stub here records any invocation in order to prove there was none.
+// THE AGENT IS A STUB TOO, and it records both its argv AND its stdin: stdin is the whole
+// handoff in jira mode, because bash tells the agent nothing but the key and the rendered
+// prompt is where that key turns into instructions. So the `claude` stub keeps the prompt on
+// disk and the prompt-builder is the REAL lib/build-prompt.js — the one seam that proves the
+// exported key reaches the template. `gh` stays a recording stub for the opposite reason:
+// jira mode must never reach GitHub, and the log's absence is the proof.
 // TASK_SOURCE and JIRA_JQL arrive via env (no ralph.config.sh) for the same reason as the
 // folder suite: it keeps the lazy-validation block skipped so the test isolates the loop.
 // ---------------------------------------------------------------------------
-describe('ralph.sh jira task source — issue #127', () => {
+describe('ralph.sh jira task source — issues #127 + #128', () => {
   const JQL = 'project = RALPH AND statusCategory != Done'
 
   const acliLog = () => join(workdir, 'acli-called.log')
   const claimedFlag = () => join(workdir, 'acli-claimed')
   const claudeLog = () => join(workdir, 'claude-called.log')
+  // The prompt the agent was actually fed (#128) — the stub's stdin, appended so a
+  // second invocation could never masquerade as the first.
+  const promptLog = () => join(workdir, 'claude-prompt.txt')
 
   const readLog = (file) => (existsSync(file) ? readFileSync(file, 'utf8') : '')
   const acliCalls = () => readLog(acliLog()).split('\n').filter(Boolean)
@@ -1411,6 +1419,10 @@ case "$*" in
   *run-state.js*) exec "${REAL_NODE}" "$@" ;;
   *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
   *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
+  # #128: the REAL prompt builder, not the "PROMPT" placeholder below. What this
+  # suite has to prove is that the key bash exported is the key the agent is told
+  # to work, and a stubbed builder would prove only that bash ran something.
+  *build-prompt.js*) exec "${REAL_NODE}" "$@" ;;
 esac
 echo "PROMPT"
 exit 0
@@ -1439,7 +1451,10 @@ exit 0
     )
     writeStub('jq', `#!/bin/bash\ncat > /dev/null 2>/dev/null || true\nexit 0\n`)
     writeStub('gh', `#!/bin/bash\necho "$*" >> "${join(workdir, 'gh-called.log')}"\nexit 0\n`)
-    writeStub('claude', `#!/bin/bash\ncat > /dev/null\necho "$*" >> "${claudeLog()}"\nexit 0\n`)
+    writeStub(
+      'claude',
+      `#!/bin/bash\ncat >> "${promptLog()}"\necho "$*" >> "${claudeLog()}"\nexit 0\n`,
+    )
   }
 
   const runJira = (extraEnv = {}) =>
@@ -1481,18 +1496,60 @@ exit 0
     expect(typeof record.current.started_at).toBe('string')
   })
 
-  it('invokes neither gh nor the agent — #127 ships selection and the claim only', () => {
+  it('invokes the agent once for the claimed ticket and never invokes gh — #128', () => {
     seedJiraStubs()
     const res = runJira()
     expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+    // GitHub is not in this flow at all: the queue, the claim and the work item all
+    // come from acli, and a `gh` call here would mean an arm leaked across sources.
     expect(
       existsSync(join(workdir, 'gh-called.log')),
       `gh was invoked in jira mode:\n${readLog(join(workdir, 'gh-called.log'))}`,
     ).toBe(false)
+
+    // ONE invocation for the ONE ticket the iteration claimed. #127 shipped
+    // selection + the claim and stopped; #128 is the dispatch that follows it.
     expect(
       existsSync(claudeLog()),
-      `the agent was invoked for a jira ticket:\n${readLog(claudeLog())}`,
-    ).toBe(false)
+      `the agent was NOT invoked for the claimed jira ticket`,
+    ).toBe(true)
+    expect(readLog(claudeLog()).split('\n').filter(Boolean)).toHaveLength(1)
+  })
+
+  it('logs the agent run under the ticket KEY, not the empty numeric handle — #128', () => {
+    seedJiraStubs()
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    // $num is deliberately empty in jira mode (lib/run-state.js derives the numeric
+    // handle from the key), so passing it to run_agent_for_issue would collapse every
+    // ticket onto `logs/ralph-issue-.log`. The key keeps one log per ticket — and this
+    // pair of assertions is the only thing that can tell those two apart.
+    expect(existsSync(join(workdir, 'logs', 'ralph-issue-FOO-123.log'))).toBe(true)
+    expect(existsSync(join(workdir, 'logs', 'ralph-issue-FOO-123.jsonl'))).toBe(true)
+    expect(existsSync(join(workdir, 'logs', 'ralph-issue-.log'))).toBe(false)
+  })
+
+  it('feeds the agent a fully rendered jira prompt naming the claimed ticket — #128', () => {
+    seedJiraStubs()
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    const prompt = readLog(promptLog())
+
+    // The source picked the template, not the agent: jira mode gets the commit-direct
+    // orchestrator even though RALPH_AGENT is the default claude.
+    expect(prompt, prompt.slice(0, 400)).toContain(
+      '# Ralph Loop — Team orchestrator (Jira mode)',
+    )
+    // The exported key reached {{RALPH_TASK_KEY}} — the read, the commit subject and
+    // the trailer all name the ticket bash claimed.
+    expect(prompt).toContain('acli jira workitem view --key FOO-123')
+    expect(prompt).toContain('fix: <description> (FOO-123)')
+    expect(prompt).toContain('Resolves FOO-123')
+    // Nothing was left unrendered, and nothing tells the agent to reach for GitHub.
+    expect(prompt).not.toMatch(/\{\{[A-Z_]+\}\}/)
+    expect(prompt).not.toMatch(/gh issue/)
+    expect(prompt).not.toMatch(/gh pr create/)
   })
 
   it('exits on an empty Jira queue without spawning a pick', () => {
