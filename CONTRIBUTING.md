@@ -84,6 +84,76 @@ by `test/source-control-bytes.test.js` and `test/source-control-bytes.qa.test.js
 (which plants offenders and proves the detector actually fires), both driving the
 one shared detector in `test/helpers/source-control-bytes.js`.
 
+### What a static source sweep may be asked (#119)
+
+Several specs here read this repository's own source and assert something about
+the set of files they find. That is a legitimate instrument with a boundary:
+a sweep answers a question about **the text** exactly, and a question about
+**what a user sees** only by proxy. "Where is this sentence composed", "which
+modules can reach this module", "is anybody still pointed at the old door" are
+properties of the source, and a sweep is the honest way to ask them — it is why
+`git-remote-slug.extraction.qa.test.js` reads files off disk while the three
+specs beside it read none, since source is not a fixture and needs no checkout
+of anybody's repository. "Who prints this line" is **not** that kind of
+question. The nearest thing a sweep can see is how the read is *spelled*, and
+the spelling is not the property anybody cares about. Drive the stream instead.
+
+#119 is where that cost was paid, and it was paid twice, in opposite
+directions. The `RALPH_AGENT` fallback warning is composed in one place and
+returned rather than printed (`resolveAgent`, #108), so which modules put it in
+front of somebody was pinned by a sweep of `lib/` for a `warning`-shaped
+pattern. **Loose, it read prose as code:** "mentions the word `warning`" matched
+`lib/commands/start.js` on `banner.warning` — `lib/banner-mode.js`'s own
+unrelated fallback warning — and on a line of text telling a user to look at
+stderr, so a module joined the printer set on the strength of another object's
+field and a sentence addressed to a human. **Tightened to a destructure or a
+`warning:` key (#69), it stopped seeing code:** `resolveAgent(env).warning`, or
+that same read through a variable, matches neither, so a new printer written
+that way would have left the swept set unchanged and the literal list would
+still have compared equal — the test whose entire purpose is to know who prints
+the warning, passing while a printer walked in behind its back. The mirror image
+is as bad: refactoring an existing consumer's destructure into a property read
+turns it red for a change that moved no bytes on any stream.
+
+So that claim is **behavioural** now: one row per call site, each driven with an
+unrecognised `RALPH_AGENT`. The four printers must carry the resolver's own
+sentence — the resolver is the oracle, so the needle cannot drift from the
+wording — on the stream that command actually writes to, and every other caller
+must carry it on **no** channel, `stdout` and `stderr` plus an `elsewhere` that
+folds in generated files, logged lines and returned artefacts, because a
+diagnostic smuggled into the file the loop sources is as visible as one on a
+stream. Every row also asserts **which agent the module resolved**, since a
+silence assertion is worthless if the driver never reached the call site. Two
+sweeps survive #119, and they survive on the rule rather than in spite of it:
+where the sentence is composed (with comments stripped, exactly one module under
+`lib/` spells the assignment-shaped prefix `RALPH_AGENT='`), and which modules
+can reach the resolver at all — re-asked as a question about the **import
+edge**, `lib/`, `bin/` and `scripts/` swept for the specifier
+`agent-registry.js`, which a static `from`, an `import()`, a `require()` and a
+re-export all have to write down and which no rename at the boundary can hide.
+Roster completeness is a claim about the codebase and a sweep belongs on it; who
+prints is a claim about a user and a sweep never did. A sweep whose value is
+completeness is also made to find things it must find, for the same reason
+#107's byte guard fails closed.
+
+Two notes on needles, since both mistakes are easy to make again. **A needle
+must be unique to the thing under test**: the bare word `unrecognized` is not,
+because `lib/banner-mode.js` composes `RALPH_BANNER=<value> unrecognized;
+falling back to …` for a different knob, so it names the *genre* of fallback
+warning rather than this one — #69's ambiguity wearing a needle's clothes. **And
+a channel that legitimately carries the assignment can only bear the composed
+sentence**: `ralph start` shell-quotes the configured value into the digest
+window's command line on purpose, so a repo that committed `codx` has an argv
+holding `RALPH_AGENT='codx'` while behaving exactly as designed, and keying that
+channel on the prefix or on the raw value would go red on correct behaviour —
+#119's own false red, one channel over. The contract is asserted by
+`lib/agent-registry.warning.consumers.qa.test.js` (ten rows across nine modules;
+`lib/commands/doctor.js` holds two call sites with opposite specifications) and
+`lib/agent-registry.warning.consumers.coverage.qa.test.js` (the roster on the
+import edge, plus two channels nothing watched before — `ralph init`'s six
+generated files, and the exec argv a `ps` or an audit log records), with the
+surviving composition sweep in `lib/agent-registry.warning.qa.test.js`.
+
 ## Pull requests
 
 - Branch off `main` and open a PR against `main`.
