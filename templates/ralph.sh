@@ -145,13 +145,42 @@ mkdir -p logs
 # stay last, and they are DEFAULTS: anything already set above wins, so
 # ralph.config.sh keeps the last word. Nothing here needs to know which variables
 # those are.
+#
+# THE BRIDGE'S STDERR IS CAPTURED AND THEN FORWARDED, on both paths (#118). The
+# capture exists to keep other people's WORDS out of the program — a node
+# Deprecation/Experimental notice or an nvm/shim banner on a SUCCESSFUL run would
+# otherwise land in $sh and choke the eval — not to keep them from the user, and
+# discarding it on success was over-collection: `rm -f` with no `cat` ate every
+# sentence the bridge had. It ate a real one. The bridge now says so when
+# RALPH_AGENT is mistyped and it falls back to claude, and a whole overnight run
+# went to the wrong agent in silence because that line was missing. Forwarding
+# restores exactly what the terminal would have shown with no capture at all.
+#
+# THE WHOLE STREAM, unread. This bash holds no agent-specific knowledge (see above)
+# and must not acquire any to do this: no grep for a warning, no test for a prefix.
+# That is why the bridge speaks in a plain stderr line rather than a structured
+# field — there is nothing here to parse it with, and nothing here that should.
+#
+# THE PRICE, accepted deliberately: those deprecation notices and shim banners now
+# reach the terminal on every loop start, where they used to vanish. That is what
+# stderr is for, and swallowing a child's diagnostics to keep a start-up quiet is
+# the bug being fixed here, not a feature to restore. Do not put either `rm` back
+# without its `cat`.
+#
+# TWICE IN THE SOURCE, ONCE PER RUN, and not hoisted. The two branches are mutually
+# exclusive — the failing one ends in `exit 1` — so the duplicated `cat` forwards
+# exactly once either way. There is nowhere to hoist it TO: above the `if` it would
+# read a file the redirect has not filled yet, and below it, it would never run on
+# the path that exits.
 resolve_agent_invocation() {
   local sh _err
   # Fail fast: bash has no agent defaults to fall back to. If the node bridge
   # fails or yields nothing, abort loudly rather than silently guessing.
   # Capture stderr to a temp file so stdout stays PRISTINE for eval: a node
   # Deprecation/Experimental warning (or nvm/shim banner) on a SUCCESSFUL run
-  # must never be folded into $sh, or eval would choke on the warning line.
+  # must never be folded into $sh, or eval would choke on the warning line. Then
+  # forwarded to our own stderr, on BOTH paths — see the header above for why, and
+  # why the two `cat`s stay where they are rather than being hoisted above the `if`.
   _err="$(mktemp)"
   if ! sh="$(node "$RALPH_PKG_DIR/lib/agent-invocation.js" 2>"$_err")" || [ -z "$sh" ]; then
     echo "ralph.sh: failed to resolve agent invocation from lib/agent-invocation.js. Aborting." >&2
@@ -159,6 +188,7 @@ resolve_agent_invocation() {
     rm -f "$_err"
     exit 1
   fi
+  cat "$_err" >&2
   rm -f "$_err"
   eval "$sh"
 }
