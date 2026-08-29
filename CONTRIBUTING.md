@@ -396,14 +396,27 @@ first of them fed by a generator that is not published at all:
   about the last run and tagging it `last-run` would be exactly the overstatement
   the tag exists to prevent. Do not "improve" that into a search. A truncated or
   garbage trailing line is skipped, which is the normal state of a file the loop
-  appends to with `>>` and can be killed mid-write. **The window map is imported,
-  not copied:** `resolveContextWindow` comes from `lib/issue-event.js`, the very
-  function that resolves `context_window` when an event is *written*, so the box
-  and the log cannot come to disagree about the same model id — a second prefix map
-  here is how they would. **And it never throws**, on the same grounds as the rest
-  of the banner: every input is type-checked rather than coerced, because
-  `String(value)` on a hostile bag runs its `toString` and these values come from
-  an ambient environment and a file nobody reads as bytes. #69 changed **nothing**
+  appends to with `>>` and can be killed mid-write — and since #121 that skipping is
+  `lib/issue-event-lines.js`'s, not this module's, so a change to what counts as a
+  log line belongs there. **Both of its imports are borrowed from the telemetry
+  side, not copied:** `resolveContextWindow` comes from `lib/issue-event.js`, the
+  very function that resolves `context_window` when an event is *written*, and
+  `newestIssueEvent` comes from `lib/issue-event-lines.js`, the same *gate* over the
+  same `RALPH_ISSUE_EVENT` lines that `ralph cycle` and `ralph status` read them
+  with, walked from the other end: those two go forward through every event, the box
+  wants only the newest, so it reads from the tail and stops at the first line that
+  parses. One argument twice: the box and the log cannot come to disagree about a
+  model id or about which lines are events, and a second prefix map or a second
+  parser here is precisely how they would — which is what #121 removed, three copies
+  of the walk at a time. Neither edge costs the box a capability — `issue-event.js`
+  reaches only `agent-stream.js`, and `issue-event-lines.js` imports nothing at all,
+  which is the whole reason the shared walk is its own module rather than part of
+  `lib/issue-metrics.js`, where it would have arrived wrapped around `node:fs`. The
+  static reads next door pin that rather than trusting it. **And it never
+  throws**, on the same grounds as the rest of the banner: every input is
+  type-checked rather than coerced, because `String(value)` on a hostile bag runs
+  its `toString` and these values come from an ambient environment and a file
+  nobody reads as bytes. #69 changed **nothing**
   about the telemetry: no new event field, no changed event shape — the box is a
   reader of `issues.jsonl` and never a writer of it.
 - `lib/git-remote-slug.js` — the box's *other* resolved fact, and the whole of
