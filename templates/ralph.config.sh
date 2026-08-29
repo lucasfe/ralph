@@ -23,6 +23,22 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # Task source Ralph pulls work from. "github" (default) resolves open GitHub
 # issues via `gh`; "folder" draws tasks from the local `.ralph/tasks/` tree and
 # commits straight to DEV_BRANCH (no PR/merge). Unset falls back to "github".
+#
+# "jira" is the third value, and right now it is a NAME AND A CHECKLIST rather than
+# a working loop. Be clear about what it does NOT do yet: nothing selects or
+# resolves a Jira ticket, so the loop STILL RUNS THE GITHUB PATH — it reads open
+# GitHub issues, still needs an authenticated `gh`, and still opens PRs. Setting
+# this to "jira" does not point the loop at your Jira board.
+#
+# What it does buy you today is that the prerequisites are checkable BEFORE they
+# are needed. A jira run will want Atlassian's `acli` on PATH and an authenticated
+# session (`acli jira auth login`), and `ralph doctor` reports both once this file
+# says "jira": `acli` as a required dep with a per-platform install hint, and the
+# login state as its own row (reported, never enforced — it cannot fail doctor).
+# doctor also stops listing `gh` under this value, which is honest about the
+# eventual shape and NOT yet about the running loop, since the loop above still
+# uses it. Set it early if you want the setup work done in advance; leave it alone
+# until ticket selection lands if you do not.
 TASK_SOURCE="{{TASK_SOURCE}}"
 
 # How much of the startup banner `ralph start` draws. "full" (the default) plays the

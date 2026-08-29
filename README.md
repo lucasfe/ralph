@@ -12,7 +12,10 @@ By default the coding agent is **Claude Code**. Ralph can also drive the
 By default Ralph draws its work from **GitHub issues** (the flow described
 above). It can instead pull tasks from a **local `.ralph/tasks/` folder** with
 no GitHub remote, auth, or `gh` dependency — committing straight to your dev
-branch with no PR. See [Choosing the task source](#choosing-the-task-source).
+branch with no PR. A third source name, **`jira`**, is accepted so that a Jira
+run's prerequisites can be checked in advance, and it does **not** yet draw work
+from a Jira board: a `jira` run still reads GitHub issues. See
+[Choosing the task source](#choosing-the-task-source).
 
 > **⚠️ Codex support is experimental.** The Codex path is unit- and
 > stub-tested (registry, stream parsing, invocation argv, auth probe, template
@@ -48,9 +51,12 @@ you configure. Only the selected agent's CLI is required; `ralph doctor`
 validates that one and never asks a Codex-only machine to install `claude` (or
 vice-versa). `gh` is required **only** for the default GitHub task source — in
 folder mode (`TASK_SOURCE=folder`) `ralph doctor` skips it, so a repo with no
-GitHub remote needs only `git`, the agent CLI, and `jq` (see
-[Choosing the task source](#choosing-the-task-source)). macOS, Linux, and WSL2
-are supported.
+GitHub remote needs only `git`, the agent CLI, and `jq`. Under
+`TASK_SOURCE=jira` the same gate swaps `gh` for Atlassian's `acli`, which
+`ralph doctor` then treats as required and reports the login state of — read
+[Choosing the task source](#choosing-the-task-source) before setting that one,
+because it is a prerequisite check rather than a working Jira loop. macOS,
+Linux, and WSL2 are supported.
 
 ## Quick start
 
@@ -82,7 +88,10 @@ coding-agent picker (see below), and even that is skipped when a
 `--agent` flag is passed or stdin is not a TTY (it defaults to `claude`).
 
 `ralph doctor` checks the deps required by the agent and task source you
-configured, and heads its report with the same **identity box** `ralph start`
+configured — the source read out of the committed `ralph.config.sh` line first and
+your environment only where that file assigns it nothing, the same way round as
+`ralph start` and `ralph status` — and heads its report with the same **identity
+box** `ralph start`
 opens with — described a few paragraphs down, and here carrying the facts a
 diagnostic is asked for, in one block to paste into a bug report:
 
@@ -375,10 +384,14 @@ that line means `claude`, and both the `agent` row and the warning above the box
 follow it rather than reporting an environment value the loop will never see.
 
 The `source` row is the resolved [`TASK_SOURCE`](#choosing-the-task-source) —
-`github` or `folder` — and the `repo` row under it is the repository the loop will
-read issues from, `owner/name`. **`repo` is a github-mode row only:** a folder-mode
+`github`, `folder` or `jira` — and the `repo` row under it is the repository the loop
+will read issues from, `owner/name`. **`repo` is drawn for every source except
+`folder`:** a folder-mode
 run draws no such row at all, because there is no repository it reads issues from
-and naming one would be naming a fact that is not about the run. Both rows are
+and naming one would be naming a fact that is not about the run. A `jira` run does
+draw it, and that is the honest row rather than a leftover: nothing resolves a Jira
+ticket yet, so that run reads GitHub issues out of exactly the repository named
+here. Both rows are
 there for the same reader: the one running Ralph in several checkouts of the same
 project, or in a fork, who wants to know which one this loop is about to work on
 before it starts working.
@@ -769,18 +782,31 @@ Ralph draws its work from one **task source** per project, recorded as
   branch**, and moves the task file to a terminal directory. No PRs, no
   auto-merge, and no `gh` dependency — folder mode needs only `git`, the agent
   CLI, and `jq`.
+- **`jira`** — a **name and a prerequisite check, not yet a working loop.** What it
+  does not do is the part worth stating first: nothing selects or resolves a Jira
+  ticket, so a `jira` run **still runs the GitHub path** — it reads open GitHub
+  issues, still needs an authenticated `gh`, and still opens PRs. Setting this does
+  not point the loop at your Jira board. What it buys you today is that a Jira run's
+  prerequisites become checkable **before** they are needed: `ralph doctor` asks
+  for Atlassian's `acli` as a required dep, with a per-platform install hint, and
+  reports whether that CLI is
+  logged in. Set it early if you want the setup work done in advance; leave it
+  alone until ticket selection lands if you do not. See
+  [The `jira` source today](#the-jira-source-today) for exactly what that check
+  covers and what it leaves to you.
 
 Pick the source at `ralph init` time:
 
 ```bash
 ralph init --source folder    # write TASK_SOURCE="folder"
 ralph init --source github    # write TASK_SOURCE="github" (same as the default)
+ralph init --source jira      # write TASK_SOURCE="jira" (flag only — see below)
 ralph init                    # interactive prompt on a TTY, else defaults to github
 ```
 
 The `--source` value is case-insensitive and trimmed, and it is **validated
 before anything is written**: an invalid value is **rejected** with
-`❌ Unknown task source '<x>'. Valid sources: github, folder.` and a nonzero
+`❌ Unknown task source '<x>'. Valid sources: github, folder, jira.` and a nonzero
 exit, so a mistyped flag never silently falls back. `<x>` is sanitised exactly as
 the [`--agent` rejection](#choosing-the-coding-agent) is — your value, untrimmed
 and in its original case, with control characters replaced by `U+FFFD` and the
@@ -789,17 +815,28 @@ echo capped at 200 characters — so the rejection is always one line.
 When you run `ralph init` in an interactive terminal **without** `--source`, it
 prompts `Draw tasks from a local .ralph/tasks/ folder instead of GitHub? [y/N]:`
 — answer `y`/`yes` for `folder`; a blank answer or anything else keeps the
-default `github`. When stdin is **not** a TTY and no flag is passed, `ralph
+default `github`. That prompt is a yes/no about the folder tree, so the two
+answers it has are the only two it can give: **`jira` is flag-only**, which is
+deliberate while it resolves no ticket — you have to ask for it by name. When
+stdin is **not** a TTY and no flag is passed, `ralph
 init` skips the prompt and defaults to `github` silently, so existing
 automation keeps working unchanged.
 
 To switch an existing project, edit `TASK_SOURCE` in `ralph.config.sh` by hand.
 The bash loop, the prompt builder, and `ralph doctor`/`cycle` preflight all read
 this one value, so the loop and prompt consistently honor it on every run.
+`ralph doctor` reads it the same way round as the loop does — the committed
+`ralph.config.sh` line **first**, the environment only where that file assigns the
+name nothing at all — which is what `ralph start` and `ralph status` already did.
+So a project that only ever writes the value into that file, which is exactly what
+`ralph init` does, now gets one answer from all three: a config-only
+`TASK_SOURCE="folder"` drops the `gh` row from `ralph doctor`, where before it took
+one.
 `ralph start` also reports the resolved source in the `source` row of the identity
-box it opens with, and in `github` mode adds a `repo` row naming the repository the
+box it opens with, and adds a `repo` row naming the repository the
 loop will read issues from — a folder-mode run draws no `repo` row at all, because
-there is no repository it reads issues from. See
+there is no repository it reads issues from, while a `jira` run draws one, since
+that source still reads GitHub issues. See
 [the quick start](#quick-start) for how that slug is resolved.
 
 ### Folder-mode layout
@@ -883,6 +920,47 @@ with the rest of the mode.
 > **Accepted tradeoff:** committing straight to the dev branch means folder mode
 > has no per-task rollback boundary — a bad autonomous commit lands directly on
 > `DEV_BRANCH`.
+
+### The `jira` source today
+
+Setting `TASK_SOURCE="jira"` changes two things, and neither of them is the loop.
+The first is the dependency check: it swaps the `gh` row for an `acli` one, on the
+same source gate `gh` rides on, and `acli` is **critical** in its own right —
+a Jira run has no fallback path to a ticket without it, exactly as a GitHub run has
+none without `gh` — so a missing `acli` fails the diagnostic and prints the install
+hint for your platform. The second is one row added for the **login state**, which
+is a different question from `acli` being on `PATH`. That one row has three
+readings, and a run prints exactly one of them:
+
+```
+  ✓ jira auth
+  ! jira auth (not authenticated)
+      login: acli jira auth login
+  ! jira auth (not verified)
+      check: acli jira auth status
+```
+
+Auth is **reported, never enforced.** Both failing states are a yellow `!` and
+neither can move `doctor`'s exit code — the same treatment `doctor` already gives
+agent-CLI health, and for the same reason: an expired token must not start failing
+every wrapper and CI step that gates on `ralph doctor`. `not verified` is an honest
+third answer rather than a softer failure: it means the check could not be **run**,
+not that a login was refused, so its hint is the command to run by hand. (A missing
+`acli` is not that state — the probe ran and failed, so the row reads `not
+authenticated` beside the `✗ acli` dep row that names the real problem.) The verdict
+keys on `acli jira auth status`'s **exit code** alone and never on its output text,
+which a CLI is free to reword between releases.
+
+What does **not** change is where the work comes from. The loop reads open GitHub
+issues under this value exactly as it does under `github`, needs an authenticated
+`gh` to do it, and opens PRs — so `ralph start`'s banner still names the repository
+in its `repo` row, and `ralph status` still counts the queue with `gh`. Because the
+dependency check follows the name you set, `ralph doctor` stops listing `gh` here
+while the loop is still using it. That is honest about where `jira` is going and not
+yet about what the loop does: a `jira` repo's `gh` install and `gh auth login` stay
+your responsibility until ticket selection lands, and the loop's own preflight is
+where a broken `gh` still stops work — with the cause named, rather than as an
+empty queue.
 
 ## Scheduling Ralph (macOS launchd)
 
@@ -1245,7 +1323,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. It is also the model the identity box [`ralph start`](#quick-start) opens with names on a Codex project — ``agent   codex — gpt-5-codex (configured)`` — and the tag is literal: for Codex this value *is* the answer, so the metrics log is never consulted for that row (Codex's stream carries no model id, so the log would hold nothing but a staler copy of this same value). Unset, the row reads ``codex — model resolves at first run`` and names no model at all. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
-| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs) or `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`). Unset/unrecognized falls back to `github`. Set by `ralph init --source <name>` / the interactive picker. See [Choosing the task source](#choosing-the-task-source). |
+| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today is **a name and a prerequisite check rather than a working loop** — nothing selects a Jira ticket, so the loop still reads GitHub issues, still needs an authenticated `gh` and still opens PRs; what the value changes is that [`ralph doctor`](#the-jira-source-today) asks for Atlassian's `acli` instead of `gh` and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. Set by `ralph init --source <name>`; the interactive picker offers `github` and `folder` only, so `jira` is flag-only. This file is read **first** and the environment only where this file does not assign the name at all — the loop *sources* it with `set -a`, and `ralph start`, `ralph status` and `ralph doctor` resolve it the same way round. See [Choosing the task source](#choosing-the-task-source). |
 | `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
 | `TEST_CMD`            | autodetected (e.g. `npm test`)       | Test command run before opening a PR. Empty = skip.                    |
 | `LINT_CMD`            | autodetected (e.g. `npm run lint`)   | Lint command run before opening a PR. Empty = skip.                    |
@@ -1299,7 +1377,7 @@ command line.
 | `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line — the one-second splash with it, so a run under this variable spends no time and writes no cursor movement on an animation nobody would have seen. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box under the sprite — that is facts rather than decoration and prints on every run bar one an explicit [`RALPH_BANNER=off`](#configuration-reference) silenced — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. The box [`ralph doctor`](#quick-start) heads its report with is coloured by picocolors' rule rather than this presence one, exactly like the ✓ / ✗ marks under it — so `NO_COLOR=1 ralph doctor` is plain from top to bottom, a piped `ralph doctor` emits not one escape byte *unless* `FORCE_COLOR` or `CI` is set (picocolors keeps colour on a non-TTY for both — its rule, not this one, and it paints the ✓ / ✗ marks and the `cached` row alike), and `NO_COLOR= ralph doctor` on a terminal keeps the colour on both the marks and the box's `cached` row. |
 | `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run of `ralph start`, of [`ralph doctor`](#quick-start) **or** of [`ralph status`](#quick-start) — the latter two head their reports with the same identity box: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally — in `ralph start`. `ralph doctor` and `ralph status` fall back the same way and **say nothing at all**: the three commands share the knob and its precedence, not the warning, so a typo you never see reported here is one `ralph start` will name for you (`status` could not report it if it wanted to — it writes to stderr in no mode, which is what keeps `ralph status --json` pipeable). `full` and `static` are indistinguishable in both, neither of which draws a sprite at any value. In `ralph status` this reaches the human view alone: `--json` prints its one document whatever the value, and the `never-run` mode prints no box at any value, having no run to identify. |
 | `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
-| `GH_REPO`               | unset (the `ralph.config.sh` line, then `origin`) | Not Ralph's variable but [`gh`'s](https://cli.github.com/manual/gh_help_environment), and it is listed here because Ralph reads it for one row: the `repo` row of the identity box [`ralph start`](#quick-start) opens with, which names the repository the loop will read issues from. Set, it **decides over `origin`** — because it decides for every `gh` command the loop runs, so a box that named `origin`'s slug while the loop read someone else's would be wrong in exactly the situation that row was added for. It does **not** decide over the file: a `GH_REPO` assignment in `ralph.config.sh` wins over this variable, which is deliberately the opposite way round to [`RALPH_BANNER`](#configuration-reference) and the same way round as the loop, since the loop *sources* that file with `set -a` — a committed value is what those very `gh` calls will read, so the row follows it. It wins **even when it is blank**, which is the surprising half: `GH_REPO=` in that file masks whatever your shell exported in the shell that sources it, `gh` reads the empty value as unset and resolves its base repository from `origin`, and so does this row. The environment answers only where the file assigns the knob **nothing at all** — a commented-out line, or no line — which is also the only case bash falls through on. `gh`'s own spelling is accepted (`[HOST/]OWNER/REPO`, with the host dropped), a blank value counts as unset whichever source it came from, and a value that is not a slug at all draws **no row** rather than falling back to `origin`: naming a repository the loop will not use is worse than naming none. With neither source naming one, the slug comes from `origin`'s url in the `.git/config` of the directory you ran the command in — read locally, never with `gh repo view`, because that row prints before the first preflight line and no decoration may put a network round trip in front of the first paint. This is a **github-mode** row only: a `TASK_SOURCE=folder` run draws none, whatever this is set to. |
+| `GH_REPO`               | unset (the `ralph.config.sh` line, then `origin`) | Not Ralph's variable but [`gh`'s](https://cli.github.com/manual/gh_help_environment), and it is listed here because Ralph reads it for one row: the `repo` row of the identity box [`ralph start`](#quick-start) opens with, which names the repository the loop will read issues from. Set, it **decides over `origin`** — because it decides for every `gh` command the loop runs, so a box that named `origin`'s slug while the loop read someone else's would be wrong in exactly the situation that row was added for. It does **not** decide over the file: a `GH_REPO` assignment in `ralph.config.sh` wins over this variable, which is deliberately the opposite way round to [`RALPH_BANNER`](#configuration-reference) and the same way round as the loop, since the loop *sources* that file with `set -a` — a committed value is what those very `gh` calls will read, so the row follows it. It wins **even when it is blank**, which is the surprising half: `GH_REPO=` in that file masks whatever your shell exported in the shell that sources it, `gh` reads the empty value as unset and resolves its base repository from `origin`, and so does this row. The environment answers only where the file assigns the knob **nothing at all** — a commented-out line, or no line — which is also the only case bash falls through on. `gh`'s own spelling is accepted (`[HOST/]OWNER/REPO`, with the host dropped), a blank value counts as unset whichever source it came from, and a value that is not a slug at all draws **no row** rather than falling back to `origin`: naming a repository the loop will not use is worse than naming none. With neither source naming one, the slug comes from `origin`'s url in the `.git/config` of the directory you ran the command in — read locally, never with `gh repo view`, because that row prints before the first preflight line and no decoration may put a network round trip in front of the first paint. This row is drawn for every task source **except `folder`**: a `TASK_SOURCE=folder` run draws none, whatever this is set to, while a `TASK_SOURCE=jira` run draws one, since that source still reads its issues from GitHub. |
 
 **`RALPH_NO_UPDATE_CHECK`'s value parse is permissive, which is a footgun
 on a negatively-named flag.** Only `0` and `false` keep the check **on**
@@ -1530,7 +1608,21 @@ the command shown in the output (e.g. `brew install gh` on macOS,
 `apt install gh` on Linux/WSL). Ralph never auto-installs deps. `doctor`
 checks only the **selected** agent's CLI: on a Codex project it wants
 `codex` (`npm install -g @openai/codex`) and will not ask for `claude`;
-on a Claude project the reverse holds.
+on a Claude project the reverse holds. The same is true of the selected
+[task source](#choosing-the-task-source)'s CLI: `gh` under `github`,
+Atlassian's `acli` under `jira`, and neither of the two under `folder`.
+
+**`ralph doctor` prints `! jira auth (not authenticated)` or `! jira auth
+(not verified)`.** — Neither is failing the diagnostic: that row is yellow in
+both states and cannot move `doctor`'s exit code. Run the command the row
+names — `acli jira auth login` for the first, `acli jira auth status` for the
+second, which means the check could not be run at all rather than that a login
+was refused. A **missing** `acli` is not that second state: it reads `not
+authenticated`, beside the `✗ acli` dep row that names the real problem. And
+note what the row is *not* yet about: a
+`TASK_SOURCE="jira"` loop still reads GitHub issues, so a green `jira auth`
+does not mean Ralph is working a Jira board. See
+[The `jira` source today](#the-jira-source-today).
 
 **`ralph cycle`/`start` aborts with `codex not authenticated`.** — When
 `RALPH_AGENT=codex`, the preflight runs `codex login status` and keys on
@@ -1811,7 +1903,7 @@ loop nor `ralph status` names a field of its own:
 | `schema` | Record version, currently `1`. Written for future migrations; **no reader inspects it yet**, so a record whose `schema` is missing or from the future is still read verbatim. |
 | `run_id` | The [join key](#run_id--the-join-key) — the same value this run stamps on every `RALPH_ISSUE_EVENT` and on its `RALPH_CYCLE_EVENT`, so a run in flight can be tied to the history it has already written. |
 | `session` | The tmux session the run was launched into (`ralph-<repo>-<hash>`), or the default `ralph` for a `ralph cycle` run, which has no session of its own. `ralph status` probes **this** session for liveness — the one the run recorded, not the one a fresh `ralph start` would create. |
-| `source` | The resolved task source for the run: `github` or `folder`. |
+| `source` | The resolved task source for the run: `github` or `folder`, and only ever those two. This is the value the **bash loop** resolved, and the loop normalizes anything that is not an explicit `folder` to `github` — so a [`TASK_SOURCE="jira"`](#the-jira-source-today) run records `github` here, which is what it actually did. |
 | `status` | `running` until the run ends, then the loop's own terminal status: `success`, `partial`, or `failed` — the same value the run's `RALPH_CYCLE_EVENT` reports. |
 | `started_at` | Run start (ISO 8601, UTC). |
 | `queue_at_start` | How deep the queue was when the run began — how much work it picked up. `null` when the count produced no number at all; an unknown depth is never recorded as `0`, which would be a lie. |
@@ -1928,8 +2020,8 @@ recorded `ok`/`failed` reads `(partial: ? ok, ? failed)` rather than a `0` that
 would claim a run failed nothing.
 
 The queue depth is **live**, counted the way `ralph start` counts it — the same
-`gh` search in GitHub mode, the local `.ralph/tasks` tree in folder mode (no
-`gh` call at all). A failed count degrades to `queue      unknown`; it never
+`gh` search in every source but `folder`, the local `.ralph/tasks` tree in folder
+mode (no `gh` call at all). A failed count degrades to `queue      unknown`; it never
 fails the command, and it never reads as `0 waiting`. Only the live views pay
 for it: `idle` and `never-run` skip the count entirely — no `gh` call, no
 directory scan. It is also the **denominator** the `progress` line counts against,
@@ -2033,7 +2125,7 @@ conditions:
 | --- | --- |
 | the mode is `running` | The other three modes print the report card or the greeting, so a lookup for them would buy prose that nothing renders. |
 | `--json` is off | [The document](#machine-readable-output--ralph-status---json) publishes no titles and no rows, so the call would buy a consumer nothing — and skipping it keeps `--json` the cheap surface a shell prompt can poll on a timer. |
-| the task source is `github` | A folder task's title lives inside its own file, and folder mode is deliberately `gh`-free: it is the mode for repos that have no GitHub at all. |
+| the task source is not `folder` | A folder task's title lives inside its own file, and folder mode is deliberately `gh`-free: it is the mode for repos that have no GitHub at all. Every other source reads its issues from GitHub, so every other source gets the lookup. |
 
 And it is a **courtesy, never a fact**. Every way the lookup can fail — `gh`
 missing, unauthenticated, timed out, or answering with something that is not a list
