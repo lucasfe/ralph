@@ -24,26 +24,37 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # issues via `gh`; "folder" draws tasks from the local `.ralph/tasks/` tree and
 # commits straight to DEV_BRANCH (no PR/merge). Unset falls back to "github".
 #
-# "jira" is the third value, and it is NOT A WHOLE LOOP YET: it now COUNTS, SELECTS
-# and CLAIMS from your Jira project (see JIRA_JQL below) — each iteration takes the
-# oldest eligible ticket, records it as the task in flight, and adds the
-# `in-progress` label, which is the label the query excludes, so the queue drains.
-# WHAT IS MISSING IS THE WORK: no agent is invoked for a Jira ticket, so nothing is
-# coded, committed or opened as a PR, and a run walks the queue labelling tickets
-# and then exits "Queue empty". The loop runs no `gh` command at all under this
-# value. `ralph start` has NOT moved with it: it still requires an authenticated
-# `gh`, and it still counts GitHub issues to decide whether to launch — so its
-# number can differ from `ralph status`'s, and an empty GitHub queue stops a launch
-# that had Jira tickets waiting. `ralph cycle` counts Jira, like `ralph status`.
+# "jira" is the third value, and it is NOT A WHOLE LOOP YET — but it now does the
+# work. Each iteration COUNTS, SELECTS and CLAIMS from your Jira project (see JIRA_JQL
+# below): it takes the oldest eligible ticket, records it as the task in flight, adds
+# the `in-progress` label — the label the query excludes, so the queue drains — and
+# then INVOKES THE AGENT on that ticket. The agent is handed the KEY and reads the work
+# item itself through `acli`, then resolves it and commits straight to DEV_BRANCH with
+# the key in the commit message: no branch, no PR, no merge, the same delivery shape as
+# the folder source. The loop runs no `gh` command at all under this value.
+#
+# WHAT IS MISSING IS THE BOOKKEEPING, at both ends. THE COMMIT STAYS LOCAL: nothing in
+# the loop pushes it, so `git log DEV_BRANCH` on the machine that ran Ralph is the only
+# place that work exists. And nothing is written back to the board: no transition to a
+# done status, no done label, no comment carrying the commit SHA, and no `failed` label
+# on an iteration that produced nothing. THE COMMANDS THAT START THE LOOP have NOT moved
+# with it either, and BOTH of them still want `gh`: `ralph start` and `ralph cycle` each
+# abort unless `gh auth status` succeeds, however little the run itself uses it. On top of
+# that, `ralph start` still counts GitHub issues to decide whether to launch — so its
+# number can differ from `ralph status`'s, and an empty GitHub queue stops a launch that
+# had Jira tickets waiting. `ralph cycle` is the one that already counts Jira, like
+# `ralph status`. So a jira repo still needs `gh` installed and logged in, even though
+# `ralph doctor` no longer lists it here.
 #
 # THE CLAIM IS A WRITE TO YOUR BOARD AND NOTHING TAKES IT BACK: no Ralph command ever
 # removes `in-progress` again. That write is what drains the queue rather than handing
-# the same ticket out forever, so it is not incidental — but since no agent runs,
-# labelling is ALL a run does, and one pass can walk your whole eligible queue, label
-# every ticket in it, and leave the board reading as fully in flight with nothing done.
-# Ralph then reads that queue as empty until you strip the label yourself, in Jira.
-# There is no Jira analog yet of the `claude-working` cleanup the github source does.
-# So point a NARROW JIRA_JQL at this while it is half built.
+# the same ticket out forever, so it is not incidental — but with no completion
+# bookkeeping, one pass over your whole eligible queue leaves every ticket in it reading
+# as in flight, and which of them were actually resolved is discoverable only from the
+# local commits and the per-ticket logs (`logs/ralph-issue-<KEY>.log`). Ralph then reads
+# that queue as empty until you strip the label yourself, in Jira. There is no Jira
+# analog yet of the `claude-working` cleanup the github source does. So point a NARROW
+# JIRA_JQL at this while it is half built.
 #
 # The prerequisites are checkable BEFORE they are needed. A jira run wants
 # Atlassian's `acli` on PATH and an authenticated session (`acli jira auth login`),

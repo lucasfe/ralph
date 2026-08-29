@@ -58,6 +58,29 @@ export function prose(md) {
   return md.replace(/\s+/g, ' ')
 }
 
+/**
+ * `prose()`, then strip the punctuation a claim's words get WRAPPED in but that
+ * carries no part of the claim: markdown emphasis and code spans (`**bold**`,
+ * `*italic*`, `_x_`, `` `code` ``) and the `//` or `#` a comment block repeats at the
+ * head of every wrapped line.
+ *
+ * All three were load-bearing when this was added. #128 falsified the sentence "no
+ * agent is invoked for a Jira ticket", and the five surviving copies of it were
+ * spelled `**No agent is invoked for a Jira ticket**` in README.md and split across
+ * two `//` lines in lib/task-source.js — so a pattern written in plain words matched
+ * NEITHER, and the plain-word grep that went looking for them missed one entirely.
+ * The `#` case is templates/ralph.config.sh, where the same argument is made to the
+ * user in a 40-line comment block.
+ *
+ * Both comment strips are line-anchored, so a `https://` or a `#123` mid-sentence
+ * survives. Like `prose()`, this is for prose only, and it is MORE destructive: a
+ * markdown heading loses its `#` and a code span its backticks, so structural
+ * assertions must stay on raw text or on `prose()`.
+ */
+export function claimText(text) {
+  return prose(text.replace(/^[ \t]*(\/\/+|#+)/gm, ' ')).replace(/[*_`]+/g, '')
+}
+
 // Directories with no authored documentation in them. `.ralph/` and `logs/` are
 // runtime state, the rest are build/vendor output.
 const SKIP_DIRS = ['node_modules', '.git', 'dist', 'logs', '.ralph', 'coverage']
@@ -159,4 +182,51 @@ export const STALE_CLAIM_PATTERNS = [
   /(update|version) check\b[^.]{0,40}?\bonly\b[^.]{0,40}?`?ralph start`?/i,
   // "…INCLUDES / HAS no update check" — outside the `(runs|performs|does|makes)` group.
   /`?ralph cycle`?[^.]{0,100}?\b(includes|include|has|have|contains|contain|carries|carry|does|do)\b no (update|version) check/i,
+]
+
+/**
+ * Sentences that would assert a `jira` run invokes no agent and does no work.
+ *
+ * Before #128 that was TRUE — the arm counted, selected and claimed, then went round
+ * again — so a surviving sentence saying it is worse than a missing doc: it tells a
+ * reader the source is a labelling machine when it now works the ticket and commits
+ * to `DEV_BRANCH`. #128's own review found FIVE of them still standing in README.md
+ * plus the one in lib/task-source.js, in a slice that had already corrected two
+ * hunks of the same file, which is what earns this a sweep rather than an edit.
+ *
+ * Match against `claimText()`, not `prose()`: every real spelling was wrapped in
+ * markdown emphasis or split across two `//` lines.
+ *
+ * DELIBERATELY NARROW, and the constraint is sharper here than for
+ * STALE_CLAIM_PATTERNS: lib/digest.js says "no agent invoked" twice (at the `no-run`
+ * status and the never-run branch) about a run that never STARTED, which is true and
+ * must stay sayable. So every "no agent" pattern below requires an object bound to the
+ * denial that only this claim supplies — `jira`, a ticket, a work item, a board, or the
+ * assertion that labelling is *all* a run does — and the bare phrase on its own never
+ * matches. The consequence clauses are spelled as whole phrases for the
+ * same reason: "no PR" and "nothing pushes" are still TRUE of this source and of
+ * folder mode, so nothing keys on them.
+ */
+export const JIRA_AGENTLESS_CLAIM_PATTERNS = [
+  // "No agent is invoked for a Jira ticket" / "…for one yet" / "…on it, so a green…"
+  // — the denial with its object trailing.
+  /\bno agent\b[^.]{0,20}?\b(is|was|gets|ever)?\s*invoked\b[^.]{0,20}?\b(for|on|under|by|in)\b[^.]{0,30}?\b(jira|ticket|work item|workitem|board|one yet|it,|it\.|this source|that source)/i,
+  // The object leading instead: "under `jira` … no agent is invoked", "with no agent
+  // invoked it is also all a run does".
+  /\b(jira|ticket|work item|workitem)\b[^.]{0,120}?\bno agent\b[^.]{0,20}?\binvoked\b/i,
+  // Active voice, the loop as subject: "selects a ticket and claims it, and invokes
+  // no agent on it".
+  /\binvokes no agent\b/i,
+  // The denial as a subordinate clause, whose object is the RUN and not the ticket:
+  // "But with no agent invoked it is also *all* a run does". Nothing in the sentence
+  // names Jira, so the two patterns above cannot see it — which is why it is spelled
+  // out, and why the bound object here is the "all a run does" claim itself.
+  /\bno agent\b[^.]{0,20}?\binvoked\b[^.]{0,60}?\ball a (jira )?run does\b/i,
+  // The consequence clauses, which deny the work without using the word "agent".
+  // Each is the exact shape #128 had to delete, and each is false the moment the arm
+  // dispatches at all.
+  /\bthe work itself is still missing\b/i,
+  /\bnothing is coded\b/i,
+  /\b(resolves|resolve|works|work|does|do) no ticket\b/i,
+  /\bwork(ed|s|ing)? none of them\b/i,
 ]

@@ -43,8 +43,9 @@ import { templatePath } from '../lib/paths.js'
 // WRITE to somebody's board, and this machine may well have the real Atlassian CLI installed
 // — so the stub is never removed from PATH, not even by the test about a missing binary
 // (that one makes the stub answer the way an absent command does instead). `node` is stubbed
-// too, delegating only the real bridges the loop needs; the `claude` stub exists purely to
-// record that #127 invokes NO agent for a Jira ticket.
+// too, delegating only the real bridges the loop needs; the `claude` stub records the argv of
+// the dispatch #128 now makes for a Jira ticket, which is all this suite asks of it — WHAT the
+// agent is told is pinned in test/loop.test.js, against the real prompt builder.
 //
 // Control characters are built with String.fromCharCode and reach the fixtures through
 // JSON.stringify — no literal control byte in this source (test/source-control-bytes.test.js
@@ -75,6 +76,9 @@ const acliLog = () => join(workdir, 'acli-called.log')
 const ghLog = () => join(workdir, 'gh-called.log')
 const claudeLog = () => join(workdir, 'claude-called.log')
 const claimedFlag = () => join(workdir, 'acli-claimed')
+const codexLog = () => join(workdir, 'codex-called.log')
+// One line per agent invocation, so "how many times did we pay for this ticket?" is a number.
+const agentCalls = (file = claudeLog()) => readLog(file).split(LF).filter(Boolean)
 
 // Every acli invocation as `{ argc, args }`. ARGC PLUS ONE LINE PER ARGUMENT is the whole
 // point of logging it this way: a query a shell had split would arrive as several arguments,
@@ -278,13 +282,18 @@ describe('ralph.sh jira arm — a hostile JIRA_JQL crosses a shell (#127 QA)', (
     })
   }
 
-  it('never touches gh or the agent in jira mode, whatever the query says', () => {
-    // Two arms Ralph must NOT have wandered into: github's queue, and the agent #127
-    // deliberately does not invoke for a Jira ticket yet.
+  it('never touches gh in jira mode, and dispatches the agent exactly once, whatever the query says', () => {
+    // Two arms, opposite expectations. github's queue must never be reached from a jira
+    // run at all. The agent, since #128, IS invoked — but exactly ONCE, for the one ticket
+    // the iteration claimed, and a hostile query is the input that could break that: a JQL
+    // a shell had split could produce a second pick, and so a second dispatch.
     const res = runJira({ JIRA_JQL: `project = R ; touch pwned-semi` })
     finished(res)
     expect(existsSync(ghLog()), `gh was invoked:\n${readLog(ghLog())}`).toBe(false)
-    expect(existsSync(claudeLog()), `the agent ran:\n${readLog(claudeLog())}`).toBe(false)
+    expect(
+      readLog(claudeLog()).split(LF).filter(Boolean),
+      `the agent ran:\n${readLog(claudeLog())}`,
+    ).toHaveLength(1)
   })
 
   it('spawns no acli at all for an unconfigured JIRA_JQL, and still exits cleanly', () => {
@@ -604,5 +613,271 @@ exit 0
       expect(readLog(ghLog()), value).toContain('issue list')
       expect(acliCalls(), value).toEqual([])
     }
+  })
+})
+
+// ===========================================================================
+// #128 QA — the AGENT DISPATCH now sits in the middle of the jira iteration.
+// ===========================================================================
+//
+// Everything above was written when the jira arm ended at the claim. #128 inserts a paid,
+// long-running, fallible subprocess between the claim and the zero-progress guard, and that
+// changes two things the suite above could not have asked about:
+//
+//   • TERMINATION now has a new set of ways to go wrong. The arm reads no `claude_failed`
+//     (#129/#130 own that), so every agent outcome — non-zero, missing binary, silence,
+//     garbage — has to fall through to the guard. `res.signal === null` plus a BOUNDED
+//     invocation count is the only honest proof, exactly as for the acli failures above.
+//
+//   • COST is now observable. Each dispatch is a paid model call, so "the loop terminated" is
+//     no longer the whole question: HOW MANY invocations a failure buys is a number worth
+//     pinning. When this file was written the zero-progress guard sat AFTER the dispatch, so an
+//     unwritable claim bought two paid calls on one ticket; the guard now runs FIRST (MEASURED
+//     in templates/ralph.sh: the guard is line 535, the dispatch is line 571), and the count
+//     below asserts the one call rather than the two.
+//
+// The agent stub is never removed from PATH here either, for the same reason acli is not: a
+// real `claude` may be installed on this machine. The missing-binary test makes the stub ANSWER
+// the way an absent command does (127 + the shell's sentence).
+describe('ralph.sh jira arm — every agent outcome still terminates (#128 QA)', () => {
+  // A stub that behaves however a test needs while still recording one line per invocation.
+  const agentStub = ({ status = 0, stdout = '', stderr = '' } = {}) =>
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+echo "$*" >> "${claudeLog()}"
+${stdout ? `echo ${JSON.stringify(stdout)}` : ''}
+${stderr ? `echo ${JSON.stringify(stderr)} >&2` : ''}
+exit ${status}
+`,
+    )
+
+  const outcomes = {
+    'exits non-zero': { status: 1, stderr: 'claude: credit balance too low' },
+    'answers like a missing binary': { status: 127, stderr: 'bash: claude: command not found' },
+    'exits 0 having printed nothing at all': {},
+    'prints a non-JSON line jq cannot parse': { stdout: 'Segmentation fault', status: 0 },
+    'prints a JSON error result and exits 0': {
+      stdout: '{"type":"result","subtype":"error_during_execution"}',
+    },
+  }
+
+  for (const [what, spec] of Object.entries(outcomes)) {
+    it(`finishes the run when the agent ${what}, having dispatched exactly once`, () => {
+      agentStub(spec)
+      const res = runJira()
+      finished(res)
+      // ONE dispatch, then the drained queue ends the run. The count is the assertion that
+      // separates "handled" from "retried at full price".
+      expect(agentCalls(), readLog(claudeLog())).toHaveLength(1)
+      expect(res.stdout, what).toContain('==> Iteration for FOO-123 (1 remaining)')
+      expect(res.stdout, what).toContain('Queue empty, exiting.')
+      expect(acliCalls().length, readLog(acliLog())).toBeLessThan(12)
+    })
+  }
+
+  it('leaves a claimed ticket labelled `in-progress` with no failure trace when the agent fails (pinned gap, #130)', () => {
+    // THE COST OF #130 NOT BEING WIRED YET, measured rather than described. The claim succeeded,
+    // so the ticket now carries `in-progress` and lib/jira-jql.js's exclusion drops it from every
+    // future count — while the agent that was supposed to work it exited 1. Nothing marks it
+    // failed, nothing comments, nothing un-labels: the ticket is silently out of the queue with
+    // no work done. That is the deliberate boundary of this slice (#130 owns the sweep), and it
+    // is pinned so the day it changes, this test says so.
+    agentStub({ status: 1, stderr: 'claude: credit balance too low' })
+    const res = runJira()
+    finished(res)
+    expect(callsFor('edit'), readLog(acliLog())).toHaveLength(1)
+    expect(valueAfter(callsFor('edit')[0], '--labels')).toBe('frontend,p2,in-progress')
+    // No second write of any kind — no `failed` label, no comment, no transition.
+    const writes = acliCalls().filter((c) => ['edit', 'comment', 'transition'].includes(c.args[2]))
+    expect(writes, readLog(acliLog())).toHaveLength(1)
+    // And the run reports success to whatever scheduled it, so a cron sees nothing wrong.
+    expect(res.status).toBe(0)
+  })
+
+  it('pays for ONE agent invocation on one ticket when the claim cannot be written (#128 fix)', () => {
+    // WAS `pays for TWO agent invocations…`, pinned at 2. The most expensive failure in the arm,
+    // and it is invisible from the acli side: an unwritable claim leaves the ticket eligible, so
+    // the query returns it again and the loop takes a second iteration on the same key. What
+    // changed is WHERE the zero-progress guard sits. With the guard AFTER
+    // `run_agent_for_issue`, that second iteration handed the same ticket to a paid agent
+    // before the loop noticed nothing had moved; the guard now runs BEFORE the dispatch
+    // (templates/ralph.sh: guard 535, dispatch 571), so iteration two aborts having spent
+    // nothing. The suite above already pinned the two iterations — what this one owns is the
+    // price, asserted exactly rather than bounded.
+    seedStubs({ editBody: 'echo "permission denied" >&2; exit 1' })
+    agentStub()
+    const res = runJira()
+    finished(res)
+    expect(agentCalls(), readLog(claudeLog())).toHaveLength(1)
+    expect(res.stderr).toContain('no progress on FOO-123 (re-selected). Aborting the loop.')
+    // Anti-vacuity for the count: the run really did take TWO iterations, so the single
+    // dispatch is the guard working rather than the loop having exited early.
+    expect(res.stdout.split('==> Iteration for FOO-123').length - 1).toBe(2)
+  })
+
+  it('hands the agent the key the iteration announced, overriding a stale ambient RALPH_TASK_KEY', () => {
+    // `export RALPH_TASK_KEY="$task_key"` IS the handoff contract (templates/ralph.sh:550), so
+    // the value the agent process actually inherits is worth reading out of its environment
+    // rather than inferring from the export line. The ambient value is seeded to something else
+    // on purpose: a shell that already had RALPH_TASK_KEY set — a previous run, a developer's
+    // export — must not be what the agent works on.
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+printf 'KEY:[%s]\\n' "\${RALPH_TASK_KEY-<UNSET>}" >> "${claudeLog()}"
+exit 0
+`,
+    )
+    const res = runJira({ RALPH_TASK_KEY: 'STALE-9999' })
+    finished(res)
+    expect(agentCalls()).toEqual(['KEY:[FOO-123]'])
+  })
+
+  it('exports no jira key into a github iteration, leaving the ambient value untouched', () => {
+    // The other half: the export lives inside `if [ "$TASK_SOURCE" = "jira" ]`, so a github run
+    // must neither invent a key nor rewrite one the operator's own shell provided. Read out of
+    // the agent's environment for the same reason as above. (What the github PROMPT does with an
+    // ambient key is pinned in lib/build-prompt.jira.qa.test.js: that template has no
+    // {{RALPH_TASK_KEY}} site, so it cannot render one.)
+    writeFileSync(join(workdir, 'count.txt'), '1')
+    writeStub(
+      'gh',
+      `#!/bin/bash
+echo "$*" >> "${ghLog()}"
+CNT="${join(workdir, 'count.txt')}"
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cnt=$(cat "$CNT")
+  case "$*" in
+    *sort:created-asc*) echo 42; echo 0 > "$CNT" ;;
+    *) echo "$cnt" ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *state*) echo "CLOSED" ;;
+    *) echo "" ;;
+  esac
+  exit 0
+fi
+exit 0
+`,
+    )
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+printf 'KEY:[%s]\\n' "\${RALPH_TASK_KEY-<UNSET>}" >> "${claudeLog()}"
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`,
+    )
+    const res = runLoop({ extraEnv: { RALPH_TASK_KEY: 'STALE-9999' } })
+    finished(res)
+    expect(res.stdout).toContain('==> Iteration for issue #42')
+    // Every invocation of the run — including the lazy config-validation one, which is why this
+    // is `toContain` on a set rather than an exact array — saw the ambient value verbatim.
+    expect([...new Set(agentCalls())]).toEqual(['KEY:[STALE-9999]'])
+    expect(acliCalls()).toEqual([])
+  })
+
+  it('names the agent it actually spawned in the iteration line', () => {
+    // `[agent: ...]` was added to the jira iteration line by #128 because the dispatch it
+    // describes now exists. A label naming a binary other than the one that ran would send a
+    // reader to the wrong per-ticket log, so the two are compared: the printed name, and the
+    // stub that recorded a call. `codex` resolves through lib/agent-invocation.js, so this also
+    // proves the jira arm does not hardcode claude anywhere.
+    writeStub('codex', `#!/bin/bash\ncat > /dev/null\necho "$*" >> "${codexLog()}"\nexit 0\n`)
+    const res = runJira({ RALPH_AGENT: 'codex' })
+    finished(res)
+    expect(res.stdout).toContain('==> Iteration for FOO-123 (1 remaining) [agent: codex]')
+    expect(agentCalls(codexLog()), readLog(codexLog())).toHaveLength(1)
+    // ...and claude was never spawned, which is what makes the line above informative.
+    expect(existsSync(claudeLog()), `claude ran:\n${readLog(claudeLog())}`).toBe(false)
+  })
+})
+
+describe('ralph.sh jira arm — the key becomes a LOG PATH (#128 QA)', () => {
+  // `run_agent_for_issue` builds `logs/ralph-issue-$1.log` and `...jsonl` from a value acli
+  // chose. That is a remote-chosen string used as a FILENAME, and lib/jira-key.js's
+  // `usableJiraKey` deliberately passes through keys its grammar does not recognise — so the
+  // separator and the parent-directory characters both reach it. As of #128 the arm passes a
+  // SANITIZED HANDLE (`${task_key//[^A-Za-z0-9._-]/_}`) rather than the key itself, so the two
+  // questions here are: is the handle still the key for an ordinary ticket, and does a
+  // pathological one still get a transcript instead of losing it to a failed redirection.
+  const perTicketLog = (key) => join(workdir, 'logs', `ralph-issue-${key}.log`)
+
+  it('writes the per-ticket log and jsonl named by an ordinary key, and no numeric one', () => {
+    // The baseline the two hostile rows below are read against — and a pin on the CHOICE of the
+    // key over `$num`: `$num` is empty in this mode, so the numeric path would be
+    // `logs/ralph-issue-.log` for every ticket that ever runs.
+    const res = runJira()
+    finished(res)
+    expect(existsSync(perTicketLog('FOO-123'))).toBe(true)
+    expect(existsSync(join(workdir, 'logs', 'ralph-issue-FOO-123.jsonl'))).toBe(true)
+    expect(existsSync(perTicketLog(''))).toBe(false)
+    // MEASURED, and it is a real divergence rather than a nicety: lib/run-state.js derives the
+    // numeric handle 123 from FOO-123, and lib/digest.js's `inFlightLogPath` builds its tail
+    // path from that NUMBER — so the digest looks for logs/ralph-issue-123.log, which #128
+    // never writes. Pinned here because the two paths are produced by different files and
+    // nothing else compares them.
+    expect(record().current.number).toBe(123)
+    expect(existsSync(join(workdir, 'logs', 'ralph-issue-123.log'))).toBe(false)
+  })
+
+  it('still writes a per-ticket log for a key containing a slash, under a safe handle (#128 fix)', () => {
+    // WAS `loses the per-ticket log for a key containing a slash, and still pays for the agent`.
+    // `FOO/1` is not a key lib/jira-key.js recognises, and it does not have to be: that module
+    // trims and passes anything else through, on the stated grounds that Jira names its own
+    // tickets. Passing it straight to `run_agent_for_issue` made
+    // `logs/ralph-issue-FOO/1.log`, whose parent directory does not exist — and
+    // templates/ralph.sh runs under `set -u` ONLY, no `set -e`, so the failed
+    // `: > "$log_file"` redirection stopped nothing: the agent was spawned, was billed, and the
+    // transcript that would explain what it did went nowhere.
+    //
+    // The handle replaces every character outside `[A-Za-z0-9._-]` with `_`, so the transcript
+    // now exists and the paid invocation is accounted for.
+    seedStubs({ key: 'FOO/1' })
+    const res = runJira()
+    finished(res)
+    expect(agentCalls(), readLog(claudeLog())).toHaveLength(1)
+    // The transcript, and its jsonl sibling, both under the handle.
+    expect(existsSync(perTicketLog('FOO_1'))).toBe(true)
+    expect(existsSync(join(workdir, 'logs', 'ralph-issue-FOO_1.jsonl'))).toBe(true)
+    // Nothing was created from the raw key: no `logs/ralph-issue-FOO` directory, no such file.
+    expect(existsSync(join(workdir, 'logs', 'ralph-issue-FOO'))).toBe(false)
+    expect(existsSync(perTicketLog('FOO/1'))).toBe(false)
+    // ...and bash's redirection error is gone, because there is no failed redirection left.
+    expect(res.stderr).not.toContain('ralph-issue-FOO/1.log')
+    // THE KEY ITSELF IS UNTOUCHED everywhere it is not a path: the acli argv still asks the
+    // board for `FOO/1`, and the iteration line still names it, so the handle is a log-naming
+    // detail and not a rename of the ticket.
+    expect(valueAfter(callsFor('view')[0], '--key')).toBe('FOO/1')
+    expect(res.stdout).toContain('==> Iteration for FOO/1 (1 remaining)')
+  })
+
+  it('writes nothing outside the project root for a key full of parent-directory hops', () => {
+    // The traversal question asked directly, and it is now answered twice over: the `..` hops
+    // become `_` in the handle before they are ever a path component, AND
+    // `logs/ralph-issue-../../pwned.log` only resolved if `logs/ralph-issue-..` were a
+    // directory, which it is not. Asserted on the FILESYSTEM above the workdir rather than on
+    // any message, because the message is not the property that matters.
+    const parent = join(workdir, '..')
+    seedStubs({ key: '../../qa-escape' })
+    const res = runJira()
+    finished(res)
+    expect(existsSync(join(workdir, 'qa-escape.log'))).toBe(false)
+    expect(existsSync(join(parent, 'qa-escape.log'))).toBe(false)
+    expect(existsSync(join(parent, '..', 'qa-escape.log'))).toBe(false)
+    expect(existsSync(join(workdir, 'logs', 'qa-escape.log'))).toBe(false)
+    // And what it DID write, which is what makes the four negatives above non-vacuous: one
+    // transcript, inside logs/, named by a handle with no path component in it at all.
+    expect(existsSync(perTicketLog('.._.._qa-escape'))).toBe(true)
+    // It was still one argument the whole way — the traversal is a filename, not a command.
+    expect(injected()).toEqual([])
+    expect(valueAfter(callsFor('view')[0], '--key')).toBe('../../qa-escape')
   })
 })

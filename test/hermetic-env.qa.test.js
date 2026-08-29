@@ -51,6 +51,24 @@ describe('QA #41 denylist coverage — every name ralph reads from the ambient e
     for (const keep of TOOLCHAIN_NAMES) expect(SURFACE_NAMES).not.toContain(keep)
   })
 
+  it('covers RALPH_TASK_KEY, the ambient name #128 added, by PREFIX rather than by list', () => {
+    // Named rather than left to the derived set, because #128 is the slice that makes an
+    // ambient value MATTER here: lib/build-prompt.js now reads RALPH_TASK_KEY and pastes it
+    // into the rendered orchestrator prompt, so a developer with a stale `export
+    // RALPH_TASK_KEY=FOO-1` in their shell would otherwise have every prompt-builder test
+    // silently rendering their ticket.
+    //
+    // MEASURED, not assumed: the scanner finds it in lib/build-prompt.js on its own (no
+    // hand-maintained entry anywhere), and test/setup/hermetic-env.js neutralizes it via
+    // AMBIENT_PREFIXES = ['RALPH_'] rather than via AMBIENT_NAMES — which is why no list
+    // needed editing. That prefix coverage is the property worth pinning: it is what makes
+    // the NEXT RALPH_* variable free.
+    const entry = SURFACE.find(({ name }) => name === 'RALPH_TASK_KEY')
+    expect(entry, `the scanner lost RALPH_TASK_KEY; surface: ${SURFACE_NAMES.join(', ')}`).toBeTruthy()
+    expect(entry.sources).toContain('lib/build-prompt.js')
+    expect('RALPH_TASK_KEY' in process.env).toBe(false)
+  })
+
   it('leaves no scanned ralph-domain name behind in process.env', () => {
     // Vacuous on a clean shell BY DESIGN: this same assertion is re-run under a
     // shell where every one of these names is exported, by

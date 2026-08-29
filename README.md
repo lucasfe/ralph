@@ -12,12 +12,16 @@ By default the coding agent is **Claude Code**. Ralph can also drive the
 By default Ralph draws its work from **GitHub issues** (the flow described
 above). It can instead pull tasks from a **local `.ralph/tasks/` folder** with
 no GitHub remote, auth, or `gh` dependency — committing straight to your dev
-branch with no PR. A third source, **`jira`**, is **not a whole loop yet**: it
-counts the queue from your Jira project, selects the oldest eligible ticket,
-records it as the in-flight task and labels it `in-progress` on the board — and
-then goes round again. **No agent is invoked for a Jira ticket**, so nothing is
-coded, committed or opened as a PR under this source: a `jira` run claims its way
-through the queue and exits. See
+branch with no PR. A third source, **`jira`**, works a ticket end-to-end but does
+**not write back to the board yet**: it counts the queue from your Jira project,
+selects the oldest eligible ticket, records it as the in-flight task, labels it
+`in-progress` on the board, and hands the **key** to the agent, which reads the
+work item with Atlassian's `acli` itself and commits straight to your dev branch —
+no feature branch, no PR, and nothing pushes. What is **not** wired is the
+bookkeeping around that commit: nothing transitions the ticket, labels it done or
+comments the SHA, nothing sweeps a ticket the agent could not finish back out of
+`in-progress`, and nothing records a per-ticket telemetry event. It has also never
+been run against a live Jira — every Jira surface is stub-tested only. See
 [Choosing the task source](#choosing-the-task-source).
 
 > **⚠️ Codex support is experimental.** The Codex path is unit- and
@@ -57,10 +61,11 @@ the [task source](#choosing-the-task-source): `gh` under the default `github`,
 neither of them under `folder` — so a repo with no GitHub remote needs only
 `git`, the agent CLI, and `jq` — and `acli` under `jira`, required, with its
 login state reported beside it. A `jira` run needs **both**, and that is the one
-place the diagnostic is ahead of the loop: that source counts its queue with
-`acli` and still resolves and PRs GitHub issues with `gh`, which `doctor` has
-stopped listing for it. Read
-[Choosing the task source](#choosing-the-task-source) before setting that one.
+place the diagnostic is ahead of the loop: the loop itself runs no `gh` command
+under that source, but the commands that *start* it — `ralph start` and
+`ralph cycle` — still demand an authenticated `gh`, which `doctor` has stopped
+listing for it. Read [Choosing the task source](#choosing-the-task-source) before
+setting that one.
 macOS, Linux, and WSL2 are supported.
 
 ## Quick start
@@ -789,13 +794,19 @@ Ralph draws its work from one **task source** per project, recorded as
   branch**, and moves the task file to a terminal directory. No PRs, no
   auto-merge, and no `gh` dependency — folder mode needs only `git`, the agent
   CLI, and `jq`.
-- **`jira`** — **not a whole loop yet.** Ralph counts your Jira queue, selects the
-  oldest eligible ticket, records it as the in-flight task and claims it by adding
-  the `in-progress` label — and the missing half is the part worth stating first:
-  **no agent is invoked for a Jira ticket**, so nothing is coded, committed or opened
-  as a PR. Each iteration selects and claims one ticket; the claim is what the
-  composed query excludes, so the queue drains and the loop exits `Queue empty`
-  having labelled the tickets and worked none of them. Nothing is read from GitHub
+- **`jira`** — **the work happens; the board write-back does not yet.** Ralph counts
+  your Jira queue, selects the oldest eligible ticket, records it as the in-flight
+  task, claims it by adding the `in-progress` label, and hands the **key and nothing
+  else** to the agent, which reads the work item with `acli` itself and commits
+  straight to `DEV_BRANCH` — no feature branch, no PR, no auto-merge, and nothing
+  pushes, the same delivery shape `folder` mode has. Each iteration works one ticket;
+  the claim is what the composed query excludes, so the queue drains and the loop
+  exits `Queue empty`. The missing half is the part worth stating next: **nothing
+  reports the outcome back to the board** — no transition, no done label, no SHA
+  comment, no sweep for a ticket the agent could not finish, and no per-ticket
+  telemetry event — so a worked ticket and a failed one both sit at `in-progress`,
+  and the only places they differ are the commit log and, on failure, whatever
+  comment the agent managed to leave on the ticket. Nothing is read from GitHub
   issues under this value either — the loop runs no `gh` command at all.
   [`ralph status`](#run-state--ralphrun-statejson-and-ralph-status) and
   `ralph cycle` take the queue depth by running the
@@ -829,10 +840,10 @@ prompts `Draw tasks from a local .ralph/tasks/ folder instead of GitHub? [y/N]:`
 — answer `y`/`yes` for `folder`; a blank answer or anything else keeps the
 default `github`. That prompt is a yes/no about the folder tree, so the two
 answers it has are the only two it can give: **`jira` is flag-only**, which is
-deliberate while it resolves no ticket — you have to ask for it by name. When
-stdin is **not** a TTY and no flag is passed, `ralph
-init` skips the prompt and defaults to `github` silently, so existing
-automation keeps working unchanged.
+deliberate while it still writes nothing back to the board — you have to ask for it
+by name. When stdin is **not** a TTY and no flag is passed, `ralph init` skips the
+prompt and defaults to `github` silently, so existing automation keeps working
+unchanged.
 
 To switch an existing project, edit `TASK_SOURCE` in `ralph.config.sh` by hand.
 The bash loop, the prompt builder, and `ralph doctor`/`cycle` preflight all read
@@ -936,19 +947,39 @@ with the rest of the mode.
 
 ### The `jira` source today
 
-`TASK_SOURCE="jira"` is **not a whole loop yet.** Ralph counts the queue from your
-Jira project, selects the oldest eligible ticket and claims it; **no agent is
-invoked**, so the work itself is still missing, and what `ralph start` does around
-the loop has not moved with it — [that has a section of its
+`TASK_SOURCE="jira"` **works a ticket, and reports nothing back about it.** Ralph
+counts the queue from your Jira project, selects the oldest eligible ticket, claims
+it, and hands the key to the agent, which reads the work item itself and commits to
+`DEV_BRANCH` locally. What is still missing is the bookkeeping on the far side of
+that commit — the board write-back, the sweep for a ticket the agent could not
+finish, and the per-ticket telemetry — and what `ralph start` does around the loop
+has not moved with it either. [Both have a section of their
 own](#what-is-still-githubs) at the bottom of this one.
+
+> **⚠️ None of this has been run against a live Jira.** Every Jira surface is unit-
+> and stub-tested — the composed query, the queue count, the ticket selection, the
+> claim, the auth probe, the key grammar, the prompt render, and the whole bash arm
+> driven end-to-end against a stubbed `acli` on a prepended `PATH` all have coverage
+> — but no test has ever spoken to a real Jira site, and that is deliberate rather
+> than an omission: a claim is a **write** to somebody's board, so the stub never
+> comes off `PATH`, not even in the test about a missing binary. What that leaves
+> unverified is the shape of `acli` itself, which is **transcribed from its
+> documentation rather than measured**: the flag spellings, the fields `search` will
+> accept, the expectation that your query's ordering still decides which work item
+> `--limit 1` returns, and the JSON envelope a work item comes wrapped in. A first
+> run against a real project is a human-in-the-loop gate that has not happened yet —
+> so expect rough edges on a real board, and see [What a broken `acli` costs
+> you](#what-a-broken-acli-costs-you) for the shape those failures take.
 
 > **⚠️ A `jira` run writes to your board, and nothing takes it back.** Every ticket it
 > selects gains the `in-progress` label — the one the [composed
 > query](#the-eligibility-query--jira_jql) excludes — and no Ralph command removes it
 > again. That write is not incidental: it is what makes the queue drain instead of
-> handing the same ticket out forever. But with no agent invoked it is also *all* a run
-> does, so one run can walk your **whole** eligible queue, label every ticket in it, and
-> stop with the board reading as fully in flight and nothing done. From then on Ralph
+> handing the same ticket out forever. But it is also the only **status** a run ever
+> writes — the ticket gets worked, and nothing afterwards records that it was — so one
+> run can walk your **whole** eligible queue and leave every ticket in it reading as in
+> flight, whether the agent finished the work, failed on it (leaving at best a comment
+> saying why) or died outright without saying anything. From then on Ralph
 > reads that queue as empty; making those tickets candidates again means stripping
 > `in-progress` off them yourself, in Jira. The `github` source has two ways back — the
 > loop removes `claude-working` once an issue reaches a state the queue filter excludes
@@ -1146,10 +1177,12 @@ is still GitHub's count.
 And one consequence you will see rather than infer: `ralph status`'s `progress` line
 counts the tasks this run has **completed**, read back out of
 [`issues.jsonl`](#per-issue-stream--ralphmetricsissuesjsonl) — and **nothing appends a
-task event under this source**, because nothing works a task. So a `jira` run reads
-`0` completed for its whole life against a denominator that is the Jira depth, with
-the claimed ticket as the one task in flight. That task is named by its **key**
-(`FOO-123`) rather than a `#number`, in the progress line and in the per-task table
+task event under this source**: the ticket does get worked, but the per-ticket telemetry
+that would record it is a follow-up, so the only two arms that append an event are
+`folder` and `github`. So a `jira` run reads `0` completed for its whole life against a
+denominator that is the Jira depth, with the ticket in hand as the one task in flight.
+That task is named by its **key** (`FOO-123`) rather than a `#number`, in the progress
+line and in the per-task table
 under it, and by the key alone: the run state records the key, not the summary the
 selection read. Every other place a human is told which task this was follows the
 same rule — the `last task` row on the report card a killed run leaves behind, and
@@ -1162,23 +1195,41 @@ machines read it: `current.number` in
 **One path is still derived from that number rather than from the key, and under this
 source it points at the wrong file.** `ralph digest` picks the per-task transcript it
 quotes as `logs/ralph-issue-<number>.log`, so a `FOO-123` in flight sends it to
-`logs/ralph-issue-123.log` — a file no Jira iteration ever wrote, because no agent ran.
-Usually that path is simply absent and the narration has no transcript to draw on, which
-costs nothing; in a repo that has *also* worked GitHub issues it can be issue #123's log,
-and then a paragraph about your Jira ticket is written over somebody else's work. The
-narration still names the task by its key, so the two do not agree and the mismatch is
-visible. Keying that path on the task the record names is a follow-up rather than a
-decision; until it lands, read a `jira` run's digest as prose about the run and not about
-a transcript.
+`logs/ralph-issue-123.log` — while the iteration wrote `logs/ralph-issue-FOO-123.log`,
+named from the key. So the digest reads no transcript for a `jira` run at all: the missing
+file is swallowed and the narration still reports `ok`, which is what makes it easy to
+miss. In a repo that has *also* worked GitHub issues that path can be issue #123's log
+instead, and then a paragraph about your Jira ticket is written over somebody else's work;
+two tickets whose keys share a number (`AAA-7` and `BBB-7`) would collide on one path as
+well. The narration still names the task by its key, so the two do not agree and the
+mismatch is visible. Keying that path on the task the record names is a follow-up rather
+than a decision; until it lands, read a `jira` run's digest as prose about the run and not
+about a transcript.
 
 #### What is still GitHub's
 
-What does **not** happen is the work. Selection and the claim are the whole of this
-source today: the loop names a ticket, records it, labels it, and goes round again —
-no agent is invoked, so nothing is written, committed or opened as a PR, and the
-ticket is left sitting in `in-progress` with no change behind it. A green
-`jira auth`, a real number in the queue row and a `FOO-123` in flight mean Ralph is
-walking your board, not working it.
+The work does happen: the loop names a ticket, claims it, and hands the **key and
+nothing else** to the agent, which reads the work item with `acli` itself and commits
+straight to `DEV_BRANCH` — no feature branch, no PR, no auto-merge, and nothing pushes,
+the same delivery shape `folder` mode has. The transcript lands in
+`logs/ralph-issue-<key>.log`, one log per ticket.
+
+**Nothing publishes that commit, so publishing it is yours.** The word `push` does not
+appear in the loop script at all, on any of its three source arms, and the Jira
+orchestrator forbids the agent from pushing outright — so `DEV_BRANCH` in the clone
+Ralph ran in is the only place the work exists. Pushing it, or merging it onward, is a
+step you take by hand after the run, and a run left unattended for a week is a week of
+tickets sitting in one local branch.
+
+What is **not** wired is the bookkeeping on either side of that, and all of it is a
+follow-up: nothing transitions the ticket, labels it done, or comments the commit SHA;
+nothing sweeps a ticket the invocation could not finish back out of `in-progress`; and
+nothing appends a per-ticket telemetry event. So a ticket Ralph *did* work is left carrying
+`in-progress` with a local commit behind it, and a ticket the agent failed on is left
+carrying `in-progress` with — at best — a comment the agent wrote saying why, since a
+failure that killed the agent outright never got to write one. Because the eligibility
+query excludes `in-progress`, both drop out of the queue either way. Read the commit log,
+not the board, to find out which happened.
 
 The loop itself is clean of GitHub: no `gh` command runs in a `jira` iteration, and
 the run records `jira` as its
@@ -1567,7 +1618,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. It is also the model the identity box [`ralph start`](#quick-start) opens with names on a Codex project — ``agent   codex — gpt-5-codex (configured)`` — and the tag is literal: for Codex this value *is* the answer, so the metrics log is never consulted for that row (Codex's stream carries no model id, so the log would hold nothing but a staler copy of this same value). Unset, the row reads ``codex — model resolves at first run`` and names no model at all. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
-| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today is **not a whole loop**: the queue depth, the ticket and the claim all come from your Jira project by running [`JIRA_JQL`](#the-eligibility-query--jira_jql) through Atlassian's `acli` — each iteration selects the oldest eligible ticket, records it and labels it `in-progress` — but **no agent is invoked**, so nothing is coded, committed or opened as a PR, and the loop runs no `gh` command at all. `ralph start` has not moved with the loop: it still demands an authenticated `gh` and still counts GitHub issues to decide whether to launch, so its number can differ from `ralph status`'s and it can refuse to start over an empty GitHub queue. [`ralph doctor`](#the-jira-source-today) also asks for `acli` instead of `gh` here and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. **That holds for the commands, not for the loop:** `ralph start`, `status`, `cycle` and `doctor` lowercase and trim this value, while the loop's own dispatch compares it exactly — so `TASK_SOURCE=JIRA` has the commands reading Jira while the loop works GitHub. A known divergence, older than the `jira` source (`FOLDER` behaves the same way), pinned in the test suite and left for its own fix; write the value in lower case. Set by `ralph init --source <name>`; the interactive picker offers `github` and `folder` only, so `jira` is flag-only. This file is read **first** and the environment only where this file does not assign the name at all — the loop *sources* it with `set -a`, and `ralph start`, `ralph status` and `ralph doctor` resolve it the same way round. See [Choosing the task source](#choosing-the-task-source). |
+| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today **works a ticket but writes nothing back to the board**: the queue depth, the ticket and the claim all come from your Jira project by running [`JIRA_JQL`](#the-eligibility-query--jira_jql) through Atlassian's `acli` — each iteration selects the oldest eligible ticket, records it, labels it `in-progress`, and hands the key to the agent, which reads the work item itself and commits straight to `DEV_BRANCH` with no branch, no PR and no push — but **nothing reports the outcome back**, so no transition, no done label, no SHA comment, no sweep for a ticket the agent could not finish and no per-ticket telemetry event, and the loop runs no `gh` command at all. `ralph start` has not moved with the loop: it still demands an authenticated `gh` and still counts GitHub issues to decide whether to launch, so its number can differ from `ralph status`'s and it can refuse to start over an empty GitHub queue. [`ralph doctor`](#the-jira-source-today) also asks for `acli` instead of `gh` here and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. **That holds for the commands, not for the loop:** `ralph start`, `status`, `cycle` and `doctor` lowercase and trim this value, while the loop's own dispatch compares it exactly — so `TASK_SOURCE=JIRA` has the commands reading Jira while the loop works GitHub. A known divergence, older than the `jira` source (`FOLDER` behaves the same way), pinned in the test suite and left for its own fix; write the value in lower case. Set by `ralph init --source <name>`; the interactive picker offers `github` and `folder` only, so `jira` is flag-only. This file is read **first** and the environment only where this file does not assign the name at all — the loop *sources* it with `set -a`, and `ralph start`, `ralph status` and `ralph doctor` resolve it the same way round. See [Choosing the task source](#choosing-the-task-source). |
 | `JIRA_JQL`            | `""` (not configured)                | The Jira **eligibility** query, read only under `TASK_SOURCE="jira"` and ignored otherwise: which work items are candidates for Ralph, and nothing about labels or ordering. One query answers both questions the source asks — how deep the queue is, and which ticket is next — so a count and a selection can never disagree about what is eligible. **Ralph appends its own half and you cannot turn that off** — your clause is wrapped in parentheses (so an `OR` in it keeps its meaning against the `AND` that follows), then `AND (labels NOT IN (in-progress, failed, do-not-ralph) OR labels IS EMPTY)`, then the ordering. A trailing `ORDER BY` of yours is **relocated, not refused** — Jira requires it last, so it is cut off, the exclusion is inserted, and your ordering goes back verbatim at the end; write none and you get `ORDER BY created ASC`, the analog of `github` mode's `sort:created-asc`. Empty means **not configured**, deliberately not "everything": Ralph's half alone would select every work item on the Jira site, so a blank value counts nothing, spawns no `acli`, selects nothing (a loop started with it prints `Queue empty, exiting.` on its first pass), and leaves `ralph status` reporting `queue      unknown` while `ralph cycle` exits saying the queue is empty. Config-**only**, with no environment fallback beside it, unlike `TASK_SOURCE`: an eligibility query is a property of the repository, and since the template ships this assignment empty, `set -a` would export that blank into every child the loop spawns. A value containing a `#` needs **single** quotes — `JIRA_JQL='summary ~ "#123"'` — because the file is text-parsed rather than sourced and a `#` after a closing double quote is taken for a comment; the truncated query is then rejected by Jira, which costs you the count. `ralph doctor` never reads this line. See [The eligibility query](#the-eligibility-query--jira_jql). |
 | `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
 | `TEST_CMD`            | autodetected (e.g. `npm test`)       | Test command run before opening a PR. Empty = skip.                    |
@@ -1870,10 +1921,10 @@ authenticated`, beside the `✗ acli` dep row that names the real problem. Worth
 fixing rather than filing away, because a logged-out `acli` is one of the ways the
 Jira queue count cannot be taken: `ralph status` then reports
 `queue      unknown` and `ralph cycle` reads the same failure as an empty queue.
-What the row is still *not* about is **the work** — a `TASK_SOURCE="jira"` loop
-selects a ticket and claims it, and invokes no agent on it, so a green `jira auth`
-does not mean Ralph is working a Jira board. See
-[The `jira` source today](#the-jira-source-today).
+What the row is still *not* about is **the board** — a `TASK_SOURCE="jira"` loop
+selects a ticket, claims it and works it, but reports nothing back afterwards, so a
+green `jira auth` does not mean a finished ticket will ever *look* finished in Jira.
+See [The `jira` source today](#the-jira-source-today).
 
 **`ralph status` says `queue      unknown` but `ralph cycle` says the queue is
 empty.** — Under `TASK_SOURCE="jira"` that is one finding reported twice, not two
@@ -1887,6 +1938,17 @@ chase the cause, not the disagreement: `ralph doctor` for the `acli` and
 quotes to survive the config reader. Running the composed query in Jira's own
 search is the quickest way to tell a query Jira rejects from a genuinely empty
 queue.
+
+**A `jira` run's digest reads as vague, and never quotes the agent.** — Expected, and
+not a model problem: under `TASK_SOURCE="jira"` the digest is looking for the wrong
+file. It derives the transcript it tails from the run record's `number`, which for
+`FOO-123` is the derived `123`, while the iteration wrote `logs/ralph-issue-FOO-123.log`
+— named from the key. The missing file is swallowed, so `ralph digest` still exits `0`
+and still narrates: you get prose about the git state and the run record with no
+transcript behind it, and nothing says a transcript was expected. Read the log yourself
+in the meantime — `logs/ralph-issue-<KEY>.log`, one per ticket — and see [`ralph status`
+and the run state](#run-state--ralphrun-statejson-and-ralph-status) for why the number
+is derived at all. Keying that path on the key is a follow-up.
 
 **`ralph cycle`/`start` aborts with `codex not authenticated`.** — When
 `RALPH_AGENT=codex`, the preflight runs `codex login status` and keys on

@@ -446,9 +446,10 @@ while :; do
     # THE ITERATION LINE NAMES THE TICKET, not a number: `FOO-123` is what a reader
     # can look up on the board, and the numeric handle in the run record is derived
     # from it for the readers that predate Jira (lib/jira-key.js explains why).
-    # No `[agent: ...]` suffix, unlike the two arms below — #127 ships selection
-    # and the claim, and no agent is invoked for a Jira ticket yet, so naming one
-    # here would be a promise the loop does not keep.
+    # The `[agent: ...]` suffix matches the two arms below now that #128 actually
+    # invokes an agent for a Jira ticket: the name is what a reader greps for when
+    # the per-ticket log looks wrong, and it was omitted only while the promise
+    # would have been false.
     pick=$(node "$RALPH_PKG_DIR/lib/jira-queue.js" pick "${JIRA_JQL:-}" 2>/dev/null)
     task_key="${pick%%$'\t'*}"
     if [ -z "$task_key" ]; then
@@ -462,7 +463,7 @@ while :; do
     # No numeric handle from bash: lib/run-state.js derives one from the key, and
     # `''` is the record's documented "unknown" for every value bash cannot supply.
     num=""
-    echo "==> Iteration for $task_key ($count remaining)"
+    echo "==> Iteration for $task_key ($count remaining) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
   elif [ "$TASK_SOURCE" = "folder" ]; then
     # Folder mode: select the lowest-numbered task in afk/todo (id + path). The
     # AGENT owns the happy-path moves (todo→in-progress→done) and commits
@@ -489,9 +490,14 @@ while :; do
   node "$RALPH_PKG_DIR/lib/run-state.js" begin-task "$PROJECT_ROOT" "$num" "$iter" "$task_key" || true
 
   if [ "$TASK_SOURCE" = "jira" ]; then
-    # CLAIM THE TICKET, and stop there — #127 ships selection and the claim, so no
-    # agent is invoked for a Jira ticket yet and none of the outcome handling below
-    # applies. This block is where the next slice picks up.
+    # CLAIM THE TICKET, then hand it to the agent (#127 selection + claim, #128 the
+    # dispatch). The block still returns to the top of the loop rather than falling
+    # through: NONE of the outcome handling below applies to a Jira ticket, because
+    # it is written against gh (PR merge state, `claude-working`/`claude-failed`
+    # labels, `Closes #N`). Jira's own bookkeeping — a done transition, a done
+    # label and a comment carrying the commit SHA (#129), the `failed` sweep for an
+    # iteration that produced nothing (#130), and per-ticket telemetry (#131) — is
+    # not wired yet, which is why nothing here reads `claude_failed`.
     #
     # The claim adds the `in-progress` label, which is the label the composed query
     # EXCLUDES (lib/jira-jql.js), so a claimed ticket drops out of the next count
@@ -509,16 +515,60 @@ while :; do
       echo "⚠️  Could not claim $task_key. Leaving it eligible and moving on." >&2
     fi
 
-    # Zero-progress guard, the analog of the two below: a successful claim removes
-    # the ticket from the query, so re-selecting the SAME key means the board did
-    # not change (the claim failed, or Jira has not caught up) and the queue can
-    # never drain. `prev_num` carries the key in this mode — one variable, since a
-    # run works one source.
+    # ZERO-PROGRESS GUARD, and it runs BEFORE the dispatch below rather than after it,
+    # which is the one way this arm's guard differs from the two further down. Same
+    # premise as theirs: a successful claim removes the ticket from the query, so
+    # re-selecting the SAME key means the board did not change (the claim failed, or
+    # Jira has not caught up) and the queue can never drain. `prev_num` carries the key
+    # in this mode — one variable, since a run works one source.
+    #
+    # THE ORDER IS THE POINT, and #128 is what made it matter: the thing this guard now
+    # stands in front of is a PAID model call. With the guard after the dispatch, an
+    # unwritable claim bought two full agent invocations on one ticket before the loop
+    # noticed nothing had moved — the second one on a ticket whose state was identical
+    # to the first's, so it could only produce the same result at the same price. The
+    # other two arms have nothing to save by moving theirs: folder sweeps the task out
+    # of `afk/todo` and github relabels the issue, so a re-selection there means the
+    # WRITE failed and the iteration is worth attempting; jira's re-selection means the
+    # ticket was never claimed at all, and the agent would be told to work a ticket the
+    # board still shows as open to anyone.
     if [ "$task_key" = "$prev_num" ]; then
       echo "❌ ralph.sh: no progress on $task_key (re-selected). Aborting the loop." >&2
       break
     fi
     prev_num="$task_key"
+
+    # WORK THE TICKET (#128). The key is the ENTIRE handoff: bash passes no summary,
+    # no description and no labels, and lib/build-prompt.js reads RALPH_TASK_KEY into
+    # the {{RALPH_TASK_KEY}} placeholder of prompt-team-jira.md, which then tells the
+    # agent to fetch its own work item — the same shape as github mode, where the
+    # agent runs its own issue read. So this export IS the dispatch contract: drop it
+    # and the rendered prompt names an empty ticket and the agent has nothing to work.
+    # THE KEY, VERBATIM: build-prompt.js runs it through the same `usableJiraKey` that
+    # produced it (lib/jira-key.js), so tidying it here would only give the two ends
+    # two chances to disagree.
+    export RALPH_TASK_KEY="$task_key"
+
+    # A FILESYSTEM-SAFE HANDLE FOR THE LOG PATHS, and ONLY for those. `$task_key` comes
+    # out of acli's own JSON and `usableJiraKey` deliberately passes through a key its
+    # grammar does not recognise (Jira names its own tickets), so a `/` in it reached
+    # `run_agent_for_issue` and named `logs/ralph-issue-FOO/1.log` — a directory that
+    # does not exist. This file runs under `set -u` ONLY, no `set -e`, so the failed
+    # redirection stopped nothing: the agent was still spawned and still billed, and the
+    # transcript that would explain what it did went nowhere, leaving bash's own
+    # redirection error as the only clue. Every character outside `[A-Za-z0-9._-]`
+    # becomes `_`, which is a no-op for `FOO-123` — the ordinary case keeps the exact
+    # path `logs/ralph-issue-FOO-123.log` that the prompt quotes and that the tests pin.
+    #
+    # THE HANDLE IS NOT THE KEY and is used nowhere else: not in the acli argv, not in
+    # the export above, not in the iteration line, not in the run record. A ticket is
+    # named by its key on every surface a human or the board reads; this is a filename.
+    #
+    # NOT $num, either. $num is deliberately empty in this mode (see the selection arm),
+    # so passing it would collapse every ticket onto `logs/ralph-issue-.log`. One log
+    # per task, no per-role logs — the same rule the other two sources follow.
+    task_log_handle="${task_key//[^A-Za-z0-9._-]/_}"
+    run_agent_for_issue "$task_log_handle"
     continue
   fi
 
