@@ -881,3 +881,255 @@ describe('ralph.sh jira arm — the key becomes a LOG PATH (#128 QA)', () => {
     expect(valueAfter(callsFor('view')[0], '--key')).toBe('../../qa-escape')
   })
 })
+
+// ---------------------------------------------------------------------------
+// #129 QA — COMPLETION, THROUGH THE WHOLE LOOP. Everything else about #129 is testable in
+// process: lib/jira-queue.test.js owns the contract and lib/jira-queue.qa.test.js runs the CLI
+// against a fake acli. What NEITHER can reach is the wiring, and completion has three pieces of
+// it that exist nowhere else:
+//
+//   THE AGENT IS THE CALLER. Step 7 of templates/prompt-team-jira.md tells the agent to run
+//   `node "$RALPH_PKG_DIR/lib/jira-queue.js" complete {{RALPH_TASK_KEY}}` itself — the loop
+//   never completes a ticket. So the completion depends on TWO variables reaching a subprocess
+//   of a subprocess: `RALPH_PKG_DIR` (exported near the top of ralph.sh) and `RALPH_TASK_KEY`
+//   (exported inside the jira branch). The `claude` stub below runs exactly those two commands,
+//   which is the first test anywhere that the instruction in that prompt is executable.
+//
+//   JIRA_DONE_STATUS TRAVELS THROUGH `set -a`. It has no flag and no loop code of its own: the
+//   CLI reads `process.env.JIRA_DONE_STATUS`, and the only thing that puts it there is
+//   ralph.sh sourcing ralph.config.sh under `set -a`. That is a claim about bash, so it is
+//   asserted by writing a real ralph.config.sh and looking at the argv acli received — with a
+//   TWO-WORD status, so a value that had been word-split would be visible as two arguments.
+//
+//   AND `ok:false` MEANS "STILL IN THE QUEUE" — end to end. The narrow meaning of the exit code
+//   is only meaningful if a failed `done` label really does leave the ticket eligible and the
+//   loop really does terminate anyway. Here the fake board makes that observable: the label
+//   write is what drains this fixture's queue, so a completion that could not write it produces
+//   a re-selection, and the zero-progress guard is what stops the run.
+//
+// The acli stub is the same one the rest of this file uses, unchanged: its `edit` arm touches
+// the flag that makes the next `--count` answer 0, so a completion's own label write is what
+// drains the queue — and its unmatched branches (transition, comment create) exit 0 with no
+// output, which is exactly how acli reports a successful write.
+// ---------------------------------------------------------------------------
+describe('ralph.sh jira arm — the agent completes the ticket it was given (#129 QA)', () => {
+  const agentEnvLog = () => join(workdir, 'agent-env.log')
+  const agentErrLog = () => join(workdir, 'agent-stderr.log')
+  const agentOutLog = () => join(workdir, 'agent-stdout.log')
+  const envLines = () => readLog(agentEnvLog()).split(LF).filter(Boolean)
+
+  // The agent, doing what step 7 of templates/prompt-team-jira.md tells it to do and nothing
+  // else: commit (the git stub swallows that), then `complete`, then `comment`. It runs those
+  // two commands through `node`, which is itself a stub that delegates jira-queue.js to the
+  // real interpreter — so the CLI under test is the real one, spawning the real execa, against
+  // the fake acli on PATH.
+  //
+  // GUARDED ON RALPH_TASK_KEY BEING SET, because the same stub also serves the one-shot config
+  // validation ralph.sh runs when a ralph.config.sh is present, and that invocation has no
+  // ticket. Which is itself a small proof: the variable is exported inside the jira branch, so
+  // an agent run outside it does not see one.
+  const completingAgent = (body = 'Resolved by Ralph in abc1234') =>
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+echo "$*" >> "${claudeLog()}"
+if [ -n "\${RALPH_TASK_KEY:-}" ]; then
+  {
+    echo "KEY=\${RALPH_TASK_KEY}"
+    echo "DONE=[\${JIRA_DONE_STATUS-<absent>}]"
+    echo "PKG=\${RALPH_PKG_DIR:-<absent>}"
+  } >> "${agentEnvLog()}"
+  node "$RALPH_PKG_DIR_PLACEHOLDER/lib/jira-queue.js" complete "\$RALPH_TASK_KEY" \
+    >> "${agentOutLog()}" 2>> "${agentErrLog()}"
+  echo "COMPLETE_EXIT=$?" >> "${agentEnvLog()}"
+  node "$RALPH_PKG_DIR_PLACEHOLDER/lib/jira-queue.js" comment "\$RALPH_TASK_KEY" "${body}" \
+    >> "${agentOutLog()}" 2>> "${agentErrLog()}"
+  echo "COMMENT_EXIT=$?" >> "${agentEnvLog()}"
+fi
+exit 0
+`.replace(/\$RALPH_PKG_DIR_PLACEHOLDER/g, '${RALPH_PKG_DIR}'),
+    )
+
+  it('runs all four completion invocations, with a TWO-WORD status out of ralph.config.sh', () => {
+    // The ticket already carries `in-progress` — the shape a re-run or a claim from a previous
+    // iteration leaves behind — so the claim short-circuits and the COMPLETION is what writes,
+    // which makes every one of its four invocations visible in one run.
+    seedStubs({ labels: '["frontend","in-progress"]' })
+    completingAgent()
+    // A real config file, sourced under `set -a`: the only transport JIRA_DONE_STATUS has.
+    writeFileSync(join(workdir, 'ralph.config.sh'), `JIRA_DONE_STATUS="In Review"${LF}`)
+
+    const res = runJira()
+    finished(res)
+
+    // The knob arrived at the agent's environment, spaces intact.
+    expect(envLines()).toContain('DONE=[In Review]')
+    expect(envLines()).toContain('KEY=FOO-123')
+    expect(envLines()).toContain('COMPLETE_EXIT=0')
+    expect(envLines()).toContain('COMMENT_EXIT=0')
+
+    // 1. THE TRANSITION, as one argument. `argc === args.length` is what rules out a status
+    // that had been word-split somewhere between ralph.config.sh and acli.
+    const transitions = callsFor('transition')
+    expect(transitions, readLog(acliLog())).toHaveLength(1)
+    expect(transitions[0].args).toEqual([
+      'jira', 'workitem', 'transition', '--key', 'FOO-123', '--status', 'In Review', '--yes',
+    ])
+    expect(transitions[0].argc).toBe(transitions[0].args.length)
+
+    // 2. THE LABEL, read-then-union, preserving the team's own label.
+    const edits = callsFor('edit')
+    const added = edits.filter((call) => call.args.includes('--labels'))
+    expect(added, readLog(acliLog())).toHaveLength(1)
+    expect(valueAfter(added[0], '--labels')).toBe('frontend,in-progress,done')
+    expect(added[0].args.at(-1)).toBe('--yes')
+
+    // 3. AND `in-progress` OFF, with the flag that means "remove" rather than "set".
+    const removed = edits.filter((call) => call.args.includes('--remove-labels'))
+    expect(removed, readLog(acliLog())).toHaveLength(1)
+    expect(valueAfter(removed[0], '--remove-labels')).toBe('in-progress')
+    expect(removed[0].args.at(-1)).toBe('--yes')
+
+    // 4. The comment, one argument, spaces and all.
+    const comments = callsFor('comment')
+    expect(comments, readLog(acliLog())).toHaveLength(1)
+    expect(comments[0].args[3]).toBe('create')
+    expect(valueAfter(comments[0], '--body')).toBe('Resolved by Ralph in abc1234')
+    expect(comments[0].argc).toBe(comments[0].args.length)
+
+    // The claim read the ticket and wrote nothing (it was already labelled), so the two `view`
+    // calls are the claim's and the completion's — proof that both label paths go through a
+    // read and that the completion did not reuse a stale list.
+    expect(callsFor('view')).toHaveLength(2)
+
+    // AND THE QUEUE DRAINED. In this fixture the label write is what makes the next count
+    // answer 0, so "Queue empty" is the completion having taken effect on the board.
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    // One ticket, one agent dispatch for it — plus the config-validation run that a present
+    // ralph.config.sh triggers, which carries no ticket.
+    expect(agentCalls().length).toBe(2)
+    expect(readLog(agentOutLog())).toBe('')
+  })
+
+  it('completes with no transition and ONE warning when JIRA_DONE_STATUS is not configured', () => {
+    // The default configuration — templates/ralph.config.sh ships `JIRA_DONE_STATUS=""` — and
+    // the one that has to work on a board Ralph knows nothing about. No config file at all
+    // here, which is the absent case rather than the empty one.
+    seedStubs({ labels: '["frontend","in-progress"]' })
+    completingAgent()
+
+    const res = runJira()
+    finished(res)
+
+    expect(envLines()).toContain('DONE=[<absent>]')
+    expect(envLines()).toContain('COMPLETE_EXIT=0')
+    // NO transition was attempted: an unset status skips the board move rather than guessing a
+    // status name, because a wrong `--status` is a write.
+    expect(callsFor('transition'), readLog(acliLog())).toEqual([])
+    // The label work still happened, which is what drains the queue.
+    expect(callsFor('edit').filter((c) => c.args.includes('--labels'))).toHaveLength(1)
+    expect(res.stdout).toContain('Queue empty, exiting.')
+
+    // ONE warning, on stderr, naming the knob and whose job the board move now is. Counted,
+    // because a completion that warned per invocation would bury it.
+    const warnings = readLog(agentErrLog()).split(LF).filter(Boolean)
+    expect(warnings, readLog(agentErrLog())).toHaveLength(1)
+    expect(warnings[0]).toContain('JIRA_DONE_STATUS is not set')
+    expect(warnings[0]).toContain('yours to do by hand')
+  })
+
+  it('leaves the ticket IN the queue when the `done` label cannot be written — and terminates', () => {
+    // The narrow meaning of `ok:false`, end to end. `editBody: exit 1` makes every label write
+    // fail, so: the claim fails (warns, carries on), the agent's completion exits 1, the flag
+    // that drains this fixture's queue is never set, the same ticket is selected again, and the
+    // ZERO-PROGRESS GUARD is what ends the run. A loop without that guard would hand this
+    // ticket out forever, which is why `signal` and a BOUNDED call count are the assertions
+    // that matter rather than the message.
+    seedStubs({ labels: '["frontend","in-progress"]', editBody: 'exit 1' })
+    completingAgent()
+
+    const res = runJira()
+    // EXIT 0, and that is deliberate: the guard `break`s out of the loop rather than aborting
+    // the process, because one ticket Ralph cannot label must not take a whole scheduled cycle
+    // down with it. `signal` null is the assertion that it stopped at all.
+    finished(res)
+    expect(res.stderr).toContain('no progress on FOO-123 (re-selected). Aborting the loop.')
+    // TWO iterations, not more and not forever: the same ticket came back once, and the guard
+    // caught it on the second look.
+    const iterations = res.stdout.split(LF).filter((line) => line.includes('==> Iteration for'))
+    expect(iterations, res.stdout).toHaveLength(2)
+
+    // The completion reported the ONE failure it has, on stderr, and nothing on stdout —
+    // EXACTLY ONCE, because the jira arm's guard runs BEFORE the dispatch: the second look at
+    // the same ticket ends the loop without paying for another agent invocation. So an
+    // unwritable `done` label costs one agent run, not one per look.
+    expect(envLines().filter((line) => line === 'COMPLETE_EXIT=1')).toHaveLength(1)
+    expect(agentCalls()).toHaveLength(1)
+    expect(readLog(agentErrLog())).toContain('could not label FOO-123 done')
+    expect(readLog(agentOutLog())).toBe('')
+
+    // NOTHING WAS REMOVED after the failed add: a ticket that lost `in-progress` without
+    // gaining `done` would be back in the queue with no owner.
+    expect(callsFor('edit').filter((c) => c.args.includes('--remove-labels'))).toEqual([])
+    // Bounded: two iterations' worth of calls, not an unbounded spin.
+    expect(acliCalls().length, readLog(acliLog())).toBeLessThan(20)
+  })
+
+  it('still comments — and still exits 0 — when the comment itself is refused', () => {
+    // Best-effort by contract: the work is committed by the time step 7 comments, so acli
+    // refusing the post must not turn a finished ticket into a failed iteration. The acli stub
+    // is made to fail EVERY invocation whose subcommand it does not recognise, which for this
+    // fixture is `transition` and `comment create`.
+    seedStubs({ labels: '["frontend","in-progress"]' })
+    // Rewrite only the comment arm: a `comment` invocation exits 1, everything else is as
+    // seeded. Appending a case ahead of the default is simpler than parameterising the stub.
+    const acliPath = join(bindir, 'acli')
+    const patched = readFileSync(acliPath, 'utf8').replace(
+      'case "$*" in',
+      `case "$*" in${LF}  *" comment "*) exit 1 ;;`,
+    )
+    writeFileSync(acliPath, patched, { mode: 0o755 })
+    chmodSync(acliPath, 0o755)
+    completingAgent()
+
+    const res = runJira()
+    finished(res)
+    expect(envLines()).toContain('COMPLETE_EXIT=0')
+    // ZERO, still: `comment` cannot fail a run.
+    expect(envLines()).toContain('COMMENT_EXIT=0')
+    expect(readLog(agentErrLog())).toContain('could not comment on FOO-123')
+    expect(res.stdout).toContain('Queue empty, exiting.')
+  })
+
+  it('refuses a body the agent forgot to write, without touching acli, and exits 0', () => {
+    // The caller is an LLM composing a shell command, so an empty body is a real shape. An
+    // empty comment on a board reads as Ralph having recorded something, so it is refused
+    // before a process starts — and still exits 0.
+    seedStubs({ labels: '["frontend","in-progress"]' })
+    completingAgent('')
+
+    const res = runJira()
+    finished(res)
+    expect(envLines()).toContain('COMMENT_EXIT=0')
+    expect(callsFor('comment'), readLog(acliLog())).toEqual([])
+    expect(readLog(agentErrLog())).toContain('no comment body to post to FOO-123')
+  })
+
+  it('passes a HOSTILE key from acli through the completion as one argument, running none of it', () => {
+    // The key is chosen by a remote system and step 7 of the prompt interpolates it into two
+    // shell commands. Here the agent quotes it — as the prompt's own example does — so the
+    // whole string reaches acli as one argument and none of it is executed. The fixture's
+    // board answers to this key, so the completion really does run against it.
+    seedStubs({ key: 'FOO-1$(touch pwned-key)', labels: '["in-progress"]' })
+    completingAgent()
+
+    const res = runJira()
+    finished(res)
+    expect(injected(), `a shell ran part of the key: ${injected().join(', ')}`).toEqual([])
+    const added = callsFor('edit').filter((c) => c.args.includes('--labels'))
+    expect(added, readLog(acliLog())).toHaveLength(1)
+    expect(valueAfter(added[0], '--key')).toBe('FOO-1$(touch pwned-key)')
+    expect(added[0].argc).toBe(added[0].args.length)
+  })
+})
