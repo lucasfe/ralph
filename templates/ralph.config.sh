@@ -24,22 +24,61 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # issues via `gh`; "folder" draws tasks from the local `.ralph/tasks/` tree and
 # commits straight to DEV_BRANCH (no PR/merge). Unset falls back to "github".
 #
-# "jira" is the third value, and right now it is a NAME AND A CHECKLIST rather than
-# a working loop. Be clear about what it does NOT do yet: nothing selects or
-# resolves a Jira ticket, so the loop STILL RUNS THE GITHUB PATH — it reads open
-# GitHub issues, still needs an authenticated `gh`, and still opens PRs. Setting
-# this to "jira" does not point the loop at your Jira board.
+# "jira" is the third value, and it is HALF A LOOP: it now COUNTS from your Jira
+# project (see JIRA_JQL below) but still does not SELECT from it. `ralph status` and
+# `ralph cycle` take the queue depth by running your JQL through `acli`, so the
+# number you see, and the decision to start a cycle at all, come from Jira. What
+# happens after that does not: nothing resolves a Jira ticket into a task yet, so
+# the loop STILL RUNS THE GITHUB PATH — it reads open GitHub issues, still needs an
+# authenticated `gh`, and still opens PRs. Expect the depth to be Jira's and the
+# work to be GitHub's until ticket selection lands. `ralph start` is the one command
+# that still counts GitHub issues under this value, because the loop it launches
+# still works them, so its number can differ from `ralph status`'s meanwhile.
 #
-# What it does buy you today is that the prerequisites are checkable BEFORE they
-# are needed. A jira run will want Atlassian's `acli` on PATH and an authenticated
-# session (`acli jira auth login`), and `ralph doctor` reports both once this file
-# says "jira": `acli` as a required dep with a per-platform install hint, and the
-# login state as its own row (reported, never enforced — it cannot fail doctor).
-# doctor also stops listing `gh` under this value, which is honest about the
-# eventual shape and NOT yet about the running loop, since the loop above still
-# uses it. Set it early if you want the setup work done in advance; leave it alone
-# until ticket selection lands if you do not.
+# The prerequisites are checkable BEFORE they are needed. A jira run wants
+# Atlassian's `acli` on PATH and an authenticated session (`acli jira auth login`),
+# and `ralph doctor` reports both once this file says "jira": `acli` as a required
+# dep with a per-platform install hint, and the login state as its own row
+# (reported, never enforced — it cannot fail doctor). An `acli` that is missing,
+# logged out, or answering something unparseable costs you the COUNT and never the
+# run: the depth reads as zero (or as "unknown" in `ralph status`), so a cycle
+# exits saying the queue is empty instead of failing.
 TASK_SOURCE="{{TASK_SOURCE}}"
+
+# Jira eligibility query, used when TASK_SOURCE="jira" and ignored otherwise. Write
+# the half that is YOURS — which work items are candidates for Ralph — and nothing
+# about labels or ordering:
+#
+# JIRA_JQL="project = RALPH AND statusCategory != Done AND assignee = currentUser()"
+#
+# RALPH APPENDS ITS OWN HALF and you cannot turn that off. Your clause is wrapped in
+# parentheses (so an `OR` in it keeps its meaning against the `AND` that follows),
+# then the exclusion `AND (labels NOT IN (in-progress, failed, do-not-ralph) OR
+# labels IS EMPTY)` is added — the `IS EMPTY` half matters, because in JQL a
+# `NOT IN` never matches a work item whose labels are unset, and without it a
+# freshly filed unlabelled ticket would be invisible to Ralph. The exclusion is what
+# keeps the loop off work already in flight, already failed, or marked hands-off.
+#
+# ORDERING IS RELOCATED, NOT REFUSED. Jira requires ORDER BY to be the last clause,
+# so if your query ends with one it is moved back to the end after the exclusion is
+# inserted, exactly as you wrote it. Write no ORDER BY and you get `ORDER BY created
+# ASC` — oldest first, the same rule github mode uses, so the queue drains rather
+# than churning on whatever was filed last.
+#
+# EMPTY MEANS NOT CONFIGURED, and it is deliberately not "everything": a query of
+# Ralph's half alone would select every work item on the Jira site and report a queue
+# depth that belongs to somebody else's board. So an empty value counts nothing, runs
+# no `acli`, and `ralph status` says the queue depth is unknown.
+#
+# A `#` ANYWHERE IN YOUR QUERY NEEDS SINGLE QUOTES — searching for a ticket reference
+# (`summary ~ "#123"`) is the case that hits this. Ralph reads this file without sourcing
+# it, and that reader closes a double-quoted value at an inner quote and takes a `#` after
+# it for a comment, so JIRA_JQL="summary ~ \"#123\"" reaches Jira truncated: the query is
+# rejected, and a rejected query costs you the count silently (the depth reads as zero, so
+# a cycle says the queue is empty). Either spelling avoids it — quote the VALUE with single
+# quotes, JIRA_JQL='summary ~ "#123"', or write the JQL literal with them,
+# JIRA_JQL="summary ~ '#123'". A query with no `#` in it is unaffected.
+JIRA_JQL=""
 
 # How much of the startup banner `ralph start` draws. "full" (the default) plays the
 # one-second sprite splash, settles on its final frame, and prints the identity box
