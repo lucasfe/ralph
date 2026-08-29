@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { Command } from 'commander'
+// #125: the process runner `ralph doctor` needs for ONE row, imported HERE rather
+// than in lib/commands/doctor.js. See the `exec` argument at the doctor action
+// below for why the seam is wired in from the entry point.
+import { execa } from 'execa'
 import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { statusCommand, StatusAbort } from '../lib/commands/status.js'
@@ -37,7 +41,12 @@ program
   .description('Initialize Ralph in the current project (config + templates + slash command)')
   .option('--reset-prompt', 'Overwrite an existing PROMPT.md with the package template')
   .option('--agent <name>', 'Coding agent to configure: claude (default) or codex')
-  .option('--source <github|folder>', 'Task source: github (default) or folder')
+  // #125 added `jira` to the accepted set — initCommand has always validated
+  // against lib/task-source.js's VALID_SOURCES, so the flag took the new value the
+  // moment the registry did. Named here because `--help` is the only place a user
+  // learns which values exist, and a metavar listing fewer than the validator
+  // accepts is a metavar that hides a feature.
+  .option('--source <github|folder|jira>', 'Task source: github (default), folder or jira')
   .action(async (opts) => {
     try {
       await initCommand({
@@ -334,7 +343,18 @@ program
       // #27: currentVersion feeds doctor's cached installed-vs-latest line. Same
       // pkg.version the other commands get — one source of truth for "what is
       // running", and doctor still makes no network call to learn the other half.
-      const result = await doctorCommand({ currentVersion: pkg.version })
+      //
+      // #125: and `exec` is what makes the Jira auth row a real answer instead of
+      // a permanent "not verified". It is injected FROM HERE rather than defaulted
+      // inside doctor.js because lib/commands/doctor.version-line.qa.test.js walks
+      // doctor.js's transitive import graph and asserts the diagnostic can reach no
+      // process spawner and no socket — a guarantee worth keeping, since doctor is
+      // the command people run when the machine is already broken and possibly
+      // offline. That walk starts at doctor.js, so an entry point handing the
+      // capability in as an argument satisfies both halves: the graph stays closed
+      // and the row still runs `acli jira auth status` for a real user. Harmless in
+      // every other mode — nothing outside TASK_SOURCE=jira consults it.
+      const result = await doctorCommand({ currentVersion: pkg.version, exec: execa })
       process.exit(result.exitCode)
     } catch (e) {
       if (e instanceof DoctorAbort) {

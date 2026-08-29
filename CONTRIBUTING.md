@@ -686,8 +686,15 @@ first of them fed by a generator that is not published at all:
   its arguments can authorise a sprite, and it **drops the warning deliberately**. That
   used to be half a constraint: wording one safely meant `oneLine`, which lived in
   `lib/digest.js` and so behind execa, and `doctor` is the command people run when
-  things are already broken — it takes no exec dependency and opens no socket, and a QA
-  spec walks its whole import graph to keep it that way. #108 removed the constraint
+  things are already broken — it **imports** no process spawner and opens no socket, and a
+  QA spec walks its whole import graph to keep it that way. Since #125 that import graph is
+  the whole of the guarantee, because `doctor` does now *take* an `exec`: the Jira auth row
+  runs `acli jira auth status`, and the runner reaches it as an **undefaulted option** that
+  `bin/ralph.js` passes in, while `lib/jira-auth.js` — the module that spends it — imports
+  nothing at all. Copy that shape if a diagnostic ever needs another subprocess, and do not
+  give the option a default: a capability handed in as an argument keeps the graph closed,
+  and a caller that supplies none gets a row saying the question went unasked rather than a
+  verdict nobody observed. #108 removed the constraint
   (`oneLine` now lives in `lib/one-line.js`, which imports nothing, and `doctor` reaches
   it transitively for the `RALPH_AGENT` warning it *does* print) and left the judgement,
   which was always the better half: a typo in a **cosmetic** knob does not earn a line in
@@ -765,6 +772,26 @@ to catch path/template bugs that unit tests can't surface.
 4. **Run `ralph doctor`** and confirm that:
    - The dep summary is correct for the OS (`brew install ...` on
      macOS, `apt install ...` on Linux/WSL).
+   - The **source-gated deps follow the committed line, not your shell** (#125),
+     which is the half only a real config file settles. Write
+     `TASK_SOURCE="folder"` into the project's `ralph.config.sh`, export nothing,
+     and the `gh` row must be **gone** — before #125 `doctor` read this knob from
+     the environment alone, so a repo configured the way `ralph init` writes it
+     still took a `gh` row it did not need. Then write `TASK_SOURCE="jira"` and the
+     report must swap that row for an `acli` one, critical, with the platform's
+     install hint (the Linux/WSL hint is a `curl` binary download rather than a
+     package manager — paste it and check it actually works), plus one **`jira
+     auth`** row. Two of its three states are expected here and neither is a
+     failure: `✓ jira auth` on a logged-in machine, and — after an
+     `acli jira auth logout` — `! jira auth (not authenticated)` carrying the
+     `acli jira auth login` hint. The thing to confirm deliberately is that
+     `doctor`'s **exit code is unchanged** across both, because that row is reported
+     and never enforced. `! jira auth (not verified)`
+     is the state a real `ralph doctor` should *never* show you: it means the command
+     had no process runner to ask with, which for the shipped CLI means
+     `bin/ralph.js` stopped handing `doctor` its `exec`. A **missing** `acli` is not
+     that state — it reads `not authenticated`, next to the `✗ acli` dep row that
+     names the real problem.
    - The **identity box** heads the output (#75) — above the dep report and
      above the abort on a missing required dep — with the tarball version you
      just installed as its title and `os`, `agent`, `cached` and `cwd` rows
