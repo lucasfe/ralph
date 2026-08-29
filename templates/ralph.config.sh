@@ -9,8 +9,15 @@ TEST_CMD="{{TEST_CMD}}"
 LINT_CMD="{{LINT_CMD}}"
 
 # Coding agent Ralph drives. "claude" (default) uses Claude Code; "codex" uses
-# the OpenAI Codex CLI. Unset or unrecognized falls back to "claude". Nothing
-# else in this file changes between agents.
+# the OpenAI Codex CLI. Unset or unrecognized falls back to "claude" and warns on
+# stderr — `ralph start` says so once, above the banner, and the loop says it again in
+# its own window — so a typo here costs you a line of output and never the run. A
+# recognized value prints nothing. Nothing else in this file changes between agents.
+#
+# The loop SOURCES this file with `set -a`, so a value here beats one exported in your
+# shell — and a blank RALPH_AGENT="" is a value rather than an absence: it means
+# "claude", not "whatever was inherited". `ralph start` reports on the same rule, so its
+# banner never names an agent the loop is not about to run.
 RALPH_AGENT="{{RALPH_AGENT}}"
 
 # Task source Ralph pulls work from. "github" (default) resolves open GitHub

@@ -439,10 +439,23 @@ first of them fed by a generator that is not published at all:
   `source` row), and the preflight step that spends it reads that same binding rather
   than resolving a second one. `RALPH_DIGEST_INTERVAL` is still derived at the step that
   uses it, out of that same one read, and #69's three knobs — `RALPH_AGENT`,
-  `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — are text-parsed out of it too, at the
-  box's call site. All of those take the **file over the environment**, matching the loop,
-  which sources `ralph.config.sh` with `set -a`; `RALPH_BANNER` is the one exception in
-  the other direction and the paragraph above is why. Since #75 and #76
+  `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — are text-parsed out of it too. Two of
+  those three are still parsed at the box's own call site; `RALPH_AGENT` is not, since
+  #118 moved its `resolveAgent` call up beside the banner's warning. The command now has
+  to *warn* about a mistyped value as well as name the resolved one, and the box spends
+  that same binding rather than resolving a second time — two sites resolving one value
+  are two owners of one decision, and a box naming one agent under a warning naming
+  another fallback is exactly the confusion #69 was filed about. All of those take the
+  **file over the environment**, matching the loop, which sources `ralph.config.sh` with
+  `set -a`; `RALPH_BANNER` is the one exception in
+  the other direction and the paragraph above is why. For `RALPH_AGENT` that precedence is
+  a **presence** test rather than a truthiness one — `configAssignsVar(text, 'RALPH_AGENT')
+  ? parseConfigVar(…) : null`, then `??` onto the environment — because `parseConfigVar`
+  answers `''` both for a file that never mentions the knob and for one that blanks it,
+  while bash treats those two as opposites: `set -a` exports a blank assignment *over* an
+  inherited value. Do not "simplify" it back to a `||`. That reads the environment for a
+  `RALPH_AGENT=""` the loop will mask, which warns about a value no run will read and puts
+  an agent in the box the loop is not about to launch. Since #75 and #76
   this resolver has **three** callers, reading different parts of one answer:
   `lib/commands/doctor.js` does the same text-parsed read of the same file with the
   same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
@@ -635,6 +648,21 @@ to catch path/template bugs that unit tests can't surface.
      it always did**. That slug is read from `.git/config` on purpose and `gh repo
      view` is deliberately never called; if the box ever pauses before it appears,
      somebody has put a network round trip in front of the first paint.
+   - **A mistyped `RALPH_AGENT`, on both mouths** (#118), which is a real terminal's
+     business twice over. Write `RALPH_AGENT="codx"` into the project's
+     `ralph.config.sh` and run `ralph start`: exactly one `⚠️  RALPH_AGENT='codx'
+     unrecognized; falling back to 'claude'.` must land on **stderr above the splash**,
+     where the banner's own fallback warning goes, the launch must succeed, and the box's
+     `agent` row must read `claude` — the agent that will actually run — with no second
+     opinion inside the frame. `ralph start 2>/dev/null` must show the banner and no
+     warning at all, which is the check that stdout stayed clean, and `RALPH_BANNER=off`
+     must silence the picture and not the diagnostic. Then attach: the **loop** prints
+     that same sentence again in its own window, because `resolve_agent_invocation`
+     forwards the node bridge's stderr instead of discarding it on a successful resolve.
+     The price of that is visible right here and is **not** a bug to file: a node
+     deprecation notice or an nvm/shim banner now reaches the window on every start,
+     where it used to vanish into the temp file. Fix the value and start again — a valid
+     or unset `RALPH_AGENT` must add no line to either stream, in either place.
    - The box's **`new` rows** are read from the `CHANGELOG.md` inside the tarball you
      just installed, and this step is the only place that read happens for real — the
      hermetic suite injects an fs and never touches the file. They must show the three

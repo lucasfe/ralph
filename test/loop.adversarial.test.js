@@ -31,6 +31,7 @@ const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.exec
 //   - PIPESTATUS[1] reflecting claude's exit, not the tail of the pipe
 //   - --once mode exiting 0
 //   - empty queue / count="0" immediate exit
+//   - the agent bridge's stderr surviving the temp-file capture on BOTH paths (#118)
 
 let workdir
 let bindir
@@ -512,6 +513,97 @@ exit 0
     // The loop resolved the agent and drained the queue normally.
     expect(res.stdout).toContain('==> result: success')
     expect(res.stdout).toContain('Queue empty, exiting.')
+  })
+
+  // The other half of that capture, and the half #555 got wrong in the opposite direction (#118).
+  // Keeping stdout pristine is why the temp file exists; DISCARDING it on the success path was
+  // over-collection, and it cost a whole overnight run — a mistyped RALPH_AGENT fell back to
+  // claude, the bridge said so on stderr, and `rm -f "$_err"` ate the sentence. Forwarding it
+  // restores exactly what would have happened with no capture at all.
+  //
+  // An EMPTY QUEUE is the whole fixture these three need: `resolve_agent_invocation` runs once at
+  // startup, above the loop, so a run that breaks immediately on count="0" has already exercised
+  // it and costs one gh stub instead of a full drain.
+  describe('the agent bridge’s stderr on the SUCCESS path (#118)', () => {
+    const EMPTY_QUEUE = `#!/bin/bash
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  echo "0"
+  exit 0
+fi
+exit 0
+`
+    // The registry's sentence, verbatim, as `ralph doctor`, `ralph init` and `ralph start` print
+    // it — the loop is the fourth mouth for one message, not a fourth wording of it.
+    const TYPO_WARNING =
+      "⚠️  RALPH_AGENT='codx' unrecognized; falling back to 'claude'. Valid: claude, codex."
+
+    it('lets a mistyped RALPH_AGENT reach the terminal instead of eating it', () => {
+      writeStub('gh', EMPTY_QUEUE)
+      const res = runLoop({ extraEnv: { RALPH_AGENT: 'codx' } })
+      expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
+      expect(res.status).toBe(0)
+      expect(res.stderr).toContain(TYPO_WARNING)
+      // On its own line, once — not smeared into a neighbouring message, and not doubled by a
+      // second `cat` on some other path.
+      expect(res.stderr.split('\n').filter((l) => l.includes('RALPH_AGENT='))).toEqual([
+        TYPO_WARNING,
+      ])
+      // STDOUT is still the loop's own voice. This is the invariant the temp file exists for and
+      // the one thing forwarding must not cost: a sentence on stdout would have been eval'd.
+      expect(res.stdout).not.toContain('unrecognized')
+      expect(res.stdout).not.toContain('⚠️')
+      // The eval still ran, so the fallback agent is genuinely resolved rather than merely
+      // announced: no syntax error from a folded line, no `set -u` trip on an unset array, and
+      // the abort branch did not fire on a resolve that SUCCEEDED.
+      expect(`${res.stdout}\n${res.stderr}`).not.toMatch(
+        /syntax error|unbound variable|RALPH_AGENT_ARGS/
+      )
+      expect(res.stderr).not.toMatch(/failed to resolve agent invocation/)
+      expect(res.stdout).toContain('Queue empty, exiting.')
+    })
+
+    it('forwards the WHOLE stream, not a line it recognizes', () => {
+      // The design claim, and the reason the warning travels as a plain stderr line rather than a
+      // structured field: this bash knows nothing about agents and must not learn. A node banner
+      // the loop has never heard of reaches the terminal on the same terms as the warning above —
+      // if this passes only for the ⚠️ line, someone has taught bash to grep.
+      writeStub(
+        'node',
+        `#!/bin/bash
+case "$*" in
+  *agent-invocation.js*)
+    "${REAL_NODE}" "$@"
+    echo "(node:12345) ExperimentalWarning: some transitive dep warning" >&2
+    exit 0
+    ;;
+esac
+echo "PROMPT"
+exit 0
+`
+      )
+      writeStub('gh', EMPTY_QUEUE)
+      const res = runLoop({ extraEnv: { RALPH_AGENT: 'codx' } })
+      expect(res.status).toBe(0)
+      expect(res.stderr).toContain('ExperimentalWarning: some transitive dep warning')
+      expect(res.stderr).toContain(TYPO_WARNING)
+      expect(res.stdout).not.toContain('ExperimentalWarning')
+      expect(res.stdout).toContain('Queue empty, exiting.')
+    })
+
+    it('stays silent when the bridge has nothing to say', () => {
+      // The cost of forwarding, bounded: an empty capture forwards an empty stream. A loop whose
+      // RALPH_AGENT is fine (or unset) gains no line at all, so the noise this trades for
+      // visibility is the child's own diagnostics and nothing manufactured here.
+      writeStub('gh', EMPTY_QUEUE)
+      for (const extraEnv of [{ RALPH_AGENT: 'codex' }, { RALPH_AGENT: 'claude' }, {}]) {
+        const res = runLoop({ extraEnv })
+        const label = JSON.stringify(extraEnv)
+        expect(res.status, label).toBe(0)
+        expect(res.stderr, label).not.toContain('unrecognized')
+        expect(res.stderr, label).not.toContain('⚠️')
+        expect(res.stdout, label).toContain('Queue empty, exiting.')
+      }
+    })
   })
 
   it('empty queue: exits cleanly with 0 ok / 0 failed when count is "0" immediately', () => {

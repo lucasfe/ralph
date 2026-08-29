@@ -302,8 +302,13 @@ because the two agents give Ralph two different qualities of evidence and a row
 that hid the difference would be claiming more than it knows. The agent half is
 the *resolved* [`RALPH_AGENT`](#configuration-reference), so a mistyped value
 shows you the agent that will actually run (`claude`, that setting's fallback)
-rather than what you typed: this box reports the run, it does not diagnose it, and
-[`ralph doctor`](#quick-start) and `ralph init` are where a typo is named for you.
+rather than what you typed: this box reports the run, it does not diagnose it, so
+there is no second opinion about the typo inside the frame. The typo itself is
+named **above** the box instead — one line on **stderr**, next to the banner's own
+fallback warning, and the run starts anyway — so nothing about it reaches stdout
+and `ralph start | tee` is unaffected. A recognized value, or none at all, prints
+nothing. [`ralph doctor`](#quick-start) and `ralph init` print that same line, and
+so does the loop, in the tmux window it runs in.
 The model half has three readings:
 
 - ``agent   claude — claude-opus-5 (last run)`` — the model the **previous** run
@@ -362,6 +367,12 @@ an inherited one), and it is deliberately the opposite of
 name what the run is going to do, so a box that preferred the environment could
 name an agent the loop is not about to run, while a banner is a property of one
 invocation rather than of the repository.
+
+For `RALPH_AGENT`, "silent" means **no assignment at all**. An explicitly blank
+`RALPH_AGENT=""` line is a value like any other, because a shell sourcing the file
+with `set -a` exports the empty string *over* whatever your environment held — so
+that line means `claude`, and both the `agent` row and the warning above the box
+follow it rather than reporting an environment value the loop will never see.
 
 The `source` row is the resolved [`TASK_SOURCE`](#choosing-the-task-source) —
 `github` or `folder` — and the `repo` row under it is the repository the loop will
@@ -696,6 +707,13 @@ so the switch self-heals even though the rest of the config is unchanged.
 reports which agent it validated in the `agent` row of the identity box it opens
 with (`agent   codex`) and checks that agent's CLI — Claude needs `claude`;
 Codex needs `codex`.
+
+A hand-edited typo is **not** rejected the way the flag is — a committed file is
+read, not validated, so anything that is neither `claude` nor `codex` falls back to
+`claude`. It does not fall back quietly: `ralph start` names the value in one line
+on stderr before the splash and launches anyway, and the loop names it again inside
+its tmux window, so a typo costs you a line of output rather than a night of the
+wrong agent.
 
 Nothing else in `ralph.config.sh` changes between agents. The two agents share
 the same team roles, triage tiers, PR flow, and telemetry; only the
@@ -1211,7 +1229,7 @@ be committed. Re-running `ralph init` never overwrites it.
 
 | Variable              | Default                              | Purpose                                                                 |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
-| `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. The `agent` row of the identity box [`ralph start`](#quick-start) opens with names the **resolved** agent, so a mistyped value shows you the agent that will actually run rather than what you typed — that box reports the run, and `ralph init` and [`ralph doctor`](#quick-start) are where the typo itself is named. |
+| `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. The `agent` row of the identity box [`ralph start`](#quick-start) opens with names the **resolved** agent, so a mistyped value shows you the agent that will actually run rather than what you typed — that box reports the run, and the typo itself is named **on stderr**, beside it rather than inside it: `ralph start` writes one line above the splash and starts the loop anyway (never a byte on stdout, so `ralph start \| tee` is unaffected), the loop writes the same line again inside its tmux window, and `ralph init` and [`ralph doctor`](#quick-start) write it too. A recognized value — or none at all — prints nothing on either stream. This file is read **first** and the environment only where this file does not assign the name at all: the loop *sources* it with `set -a`, so a value here beats one exported in your shell, and a blank `RALPH_AGENT=""` is a value rather than silence — it means `claude`, not "whatever was inherited". |
 | `RALPH_BANNER`        | `full`                               | How much of the startup banner [`ralph start`](#quick-start) draws — and, because the identity box also heads [`ralph doctor`](#quick-start)'s report and [`ralph status`](#quick-start)'s human view, whether either of those commands prints its box at all. `full` (the default `ralph init` writes) plays the one-second sprite splash, settles it on its final frame, and prints the identity box under it. `static` draws the same picture with none of the animation — the settled frame, once, in a single write, with no cursor hidden, no `Ctrl-C` handler armed, and byte-for-byte the frame the splash would have ended on (it still holds that frame's own 200ms beat, the same pause the splash's last frame takes before the box lands under it). `off` prints nothing at all, not even the box, so the output starts at the first preflight line exactly as it did before any of this existed — and nothing is read for a box nobody is going to see: not the update-check cache behind the `update` row, not the shipped `CHANGELOG.md` behind the what's-new rows, and not the `.git/config` behind the `repo` row. Case-insensitive, surrounding whitespace ignored; unset or empty means `full`, and an unrecognized value means `full` **and warns on stderr — in `ralph start` only** — a typo here costs you one line of output and never the run, and never a byte of stdout, so `ralph start \| tee` is unaffected. `ralph doctor` and `ralph status` take the identical fallback **silently**: the default box, and not a word about the typo on either stream — `doctor` because a typo in a purely cosmetic knob does not earn a line in a diagnostic, `status` because it has no stderr channel at all, which is what keeps its `--json` output pipeable — so `ralph start`, the command the setting is actually about, is where a mistyped value is reported. **An environment variable of the same name wins over this line**, which is deliberately the opposite way round to `TASK_SOURCE` below (that one reads the committed file first): a task source is a property of the repository, a banner is a property of one invocation, so `RALPH_BANNER=off ralph start` silences a single run inside a wrapper script, a cron entry or a CI job without editing — and committing — a file every other run in the repo shares. See the [environment-variable row](#environment-variables). The terminal caps this **downward only**: a pipe, a launchd log, a `NO_COLOR` run or a window under 26 columns draws no sprite whatever this says, and no value here can put one back. The cap stops at the sprite — those runs still print the identity box, in plain text, because it is facts rather than decoration — so only an explicit `off` takes the box away. `ralph doctor` and `ralph status` read the box half of this setting and nothing else: neither draws a sprite or an animation at any value, `full` and `static` are the same picture in both, and `off` means no box and not one blank line where it would have been — so `RALPH_BANNER=off ralph status` prints the report starting at its `▸ ralph` line, byte for byte as it did before the box existed. `ralph status` adds the only two exceptions in either direction: its `never-run` mode prints no box at any value, because the box identifies a run and that mode has none, and `ralph status --json` prints its one document at every value, since this setting reaches the human view alone. |
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. It is also the model the identity box [`ralph start`](#quick-start) opens with names on a Codex project — ``agent   codex — gpt-5-codex (configured)`` — and the tag is literal: for Codex this value *is* the answer, so the metrics log is never consulted for that row (Codex's stream carries no model id, so the log would hold nothing but a staler copy of this same value). Unset, the row reads ``codex — model resolves at first run`` and names no model at all. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
@@ -1507,6 +1525,19 @@ credentials) and retry. Managed-credential builds that print
 `Login is not required.` and exit zero count as authenticated. The Claude
 path is unchanged: it still checks for the Claude credentials file and
 reports `claude credentials missing` when absent.
+
+**The loop's window opens with a node deprecation notice or an
+`ExperimentalWarning`.** — Expected, and nothing is broken. The loop resolves which
+agent to invoke by running a small node bridge and capturing its **stderr** to a
+temp file, because that bridge's *stdout* is a shell program the loop evaluates and
+a warning line folded into it would break the launch. That capture used to be
+deleted unread on a successful resolve, which also ate the one line it most needed
+to show: a mistyped `RALPH_AGENT` fell back to `claude` and said so nowhere, so an
+overnight run went to the wrong agent in silence. The capture is now forwarded to
+the loop's own stderr **whole and unread** — the loop holds no agent-specific
+knowledge and does not grep it — so node's own notices and any nvm/shim banner reach
+the window alongside the warning that matters. Stdout is untouched, and a bridge
+with nothing to say still adds nothing.
 
 **Issues stuck with the `claude-working` label after a crash.** — The
 next `ralph start` detects orphans and asks whether to clear them and
