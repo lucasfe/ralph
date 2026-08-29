@@ -29,6 +29,44 @@ export function codeWithoutComments(path) {
     .replace(/(^|\s)\/\/.*$/gm, '$1')
 }
 
+// One function's text, for a spec whose claim is about ONE function rather than a module.
+//
+// Several specs ask "does THIS builder call textOr", and a whole-file grep cannot answer
+// that: any other function calling it satisfies the match. So the haystack has to be cut
+// down to the one body, and the cut is the next top-level `function` keyword.
+//
+// `export function` HAS TO END A SLICE. Four copies of this slicer used to look for
+// `\nfunction ` alone, which an exported declaration does not match — so a slice starting at
+// the last non-exported function ran to END OF FILE and swallowed every exported one after
+// it. A gate written that way passes on the definition it was meant to search for a CALL to,
+// which is a spec that cannot go red. #122's reviewer found one, hence one shared copy here
+// instead of four private ones.
+//
+// The `+ 1` is what keeps a slice from ending on its own first line: `.search` runs from the
+// character after the match's start, and the offset is added back so the returned text still
+// begins at `function NAME(`.
+//
+// `export`, `default` and `async` are all optional in the end pattern for the same reason
+// `export` had to be there at all: every one of them is a top-level declaration a slice must
+// stop at, and the copy that only knew the bare keyword failed OPEN — it returned more text
+// than it was asked for, which is the direction that turns a search into a tautology.
+/**
+ * Slice one top-level function's source out of a module's text.
+ *
+ * @param {string} source the file's contents — usually already comment-stripped
+ * @param {string} name the function's name, spelled as it is declared
+ * @returns {string} the text from `function NAME(` to the next top-level function
+ * @throws {Error} if the source declares no such function
+ */
+export function functionBody(source, name) {
+  const start = source.indexOf(`function ${name}(`)
+  if (start === -1) throw new Error(`functionBody: no \`function ${name}(\` in this source`)
+  const next = source
+    .slice(start + 1)
+    .search(/\n(?:export\s+)?(?:default\s+)?(?:async\s+)?function /)
+  return next === -1 ? source.slice(start) : source.slice(start, start + 1 + next)
+}
+
 const blank = (text) => text.replace(/[^\n]/g, ' ')
 
 /**

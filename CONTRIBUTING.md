@@ -154,6 +154,53 @@ import edge, plus two channels nothing watched before — `ralph init`'s six
 generated files, and the exec argv a `ps` or an audit log records), with the
 surviving composition sweep in `lib/agent-registry.warning.qa.test.js`.
 
+### A spec that cannot go red (#122)
+
+The section above is about a needle. This one is about the other two ways a
+source-reading spec passes for a reason nobody chose — **the haystack it was cut
+from**, and **the yardstick it measured against** — because #122 found one of
+each, in opposite directions, and both fixes are conventions rather than tests.
+
+**Slice a function body with `functionBody` from `test/helpers/source-code.js`,
+never with a private copy.** Several specs ask whether *this* builder calls a
+gate — "does `factRows` call `textOr`" — and a whole-file grep cannot answer it:
+the gate's own definition satisfies the match, and so does any other builder's
+call to it. So the haystack has to be cut down to one body, and the cut has to
+be the **next top-level declaration**. Four private copies ended a slice at
+`\nfunction ` alone, which an `export function` does not match, so a slice
+beginning at the last *non*-exported function ran to **end of file** and
+swallowed every exported declaration after it. That fails **open** — it returns
+more text than it was asked for — and open is the direction that turns a search
+into a tautology: a gate written to find a *call* to `textOr` was answered by
+`export function textOr(`, so the spec could not go red however the builder was
+written. The shared slicer stops at `export`, `default` and `async` too, and
+**throws** on a name it cannot find rather than returning `''`, since a silent
+empty string is the same blind spot one file over. Four other `bodyOf` helpers
+(two in `lib/commands/status.json.qa.test.js`, one each in `lib/digest.qa.test.js`
+and `lib/issue-metrics.qa.test.js`) are **not** stragglers and should stay: two of
+them cut at the first column-0 `}`, and `issue-metrics`' matches braces because
+its claim is that two bodies are **byte-identical** and the braces are part of
+what it compares. Both of those cuts fail **short** — they return less than was
+asked for, and a spec starved of haystack goes red rather than green. Do not write
+a fifth that fails long.
+
+**Import the subject, restate the yardstick.** `LABEL_WIDTH` is the frame half's
+number and every label is the row half's string, so #122's seam made the label
+gutter a *cross-module* decision and the constant is now exported for it.
+Exporting it is not a licence to import it everywhere: ask what the number is
+doing in the spec. Where the gutter is what the claim is **about** — "every label
+this module draws fits the gutter with air after it", in `banner-rows.test.js`
+and `banner-compose.test.js` — **import** it, because a literal `8` in the
+pattern is a second copy of one decision and a gutter widened to nine would
+leave the spec quietly asserting the old one. Where the gutter is what the claim
+is **measured with** — the independent reimplementations of the gutter and the
+clip in `banner-rows.qa.test.js` and `banner-rows.seam.qa.test.js`, which exist
+to compare the rendered box against something *neither half built* — **restate**
+it as a literal, and leave the comment saying why. An oracle that imported the
+frame's own constant would be satisfied by any mistake the two halves agreed on,
+which is the single failure mode a seam has and the only one those files are for.
+The duplication is the instrument; do not "DRY" it away.
+
 ## Pull requests
 
 - Branch off `main` and open a PR against `main`.
@@ -233,7 +280,7 @@ on every run — or as much of that as `RALPH_BANNER` asked for (see
 [the README](./README.md#quick-start)). Since #75 `ralph doctor` heads its report
 with that same box, and since #76 `ralph status` heads its human view with it
 too — out of the same composer and the same setting, and with none of the pixels
-in either: three commands share this half, one shares both. Ten published
+in either: three commands share this half, one shares both. Eleven published
 modules under `lib/` back the two halves and the setting that governs them, the
 first of them fed by a generator that is not published at all:
 
@@ -300,7 +347,11 @@ first of them fed by a generator that is not published at all:
   stdout has to inject both, or it buys a real second of wall clock per run and hangs a
   SIGINT listener on the vitest worker's own process.
 - `lib/banner-compose.js` — the banner's *other half*: the identity box, composed
-  from **resolved facts**. Pure in the same way and for the same reason — no
+  from **resolved facts**. Since #122 it is the **frame** alone — every line's
+  width, clip, colour and border — and the rows it draws come out of
+  `lib/banner-rows.js` below; the paragraphs here that name a particular row
+  still say *why that row reads the way it does*, and the file to edit for its
+  wording is the other one. Pure in the same way and for the same reason — no
   `process`, no clock, no fs, and no cache read of its own — so `ralph start`
   resolves every fact on the impure side (the installed version, the working
   directory, the cached `latest_version`, the newest release's changelog
@@ -331,17 +382,18 @@ first of them fed by a generator that is not published at all:
   *first*, before anything about the model. Keep that ordering. `doctor` is a
   diagnostic about an **installation**, and `claude — model resolves at first
   run` in a pasted bug report would be a sentence about a run `doctor` never
-  looked at. The wording per provenance lives here rather than in the resolver
-  (`MODEL_SUFFIX`, and `MODEL_UNKNOWN` for the tag that names no model), and it
-  is deliberately not *imported* from `banner-model.js` — this module's import
-  list is one line long on purpose — so `banner-compose.test.js` holds the two
-  together instead: it enumerates `MODEL_PROVENANCE` and demands a **distinct**
-  sentence for every tag in it, which makes a fourth tag with no wording a red
-  test rather than a row nobody wrote. `context` is the one **numeric** row in
-  the box, which is why it has a gate of its own (`textOr` is the wrong one for a
-  number, and coercing one to check it would run a hostile `valueOf` on a value
-  that came out of a JSON log); it also fixes the label gutter at eight, since
-  `context` is the longest label this box will ever draw.
+  looked at. The wording per provenance lives with the rows rather than in the
+  resolver (`MODEL_SUFFIX`, and `MODEL_UNKNOWN` for the tag that names no
+  model), and it is deliberately not *imported* from `banner-model.js` — each
+  half's import list is one line long on purpose — so `banner-rows.test.js`
+  holds the two together instead: it enumerates `MODEL_PROVENANCE` and demands a
+  **distinct** sentence for every tag in it, which makes a fourth tag with no
+  wording a red test rather than a row nobody wrote. `context` is the one
+  **numeric** row in the box, which is why it has a gate of its own (`textOr` is
+  the wrong one for a number, and coercing one to check it would run a hostile
+  `valueOf` on a value that came out of a JSON log); it is also what fixes the
+  label gutter at eight, since `context` is the longest label this box will ever
+  draw — the row is composed next door, `LABEL_WIDTH` is measured here.
   `cachedLatest` is deliberately a separate fact from `latestVersion`
   rather than a second reading of it: `latestVersion` is advice and draws a row
   only when there is something to act on, `cachedLatest` is a *reading of the
@@ -370,6 +422,40 @@ first of them fed by a generator that is not published at all:
   pre-banner one, and an assertion about what a non-TTY run does *not* print has to
   name the sprite rather than ANSI in general (`expectNoSprite` in
   `lib/commands/start.banner.qa.test.js`, whose comment says why).
+- `lib/banner-rows.js` — the rows (#122), split out of the composer once that
+  file had grown two jobs: **what the box says** and **how wide it is**. The seam
+  is text versus columns. `bannerRows(facts)` answers with an ordered list of
+  `{ label, value, paint }` records and is the only export the frame calls; every
+  builder behind it (`factRows`, `agentRows`, `contextRows`, `updateCheckRows`,
+  `whatsNewRows`) reads facts and returns strings, and not one of them knows a
+  width, a border glyph or a terminal. Three rules worth keeping. **The order of
+  the list is this module's decision, not the frame's** — the frame draws what it
+  is handed, in the order it is handed it, so a row that should sit above `cwd`
+  moves here and nowhere else. **The gates travel with the rows**: `textOr` (which
+  *refuses* a non-string rather than coercing it, then trims, then replaces control
+  bytes with `U+FFFD`) and the separate numeric gate on `context` guard the values
+  on the way in, which is why a hostile `toString` on a fact out of a JSON log
+  cannot reach the frame at all. **A row names its own colour**, so the palette
+  (`YELLOW`, `GREEN`, and the shared `COLOR_OFF`) lives here and the frame only
+  splices what it was given and closes it — which is what keeps the frame half free
+  of escape sequences entirely. Pure and total like its neighbours, and asserted so
+  by a static read: no `process`, no clock, no fs, no `picocolors`, and — the new
+  part — no width arithmetic and no sight of `26`/`44`/`60`. Its import list is one
+  line long (`update-check.js`, for the semver comparison behind the update hint),
+  and the frame's is now one line long too: `banner-rows.js`. The seam runs one way;
+  a row that reaches back for the frame is the split undone. **So a new row is a
+  one-file change — this one** — with exactly one obligation on the far side of the
+  seam: its label must fit the frame's gutter with air after it, which means **at
+  most seven columns**, because `rowLine`'s `padEnd` does not grow and an
+  eight-character label prints `platformmac` with no space at all. That number
+  cannot be *imported* here — the purity sweep forbids this file the string
+  `LABEL_WIDTH` along with every other width — so it is held across the seam by a
+  spec instead: `banner-rows.test.js` imports the constant and measures the labels
+  `bannerRows` actually produces against it, and `banner-rows.seam.qa.test.js` asks
+  the same question of the rendered box at every rung of the ladder. A ninth-column
+  label is a red test, not a squashed row. See
+  [the yardstick rule](#a-spec-that-cannot-go-red-122) for why one of those two
+  imports the gutter and the other retypes it.
 - `lib/banner-model.js` — the fact the box cannot simply be *handed* (#69, and
   the only one left here since #116 gave the repo slug a module of its own
   below): which model the agent will use. Every other row is a lookup the caller
@@ -379,7 +465,7 @@ first of them fed by a generator that is not published at all:
   `unknown`) is exported and frozen. That tag is a **correctness requirement,
   not a garnish**: the box must never state a model with more confidence than
   its source warrants, so if you add a fourth kind of evidence, add a sentence
-  for it in `banner-compose.js` in the same commit — the spec next door will
+  for it in `banner-rows.js` in the same commit — the spec next door will
   tell you if you forget. Pure and total in the same way the composer is, and
   asserted so by a static read: no clock, no `process`, no fs. The file it
   reasons about arrives as **text**, which is what makes every case in its spec
@@ -481,7 +567,7 @@ first of them fed by a generator that is not published at all:
   first preflight line and must not abort over its own release notes. It holds no
   semver opinion either: release-please writes newest-first, so the parser reports
   the order it read rather than sorting, which is the same refusal to have a second
-  version opinion that `banner-compose.js` makes above it.
+  version opinion that `banner-rows.js` makes above it.
 - `lib/changelog-file.js` — the impure half of that pair: one path, one read.
   `changelogPath()` joins `RALPH_HOME` (which `lib/paths.js` derives from
   `import.meta.url`) and **never the cwd** — `ralph start` runs inside the user's
@@ -560,7 +646,39 @@ first of them fed by a generator that is not published at all:
   `gh` reads an empty variable, treats it as unset and resolves its base repository
   from `origin` — and `resolveBannerRepo` treats a blank `ghRepo` the same way, which
   is why handing the blank straight through is what puts `origin`'s slug on the row
-  while a `||` would reach past it into the environment. Since #75 and #76
+  while a `||` would reach past it into the environment. The other two —
+  `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — are still `||`, and since #122
+  they say so **once**: a `configOverEnv(name)` closure declared at the top of the
+  box's fact resolution and called at both sites. The name buys no length; what it
+  buys is that a knob which **departs** from the shape is visible **by not calling
+  it** — `RALPH_BANNER` (inverted), `RALPH_AGENT` and `GH_REPO`
+  (present-or-absent), and `TASK_SOURCE`, which is `||` too but keeps a line of
+  its own because what differs there is the **reader**: `parseConfigSource` knows
+  the file's own spellings of that knob, which is not a `parseConfigVar` question.
+  Read the closure as that shape and no more — **`||` is not `set -a`** — and do
+  not read it as an inventory of the command's config reads either.
+  `RALPH_DIGEST_INTERVAL` and the digest window's `RALPH_AGENT` and
+  `RALPH_DIGEST_MODEL` sit outside it, the last two **config-only** with no
+  environment fallback at all, which is a third precedence again. Which is where
+  "matching the loop", above, needs its one caveat: it holds for a config value
+  that is present and **non-empty**, and #122 measured the blank case against a
+  real bash. Of the six ways a file can blank a knob — `=""`, `=''`, a bare `=`,
+  unquoted trailing spaces, an `export` of any of those, and quoted whitespace —
+  **five leave the loop holding the empty string**, and `||` reaches past every
+  one of them into the environment; only quoted whitespace is a value bash keeps,
+  and on that one spelling the box and the loop agree. So a repo that blanks
+  `RALPH_CODEX_MODEL` while the invoking shell exports one gets a box naming a
+  model `buildAgentInvocation` will never be handed, and a blanked
+  `RALPH_CONTEXT_WINDOW` gets the shell's number over the window the run is
+  actually given. That answer is **pinned, not endorsed**:
+  `lib/commands/start.precedence.qa.test.js` drives a blanked file through the
+  whole command and asserts *today's* answer, each case stating in its own comment
+  what its expectation becomes on the day it is fixed. The fix is the
+  `configAssignsVar` + `??` shape described just above, and it is **#149's, not
+  #122's** — moving a knob onto a different precedence is a behaviour change and
+  earns its own review rather than riding along inside a refactor. So the "do not
+  simplify either back to a `||`" above has a converse queued behind it: do not
+  add a **third** `||` knob while the fix is outstanding. Since #75 and #76
   this resolver has **three** callers, reading different parts of one answer:
   `lib/commands/doctor.js` does the same text-parsed read of the same file with the
   same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
