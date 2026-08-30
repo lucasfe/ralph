@@ -1060,10 +1060,14 @@ readings, and a run prints exactly one of them:
       check: acli jira auth status
 ```
 
-Auth is **reported, never enforced.** Both failing states are a yellow `!` and
-neither can move `doctor`'s exit code — the same treatment `doctor` already gives
+Auth is **reported, never enforced — by `doctor`.** Both failing states are a yellow `!`
+and neither can move `doctor`'s exit code — the same treatment `doctor` already gives
 agent-CLI health, and for the same reason: an expired token must not start failing
-every wrapper and CI step that gates on `ralph doctor`. `not verified` is an honest
+every wrapper and CI step that gates on `ralph doctor`. `ralph cycle` **enforces** the
+same question rather than reporting it: its preflight runs this very probe under `jira`
+and refuses to start a pass whose session it cannot prove, so a `!` on this row is a
+warning about a scheduled run that will abort — see [What a broken `acli` costs
+you](#what-a-broken-acli-costs-you). `not verified` is an honest
 third answer rather than a softer failure: it means the check could not be **run**,
 not that a login was refused, so its hint is the command to run by hand. (A missing
 `acli` is not that state — the probe ran and failed, so the row reads `not
@@ -1293,18 +1297,27 @@ of each means for the queue, as `lib/jira-auth.js` holds the login probe — so 
 correction is one edit and not a search.
 
 Every way that can fail — no `acli` on `PATH`, a logged-out session, an unconfigured
-`JIRA_JQL`, a query Jira rejects, output nobody can parse — costs you the **count**
-and never the run. **The two commands then degrade differently, on purpose,** so one
-broken `acli` reads two ways and neither of them is a bug:
+`JIRA_JQL`, a query Jira rejects, output nobody can parse — costs you the **count**.
+For three of those five that is the whole cost. The two that are about the **session**
+now cost a scheduled pass as well, and earlier than the count: `ralph cycle`'s preflight
+runs `acli jira auth status` under this source *before* it counts anything, so a
+logged-out session — or an `acli` that is not there to be asked, which that probe reads
+as the same verdict — aborts the pass at second zero with
+`❌ ralph cycle: preflight failed (jira not authenticated — run: acli jira auth login).`
+and never reaches the row below. **The two commands then degrade differently, on
+purpose,** so one broken `acli` reads two ways and neither of them is a bug:
 
 | Command | Reads an unprovable count as | Because |
 | --- | --- | --- |
 | [`ralph status`](#run-state--ralphrun-statejson-and-ralph-status) | `queue      unknown` — and `progress.remaining` / `progress.total` as `null` under `--json` | A read-only view has to be able to say it does not know. `0 waiting` is a claim about your Jira board, and it reads as "almost done" when the truth is that nobody could reach it. |
-| [`ralph cycle`](#scheduling-ralph-macos-launchd) | `0`, so it prints `ℹ️  ralph cycle: queue empty, exiting.`, appends one `RALPH_CYCLE_EVENT` with every count zero, and exits `0` | A scheduler with no provable work has nothing to do. Aborting a scheduled pass over a diagnostic problem would cost the tick for no gain, and the next tick takes the count again. |
+| [`ralph cycle`](#scheduling-ralph-macos-launchd) | `0`, so it prints `ℹ️  ralph cycle: queue empty, exiting.`, appends one `RALPH_CYCLE_EVENT` with every count zero, and exits `0` — on the three causes that get as far as a count at all, the session having been proved first | A scheduler with no provable work has nothing to do. Aborting a scheduled pass over a diagnostic problem would cost the tick for no gain, and the next tick takes the count again. |
 
 So a `queue      unknown` in `ralph status` beside a cycle that says the queue is
 empty is **one** finding wearing two faces, not two defects: look for the cause
-rather than the disagreement, and `ralph doctor` is where the cause is named.
+rather than the disagreement, and `ralph doctor` is where the cause is named. A
+`queue      unknown` beside a cycle that aborts naming `jira not authenticated` is that
+same single finding in its other pairing — the session — and there the cycle names the
+cause itself rather than leaving you to infer it from an empty board.
 
 Inside the loop the same rule holds one step further along, at a different price each
 time. A **selection** that answers nothing — a broken `acli`, a rejected query, JSON
@@ -1436,11 +1449,34 @@ the run records `jira` as its
 [run-state `source`](#run-state--ralphrun-statejson-and-ralph-status), which is what
 it actually did.
 
-**The two commands that start the loop have not moved with it.** Both still treat
-every non-`folder` source as a GitHub one, so under `jira`:
+**`ralph cycle` has moved with it; `ralph start` has not.** The scheduled command's
+preflight now asks each source for the credential that source actually spends:
+`gh auth status` under `github`, `acli jira auth status` under `jira`, and nothing at
+all under `folder`. So an unauthenticated Jira session stops a scheduled pass at second
+zero, with the abort every other preflight failure takes —
+`❌ ralph cycle: preflight failed (jira not authenticated — run: acli jira auth login).`
+on stderr, the same WhatsApp notice, the same `preflight-failed` event, exit 1 — and it
+costs **zero** agent invocations, because an unauthed run would select nothing, claim
+nothing and drain nothing. It is the same probe `ralph doctor`'s `jira auth` row runs
+(one function, one argv), so the two cannot disagree about *this* question: no machine
+gets a `✓ jira auth` row and a cycle that refuses to start over the session.
 
-- `ralph start` and `ralph cycle` **abort** unless `gh auth status` succeeds —
-  `❌ gh not authenticated` — even though nothing in the run will use `gh`.
+A broken `gh` no longer *stops* a `jira` cycle, but such a run still spends `gh` twice,
+plus a `gh issue edit` write per orphan found — measured, not assumed: the cosmetic
+repo-slug lookup behind the notification (which falls back to the repo path), plus the
+orphan sweep's `gh issue list --state all --label claude-working` and, per orphan found, a
+`gh issue edit N --remove-label claude-working` **write** to the GitHub board. A healthy
+repo has no orphans, so the steady state is those first two calls and nothing else. The
+sweep is not source-gated, so under
+`jira` a logged-out `gh` produces neither a named abort nor a clean pass: every tick
+prints `orphan-cleanup: gh list exited 1: …` to the scheduled run's stderr and then
+drains Jira anyway. **Source-gating the orphan sweep is the remaining follow-up**; the
+preflight change deliberately left it alone.
+
+`ralph start` still treats every non-`folder` source as a GitHub one, so under `jira`:
+
+- `ralph start` **aborts** unless `gh auth status` succeeds — `❌ gh not authenticated`
+  — even though nothing in the run will use `gh`.
 - `ralph start` creates its issue labels in the GitHub repo and reports issues still
   carrying `claude-working` from an earlier run.
 - `ralph start` takes the `N issues in the queue` line of the
@@ -1451,11 +1487,14 @@ every non-`folder` source as a GitHub one, so under `jira`:
 
 So `ralph start`'s queue line and `ralph status`'s queue row are about different
 boards under this source, and only `ralph status`'s is about the queue the loop
-drains. Moving the launcher onto the Jira count — and off the `gh` gate — is a
-follow-up, not a decision this deferred to for a reason: until it lands, a `jira`
-repo's `gh` install and `gh auth login` stay your responsibility, which is also why
-`ralph doctor` dropping the `gh` row here is not yet the whole story. `acli` is what
-the loop needs; `gh` is what the commands that start it still ask for.
+drains. Moving the launcher onto the Jira count — and off its `gh` gate — is the
+remaining follow-up: until it lands, a `jira` repo's `gh` install and `gh auth login`
+stay your responsibility — a hard requirement for `ralph start`, which refuses to launch
+without them, and still a real one for `ralph cycle`, which no longer *gates* on `gh` but
+spends it on the slug lookup and the orphan sweep described above. That is also why
+`ralph doctor` dropping the `gh` row here is not yet the whole story. `acli` is what the
+loop needs and what the scheduled command now proves; `gh` is what the interactive
+launcher still asks for outright.
 
 ## Scheduling Ralph (macOS launchd)
 
@@ -1818,8 +1857,8 @@ be committed. Re-running `ralph init` never overwrites it.
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. It is also the model the identity box [`ralph start`](#quick-start) opens with names on a Codex project — ``agent   codex — gpt-5-codex (configured)`` — and the tag is literal: for Codex this value *is* the answer, so the metrics log is never consulted for that row (Codex's stream carries no model id, so the log would hold nothing but a staler copy of this same value). Unset, the row reads ``codex — model resolves at first run`` and names no model at all. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
-| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today **works a ticket and records on the board what became of it**: the queue depth, the ticket and the claim all come from your Jira project by running [`JIRA_JQL`](#the-eligibility-query--jira_jql) through Atlassian's `acli` — each iteration selects the oldest eligible ticket, records it, labels it `in-progress`, and hands the key to the agent, which reads the work item itself and commits straight to `DEV_BRANCH` with no branch, no PR and no push, then labels the ticket `done`, takes `in-progress` back off, comments the commit SHA, and transitions the ticket to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where that knob names a status the project's workflow accepts. A ticket the agent did **not** finish is swept by the loop rather than by the agent — after the dispatch returns it reads the ticket's labels back off the board and gives anything that is not `done` the `failed` label with `in-progress` removed, warning on stderr — so a killed, crashed or idle invocation can never leave the loop spinning on the same ticket. The iteration **is** recorded: the loop appends one per-ticket event to `.ralph/metrics/issues.jsonl` carrying the ticket key as `task_key` beside the numeric `issue_number` derived from it, so `ralph status`'s completed count and `ralph cycle`'s `N ok, N failed` account for a Jira run like any other — best-effort, so a telemetry failure costs the run its record and never its outcome. The loop runs no `gh` command, telemetry included. `ralph start` has not moved with the loop: it still demands an authenticated `gh` and still counts GitHub issues to decide whether to launch, so its number can differ from `ralph status`'s and it can refuse to start over an empty GitHub queue. [`ralph doctor`](#the-jira-source-today) also asks for `acli` instead of `gh` here and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. **That holds for the commands, not for the loop:** `ralph start`, `status`, `cycle` and `doctor` lowercase and trim this value, while the loop's own dispatch compares it exactly — so `TASK_SOURCE=JIRA` has the commands reading Jira while the loop works GitHub. A known divergence, older than the `jira` source (`FOLDER` behaves the same way), pinned in the test suite and left for its own fix; write the value in lower case. Set by `ralph init --source <name>` or by init's interactive picker, which offers all three names and takes `github` on a blank or unrecognized answer; choosing `jira` there also asks for [`JIRA_JQL`](#the-eligibility-query--jira_jql) and [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status). This file is read **first** and the environment only where this file does not assign the name at all — the loop *sources* it with `set -a`, and `ralph start`, `ralph status` and `ralph doctor` resolve it the same way round. See [Choosing the task source](#choosing-the-task-source). |
-| `JIRA_JQL`            | `""` (not configured; a `jira` init writes a working query) | The Jira **eligibility** query, read only under `TASK_SOURCE="jira"` and ignored otherwise: which work items are candidates for Ralph, and nothing about labels or ordering. One query answers both questions the source asks — how deep the queue is, and which ticket is next — so a count and a selection can never disagree about what is eligible. **Ralph appends its own half and you cannot turn that off** — your clause is wrapped in parentheses (so an `OR` in it keeps its meaning against the `AND` that follows), then `AND (labels NOT IN (in-progress, done, failed, do-not-ralph) OR labels IS EMPTY)`, then the ordering. Three of those four labels are Ralph's own writes — `in-progress` when it claims a ticket, `done` when the agent records one as complete, `failed` when the loop sweeps one the agent did not finish — so claiming is what makes the next pass skip work in flight, completing is what makes the queue drain rather than hand a resolved ticket out again, and the sweep is what makes it drain even when the agent recorded nothing at all. `do-not-ralph` is the one label here Ralph never writes: that one is yours, for a ticket you want the loop to leave alone. A trailing `ORDER BY` of yours is **relocated, not refused** — Jira requires it last, so it is cut off, the exclusion is inserted, and your ordering goes back verbatim at the end; write none and you get `ORDER BY created ASC`, the analog of `github` mode's `sort:created-asc`. Empty means **not configured**, deliberately not "everything": Ralph's half alone would select every work item on the Jira site, so a blank value counts nothing, spawns no `acli`, selects nothing (a loop started with it prints `Queue empty, exiting.` on its first pass), and leaves `ralph status` reporting `queue      unknown` while `ralph cycle` exits saying the queue is empty. Config-**only**, with no environment fallback beside it, unlike `TASK_SOURCE`: an eligibility query is a property of the repository, and the assignment is always present in the file (`init` writes it on every path, empty for `github`/`folder`), so `set -a` exports whatever it holds — a blank included — into every child the loop spawns. A value containing a `#` needs **single** quotes — `JIRA_JQL='summary ~ "#123"'` — because the file is text-parsed rather than sourced and a `#` after a closing double quote is taken for a comment; the truncated query is then rejected by Jira, which costs you the count. `ralph init` chooses the quote character on the line it writes for you — single where the value needs them, double where it does not — so this is a rule for **hand edits**. `ralph doctor` never reads this line. See [The eligibility query](#the-eligibility-query--jira_jql). |
+| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today **works a ticket and records on the board what became of it**: the queue depth, the ticket and the claim all come from your Jira project by running [`JIRA_JQL`](#the-eligibility-query--jira_jql) through Atlassian's `acli` — each iteration selects the oldest eligible ticket, records it, labels it `in-progress`, and hands the key to the agent, which reads the work item itself and commits straight to `DEV_BRANCH` with no branch, no PR and no push, then labels the ticket `done`, takes `in-progress` back off, comments the commit SHA, and transitions the ticket to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where that knob names a status the project's workflow accepts. A ticket the agent did **not** finish is swept by the loop rather than by the agent — after the dispatch returns it reads the ticket's labels back off the board and gives anything that is not `done` the `failed` label with `in-progress` removed, warning on stderr — so a killed, crashed or idle invocation can never leave the loop spinning on the same ticket. The iteration **is** recorded: the loop appends one per-ticket event to `.ralph/metrics/issues.jsonl` carrying the ticket key as `task_key` beside the numeric `issue_number` derived from it, so `ralph status`'s completed count and `ralph cycle`'s `N ok, N failed` account for a Jira run like any other — best-effort, so a telemetry failure costs the run its record and never its outcome. The loop runs no `gh` command, telemetry included. `ralph cycle` asks for the credential this source actually spends: under `jira` its preflight aborts unless `acli jira auth status` exits `0`, and it no longer gates on `gh auth` at all. `ralph start` has not moved with the loop: it still demands an authenticated `gh` and still counts GitHub issues to decide whether to launch, so its number can differ from `ralph status`'s and it can refuse to start over an empty GitHub queue. [`ralph doctor`](#the-jira-source-today) also asks for `acli` instead of `gh` here and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic, though `ralph cycle`'s preflight runs the same probe and does refuse to start). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. **That holds for the commands, not for the loop:** `ralph start`, `status`, `cycle` and `doctor` lowercase and trim this value, while the loop's own dispatch compares it exactly — so `TASK_SOURCE=JIRA` has the commands reading Jira while the loop works GitHub. A known divergence, older than the `jira` source (`FOLDER` behaves the same way), pinned in the test suite and left for its own fix; write the value in lower case. Set by `ralph init --source <name>` or by init's interactive picker, which offers all three names and takes `github` on a blank or unrecognized answer; choosing `jira` there also asks for [`JIRA_JQL`](#the-eligibility-query--jira_jql) and [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status). This file is read **first** and the environment only where this file does not assign the name at all — the loop *sources* it with `set -a`, and `ralph start`, `ralph status` and `ralph doctor` resolve it the same way round. See [Choosing the task source](#choosing-the-task-source). |
+| `JIRA_JQL`            | `""` (not configured; a `jira` init writes a working query) | The Jira **eligibility** query, read only under `TASK_SOURCE="jira"` and ignored otherwise: which work items are candidates for Ralph, and nothing about labels or ordering. One query answers both questions the source asks — how deep the queue is, and which ticket is next — so a count and a selection can never disagree about what is eligible. **Ralph appends its own half and you cannot turn that off** — your clause is wrapped in parentheses (so an `OR` in it keeps its meaning against the `AND` that follows), then `AND (labels NOT IN (in-progress, done, failed, do-not-ralph) OR labels IS EMPTY)`, then the ordering. Three of those four labels are Ralph's own writes — `in-progress` when it claims a ticket, `done` when the agent records one as complete, `failed` when the loop sweeps one the agent did not finish — so claiming is what makes the next pass skip work in flight, completing is what makes the queue drain rather than hand a resolved ticket out again, and the sweep is what makes it drain even when the agent recorded nothing at all. `do-not-ralph` is the one label here Ralph never writes: that one is yours, for a ticket you want the loop to leave alone. A trailing `ORDER BY` of yours is **relocated, not refused** — Jira requires it last, so it is cut off, the exclusion is inserted, and your ordering goes back verbatim at the end; write none and you get `ORDER BY created ASC`, the analog of `github` mode's `sort:created-asc`. Empty means **not configured**, deliberately not "everything": Ralph's half alone would select every work item on the Jira site, so a blank value counts nothing, spawns no `acli jira workitem` call at all, selects nothing (a loop started with it prints `Queue empty, exiting.` on its first pass), and leaves `ralph status` reporting `queue      unknown` while `ralph cycle` exits saying the queue is empty. `ralph cycle` does still spawn **one** `acli` under this source whatever this line holds — its preflight's `acli jira auth status`, which runs before the query is looked at — so a blank query on a logged-out session reports the session rather than an empty queue. Config-**only**, with no environment fallback beside it, unlike `TASK_SOURCE`: an eligibility query is a property of the repository, and the assignment is always present in the file (`init` writes it on every path, empty for `github`/`folder`), so `set -a` exports whatever it holds — a blank included — into every child the loop spawns. A value containing a `#` needs **single** quotes — `JIRA_JQL='summary ~ "#123"'` — because the file is text-parsed rather than sourced and a `#` after a closing double quote is taken for a comment; the truncated query is then rejected by Jira, which costs you the count. `ralph init` chooses the quote character on the line it writes for you — single where the value needs them, double where it does not — so this is a rule for **hand edits**. `ralph doctor` never reads this line. See [The eligibility query](#the-eligibility-query--jira_jql). |
 | `JIRA_DONE_STATUS`    | `""` (do not transition)             | The status Ralph asks Jira to move a ticket to once the work is committed, read only under `TASK_SOURCE="jira"` and ignored otherwise — the third of the three writes a completion makes, beside the `done` label and the comment carrying the commit SHA. **The template ships no default, because no name is right everywhere** (a `jira` init asks for one, offering `Done`, which is a visible answer rather than a shipped default)**:** status names come from your project's own workflow (`Done` on one board, `Resolved`, `Closed`, `Complete` or `Ready for Release` on the next), so write yours exactly as that workflow spells it, capitalisation included — `JIRA_DONE_STATUS="Done"`. **Empty or unset means "do not transition"**, and is not an error: Ralph skips the move, warns once on stderr, and still labels and comments. **A refused transition costs you a board move and never the run** — a workflow can decline the move for reasons Ralph can neither see nor satisfy (no transition to that status from where the ticket sits, a required field, a validator), and when it does Ralph warns on stderr naming the ticket and the status, then finishes the job anyway: it still labels the ticket `done`, still comments the SHA, and still counts the ticket as resolved. What you are left with is one ticket to move by hand, and the warning says which. **The label is what actually drains the queue**, which is why the transition is allowed to fail: Jira labels are freeform and no workflow rule can veto one, and `done` is in the exclusion Ralph appends to [`JIRA_JQL`](#the-eligibility-query--jira_jql), so a completed ticket stops being eligible whatever the board's status column says. A `done` label that could **not** be written is the one failure that fails a completion — it is the only outcome that leaves a resolved ticket in the queue — and Ralph says so, both on stderr and in the exit code. **No `ralph` command reads this line**: not `doctor`, not `status`, not `cycle`. Its only transport is the loop *sourcing* `ralph.config.sh` with `set -a`, which exports the assignment into the agent's environment, where `lib/jira-queue.js complete` reads it. See [Recording a ticket as done](#recording-a-ticket-as-done--jira_done_status). |
 | `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
 | `TEST_CMD`            | autodetected (e.g. `npm test`)       | Test command run before opening a PR. Empty = skip.                    |
@@ -2108,9 +2147,14 @@ checks only the **selected** agent's CLI: on a Codex project it wants
 on a Claude project the reverse holds. The same is true of the selected
 [task source](#choosing-the-task-source)'s CLI: `gh` under `github`,
 Atlassian's `acli` under `jira`, and neither of the two under `folder`. Under
-`jira` that list is short by one and knowingly so: the loop needs only `acli`, but
-`ralph start` and `ralph cycle` still refuse to launch one without an authenticated
-`gh` — see [What is still GitHub's](#what-is-still-githubs).
+`jira` that list is short by one and knowingly so: the loop itself runs no `gh` at all,
+and `ralph cycle` no longer *gates* on one — though it does still spend `gh` on the
+repo-slug lookup its notification names (falling back to the repo path) and on the orphan
+sweep's `gh issue list` plus a `gh issue edit --remove-label` per orphan found. Under a
+logged-out `gh` only the `gh issue list` call runs, and it logs
+`orphan-cleanup: gh list exited 1: …` each tick instead of stopping the run.
+Meanwhile `ralph start` still refuses to launch at all without an authenticated `gh`. See
+[What is still GitHub's](#what-is-still-githubs).
 
 **`ralph doctor` prints `! jira auth (not authenticated)` or `! jira auth
 (not verified)`.** — Neither is failing the diagnostic: that row is yellow in
@@ -2119,9 +2163,11 @@ names — `acli jira auth login` for the first, `acli jira auth status` for the
 second, which means the check could not be run at all rather than that a login
 was refused. A **missing** `acli` is not that second state: it reads `not
 authenticated`, beside the `✗ acli` dep row that names the real problem. Worth
-fixing rather than filing away, because a logged-out `acli` is one of the ways the
-Jira queue count cannot be taken: `ralph status` then reports
-`queue      unknown` and `ralph cycle` reads the same failure as an empty queue.
+fixing rather than filing away, because a logged-out `acli` is what stops a Jira run
+outright: `ralph status` reports `queue      unknown` (the count cannot be taken), and
+`ralph cycle` refuses to start at all — its preflight runs this very probe under `jira`
+and aborts with `jira not authenticated — run: acli jira auth login` rather than
+spending an agent invocation on a queue it cannot read.
 What the row is still *not* about is **the board's workflow**: a resolved ticket does
 get labelled `done` and commented, but the status **transition** needs
 [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) set to a status your
