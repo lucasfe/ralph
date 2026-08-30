@@ -76,6 +76,10 @@ const acliLog = () => join(workdir, 'acli-called.log')
 const ghLog = () => join(workdir, 'gh-called.log')
 const claudeLog = () => join(workdir, 'claude-called.log')
 const claimedFlag = () => join(workdir, 'acli-claimed')
+// The board's label set, as the acli stub remembers it (#130) — written by the first accepted
+// `edit` and read by every `view` after it. Absent until something has been written.
+const labelsFile = () => join(workdir, 'acli-labels.txt')
+const boardLabels = () => readLog(labelsFile()).trim()
 const codexLog = () => join(workdir, 'codex-called.log')
 // One line per agent invocation, so "how many times did we pay for this ticket?" is a number.
 const agentCalls = (file = claudeLog()) => readLog(file).split(LF).filter(Boolean)
@@ -113,6 +117,16 @@ const injected = () => INJECTION_ARTIFACTS.filter((name) => existsSync(join(work
 // not exist. Without that, a test in which bash MANGLES the key would still see a claim
 // succeed against the mangled name and would call the queue drained — the fixture would be
 // hiding the bug the test was written to find.
+//
+// AND SINCE #130 IT REMEMBERS WHAT WAS WRITTEN. The loop now READS THE BOARD BACK after the
+// agent has run, to decide whether the ticket needs sweeping — so a `view` that always
+// replayed the seeded document would report a ticket the agent had just completed as un-done,
+// and the sweep tests would be pinning the fixture's amnesia rather than the loop. The first
+// successful `edit` therefore writes `acli-labels.txt` (a comma-joined list, exactly what
+// `--labels` sends) and every later `view` answers from it. Until then, `view` replays the
+// seeded `acli-view.json` — which is what keeps the hostile-SHAPE rows (`labels: "frontend"`,
+// a labels field that is not a list at all) testable: nothing there ever writes, so nothing
+// there ever leaves the seeded document behind.
 function seedStubs({
   key = 'FOO-123',
   summary = 'Do the thing',
@@ -151,6 +165,7 @@ exit 0
     'acli',
     `#!/bin/bash
 RALPH_TEST_FLAG="${claimedFlag()}"
+RALPH_TEST_LABELS="${labelsFile()}"
 {
   echo "ARGC:$#"
   for a in "$@"; do echo "ARG:$a"; done
@@ -174,10 +189,44 @@ case "$*" in
     fi ;;
   *" view "*)
     if [ "$asked" != "$want" ]; then echo "acli: work item $asked not found" >&2; exit 1; fi
-    cat "${join(workdir, 'acli-view.json')}" ;;
+    # The remembered label set once anything has been written, the seeded document until then.
+    # Only the \`labels\` array is answered from memory; a work item's key is not read out of
+    # this response by lib/jira-queue.js, and building JSON around a hostile key in bash would
+    # break the harness rather than the code under test.
+    if [ -f "$RALPH_TEST_LABELS" ]; then
+      list=$(cat "$RALPH_TEST_LABELS")
+      if [ -z "$list" ]; then
+        echo '{"fields":{"labels":[]}}'
+      else
+        echo '{"fields":{"labels":['"$(printf '%s' "$list" | sed 's/[^,][^,]*/"&"/g')"']}}'
+      fi
+    else
+      cat "${join(workdir, 'acli-view.json')}"
+    fi ;;
   *" edit "*)
     if [ "$asked" != "$want" ]; then echo "acli: work item $asked not found" >&2; exit 1; fi
-    ${editBody} ;;
+    # The seeded body decides whether this write is ACCEPTED — a subshell, so a body that
+    # exits keeps its exit code and the board below is left untouched.
+    ( ${editBody} ) || exit $?
+    prev=""
+    for a in "$@"; do
+      case "$prev" in
+        --labels)
+          # The stub picks the harsher of the two readings acli's docs leave open: --labels
+          # REPLACES the list. Ralph's writes are read-then-union, so they survive it.
+          printf '%s' "$a" > "$RALPH_TEST_LABELS" ;;
+        --remove-labels)
+          old=$(cat "$RALPH_TEST_LABELS" 2>/dev/null || true)
+          new=""
+          OLDIFS=$IFS; IFS=','
+          for l in $old; do
+            [ "$l" = "$a" ] || new="\${new:+$new,}$l"
+          done
+          IFS=$OLDIFS
+          printf '%s' "$new" > "$RALPH_TEST_LABELS" ;;
+      esac
+      prev="$a"
+    done ;;
 esac
 exit 0
 `,
@@ -416,7 +465,12 @@ describe('ralph.sh jira arm — the summary cannot be mistaken for the key (#127
       finished(res)
       expect(res.stdout, what).toContain('==> Iteration for FOO-123 (1 remaining)')
       const edit = callsFor('edit')
-      expect(edit, `${what}: ${readLog(acliLog())}`).toHaveLength(1)
+      // THREE `edit` invocations per row since #130, and the count is spelled out because it is
+      // the CLAIM that these rows are about: `edit[0]`. The agent stub here records its argv and
+      // exits without completing anything, so the sweep runs and writes the other two —
+      // `--labels frontend,p2,in-progress,failed` and `--remove-labels in-progress`. WAS pinned
+      // at 1, when the arm ended at the dispatch.
+      expect(edit, `${what}: ${readLog(acliLog())}`).toHaveLength(3)
       // The union survived and the write is unattended — both re-asserted here because a
       // summary that leaked into the argv would show up in exactly these two places.
       expect(valueAfter(edit[0], '--labels'), what).toBe('frontend,p2,in-progress')
@@ -450,9 +504,15 @@ describe('ralph.sh jira arm — every failure path terminates (#127 QA)', () => 
     // The CLI's own sentence reaches the operator too — it is the only record of what acli
     // said, and the loop's `2>/dev/null` is on the PICK, not on the claim.
     expect(res.stderr).toContain('jira-queue.js:')
-    // Bounded: four acli calls per iteration at most, so a spin would be an order of
-    // magnitude past this.
-    expect(acliCalls().length, readLog(acliLog())).toBeLessThan(12)
+    // BOUNDED, and the bound is measured rather than reasoned: this run makes exactly 12 acli
+    // calls, read off the argv log as `count, count, pick, view, edit, view, view, edit, count,
+    // pick, view, edit` — two counts before the first pick (the announced queue depth, then the
+    // loop's own), then iteration one's claim (view + refused edit), its sweep (#130: `locate`'s
+    // view, then `fail`'s view + refused edit), then iteration two's count, pick and claim,
+    // which the guard cuts short before the dispatch. A third iteration could not fit under 14,
+    // which is what makes this a spin detector and not a formality. WAS 12, when the arm ended
+    // at the dispatch and cost 4 calls per iteration.
+    expect(acliCalls().length, readLog(acliLog())).toBeLessThan(14)
   })
 
   it('stops when the read the claim depends on comes back unusable — no write, no spin', () => {
@@ -491,7 +551,10 @@ describe('ralph.sh jira arm — every failure path terminates (#127 QA)', () => 
     finished(res)
     expect(res.stdout).toContain('==> Iteration for FOO-123 (1 remaining)')
     expect(res.stdout).toContain('Queue empty, exiting.')
-    expect(callsFor('edit')).toHaveLength(1)
+    // ONE ticket's worth of writes: the claim, then the sweep's two (#130 — this stub's agent
+    // completes nothing). Counted rather than bounded, because a `--once` that took a second
+    // ticket would show up here as six.
+    expect(callsFor('edit'), readLog(acliLog())).toHaveLength(3)
     expect(record().current.task_key).toBe('FOO-123')
   })
 
@@ -677,23 +740,39 @@ exit ${status}
     })
   }
 
-  it('leaves a claimed ticket labelled `in-progress` with no failure trace when the agent fails (pinned gap, #130)', () => {
-    // THE COST OF #130 NOT BEING WIRED YET, measured rather than described. The claim succeeded,
-    // so the ticket now carries `in-progress` and lib/jira-jql.js's exclusion drops it from every
-    // future count — while the agent that was supposed to work it exited 1. Nothing marks it
-    // failed, nothing comments, nothing un-labels: the ticket is silently out of the queue with
-    // no work done. That is the deliberate boundary of this slice (#130 owns the sweep), and it
-    // is pinned so the day it changes, this test says so.
+  it('sweeps a claimed ticket to `failed` when the agent exits 1, leaving no `in-progress` behind (#130)', () => {
+    // WAS `leaves a claimed ticket labelled in-progress with no failure trace…`, which pinned
+    // the deliberate gap #128 left: the claim succeeded, the agent exited 1, and nothing wrote
+    // again — so the ticket sat `in-progress` forever, out of every future count (lib/jira-jql.js
+    // excludes that label) with no work done and no trace of why. #130 closed it from THIS FILE
+    // rather than from the agent, because the invocation that most needs sweeping is the one that
+    // died, and a dead agent writes nothing.
     agentStub({ status: 1, stderr: 'claude: credit balance too low' })
     const res = runJira()
     finished(res)
-    expect(callsFor('edit'), readLog(acliLog())).toHaveLength(1)
-    expect(valueAfter(callsFor('edit')[0], '--labels')).toBe('frontend,p2,in-progress')
-    // No second write of any kind — no `failed` label, no comment, no transition.
-    const writes = acliCalls().filter((c) => ['edit', 'comment', 'transition'].includes(c.args[2]))
-    expect(writes, readLog(acliLog())).toHaveLength(1)
-    // And the run reports success to whatever scheduled it, so a cron sees nothing wrong.
+    // THREE label writes, in order: the claim, then the sweep's add and its removal. Read out of
+    // the argv log rather than inferred, because the pair is the whole point — a ticket that
+    // gained `failed` while keeping `in-progress` would be excluded twice over and unreadable to
+    // whoever comes looking for what Ralph left half-done.
+    const edits = callsFor('edit')
+    expect(edits, readLog(acliLog())).toHaveLength(3)
+    expect(valueAfter(edits[0], '--labels')).toBe('frontend,p2,in-progress')
+    expect(valueAfter(edits[1], '--labels')).toBe('frontend,p2,in-progress,failed')
+    expect(valueAfter(edits[2], '--remove-labels')).toBe('in-progress')
+    // The board as the stub remembers it: the team's own labels survived the sweep, which is
+    // read-then-union doing its job on a value bash never sees.
+    expect(boardLabels(), readLog(acliLog())).toBe('frontend,p2,failed')
+    // A LABEL IS ALL IT WRITES. No comment (there is no SHA to report — nothing landed) and no
+    // transition (a workflow can refuse one, so the guarantee cannot depend on it).
+    expect(callsFor('comment'), readLog(acliLog())).toEqual([])
+    expect(callsFor('transition'), readLog(acliLog())).toEqual([])
+    // The operator is told, on stderr, in the loop's own words — naming the ticket and the state
+    // the board reported for it.
+    expect(res.stderr).toContain('FOO-123 was not completed (state: working). Labelling it failed.')
+    // And the run still reports success to whatever scheduled it: one failed ticket is not a
+    // failed cycle. The end-of-run summary is where the failure is visible.
     expect(res.status).toBe(0)
+    expect(res.stdout).toContain('0 ok, 1 failed')
   })
 
   it('pays for ONE agent invocation on one ticket when the claim cannot be written (#128 fix)', () => {
@@ -703,7 +782,7 @@ exit ${status}
     // changed is WHERE the zero-progress guard sits. With the guard AFTER
     // `run_agent_for_issue`, that second iteration handed the same ticket to a paid agent
     // before the loop noticed nothing had moved; the guard now runs BEFORE the dispatch
-    // (templates/ralph.sh: guard 535, dispatch 571), so iteration two aborts having spent
+    // (templates/ralph.sh: guard 547, dispatch 583), so iteration two aborts having spent
     // nothing. The suite above already pinned the two iterations — what this one owns is the
     // price, asserted exactly rather than bounded.
     seedStubs({ editBody: 'echo "permission denied" >&2; exit 1' })
@@ -718,7 +797,7 @@ exit ${status}
   })
 
   it('hands the agent the key the iteration announced, overriding a stale ambient RALPH_TASK_KEY', () => {
-    // `export RALPH_TASK_KEY="$task_key"` IS the handoff contract (templates/ralph.sh:550), so
+    // `export RALPH_TASK_KEY="$task_key"` IS the handoff contract (templates/ralph.sh:562), so
     // the value the agent process actually inherits is worth reading out of its environment
     // rather than inferring from the export line. The ambient value is seeded to something else
     // on purpose: a shell that already had RALPH_TASK_KEY set — a previous run, a developer's
@@ -998,10 +1077,17 @@ exit 0
     expect(valueAfter(comments[0], '--body')).toBe('Resolved by Ralph in abc1234')
     expect(comments[0].argc).toBe(comments[0].args.length)
 
-    // The claim read the ticket and wrote nothing (it was already labelled), so the two `view`
-    // calls are the claim's and the completion's — proof that both label paths go through a
-    // read and that the completion did not reuse a stale list.
-    expect(callsFor('view')).toHaveLength(2)
+    // The claim read the ticket and wrote nothing (it was already labelled), so the three `view`
+    // calls are the claim's, the completion's and the sweep's `locate` (#130) — proof that both
+    // label paths go through a read, that the completion did not reuse a stale list, and that the
+    // loop asks the BOARD what happened rather than the agent's exit code. WAS 2, before the
+    // outcome branch existed.
+    expect(callsFor('view'), readLog(acliLog())).toHaveLength(3)
+    // AND THE SWEEP FOUND IT DONE, so it wrote nothing: the two edits above are the completion's
+    // own, and a third `--labels` carrying `failed` is exactly what a sweep firing on a finished
+    // ticket would look like here.
+    expect(edits, readLog(acliLog())).toHaveLength(2)
+    expect(res.stderr).not.toContain('was not completed')
 
     // AND THE QUEUE DRAINED. In this fixture the label write is what makes the next count
     // answer 0, so "Queue empty" is the completion having taken effect on the board.
@@ -1070,8 +1156,14 @@ exit 0
     expect(readLog(agentOutLog())).toBe('')
 
     // NOTHING WAS REMOVED after the failed add: a ticket that lost `in-progress` without
-    // gaining `done` would be back in the queue with no owner.
+    // gaining `done` would be back in the queue with no owner. That holds for the #130 sweep
+    // too, which runs here — the board reads `working`, so the sweep tries `failed`, and the
+    // same refusing `editBody` means its add fails and its removal is therefore never reached.
     expect(callsFor('edit').filter((c) => c.args.includes('--remove-labels'))).toEqual([])
+    // …and it said so — ONCE, for the one iteration that reached the dispatch; the second look
+    // ends at the guard, above both the agent and the sweep.
+    const swept = res.stderr.split(LF).filter((l) => l.includes('was not completed'))
+    expect(swept, res.stderr).toHaveLength(1)
     // Bounded: two iterations' worth of calls, not an unbounded spin.
     expect(acliCalls().length, readLog(acliLog())).toBeLessThan(20)
   })
@@ -1131,5 +1223,181 @@ exit 0
     expect(added, readLog(acliLog())).toHaveLength(1)
     expect(valueAfter(added[0], '--key')).toBe('FOO-1$(touch pwned-key)')
     expect(added[0].argc).toBe(added[0].args.length)
+  })
+})
+
+describe('ralph.sh jira arm — the outcome branch, adversarially (#130 QA)', () => {
+  // What the happy-path sweep tests cannot reach. The outcome branch reads ONE WORD off a
+  // command substitution and then calls a second CLI with `|| true`, so three things are
+  // interface rather than implementation and none of them is producible through the acli stub:
+  //
+  //   A `locate` THAT PRINTS NOTHING AT ALL. `${outcome:-unknown}` exists for exactly that —
+  //   a node that died before writing a word — and no acli answer can produce it, because the
+  //   verb always prints one. Untested until here.
+  //
+  //   A `locate` THAT PRINTS SOMETHING ELSE. The value is compared with `[ ... ]` and then
+  //   interpolated into an `echo`, so it crosses a shell twice; the row below carries a
+  //   semicolon and a command substitution, and the assertion is the FILES a shell would have
+  //   left rather than the text alone.
+  //
+  //   A `fail` THAT EXITS NON-ZERO. The loop discards that code on purpose and forces the
+  //   outcome to `failed`, so the run must reach its summary and record the ticket either way.
+  //
+  // The seam for all three is the harness's own `node` stub, which delegates jira-queue.js to
+  // the real interpreter; `overrideVerb` puts an arm AHEAD of that delegation so ONE verb can
+  // be made to misbehave while every other bridge the loop needs still runs for real.
+  const overrideVerb = (verb, body) => {
+    const nodePath = join(bindir, 'node')
+    const patched = readFileSync(nodePath, 'utf8').replace(
+      'case "$*" in',
+      `case "$*" in${LF}  *jira-queue.js*${verb}*)${LF}${body}${LF}  ;;`,
+    )
+    writeFileSync(nodePath, patched, { mode: 0o755 })
+    chmodSync(nodePath, 0o755)
+  }
+
+  it('sweeps with `state: unknown` when locate prints nothing at all', () => {
+    // The one input `${outcome:-unknown}` is for. The sweep itself is the REAL verb, so this
+    // also measures that an empty word reaches it as an ordinary un-done ticket.
+    seedStubs({ labels: '["frontend","p2"]' })
+    overrideVerb('locate', `    exit 0`)
+
+    const res = runJira()
+    finished(res)
+    expect(res.stderr).toContain('FOO-123 was not completed (state: unknown). Labelling it failed.')
+    // Read-then-union, then the claim off — the board as the stub remembers it.
+    expect(boardLabels()).toBe('frontend,p2,failed')
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    expect(res.stdout).toContain('0 ok, 1 failed')
+    expect(res.stdout).toContain('FAIL: #FOO-123')
+    // One paid invocation for one ticket, which is the whole point of the guarantee.
+    expect(agentCalls()).toHaveLength(1)
+  })
+
+  it('sweeps whatever garbage locate printed, and runs none of it', () => {
+    // A sentence rather than a state word, carrying a semicolon and a command substitution,
+    // and printed by a verb that then exits non-zero — which the loop discards, because the
+    // capture is an assignment and its status is never tested.
+    seedStubs({ labels: '["frontend","p2"]' })
+    overrideVerb('locate', `    printf '%s' 'ERROR: not logged in; \$(touch pwned-sub)'${LF}    exit 1`)
+
+    const res = runJira()
+    finished(res)
+    expect(injected(), `a shell ran part of the outcome: ${injected().join(', ')}`).toEqual([])
+    expect(res.stderr).toContain(
+      'FOO-123 was not completed (state: ERROR: not logged in; $(touch pwned-sub)). Labelling it failed.',
+    )
+    expect(boardLabels()).toBe('frontend,p2,failed')
+    expect(res.stdout).toContain('0 ok, 1 failed')
+    expect(agentCalls()).toHaveLength(1)
+  })
+
+  it('records a failure and finishes the run when the `fail` verb exits non-zero', () => {
+    // `|| true` spelled as behaviour: the loop does not branch on that code, it forces the
+    // outcome to `failed` and carries on to the summary.
+    seedStubs({ labels: '["frontend","p2"]' })
+    overrideVerb('fail', `    echo "jira-queue.js: could not label FOO-123 failed" >&2${LF}    exit 1`)
+
+    const res = runJira()
+    finished(res)
+    expect(res.stdout).toContain('0 ok, 1 failed')
+    expect(res.stdout).toContain('FAIL: #FOO-123')
+    // STDERR IS NOT SUPPRESSED for this call, unlike the folder arm's `mv`, so the verb's own
+    // sentence is in the run's log — the only record of why the board never changed.
+    expect(res.stderr).toContain('jira-queue.js: could not label FOO-123 failed')
+    // Only the claim ever wrote.
+    expect(boardLabels()).toBe('frontend,p2,in-progress')
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    expect(agentCalls()).toHaveLength(1)
+  })
+
+  it('finishes the run when acli itself refuses the sweep, leaving the claim as the exclusion', () => {
+    // The realistic version of the case above: Ralph may edit labels, the claim landed, and
+    // the write carrying `failed` is refused. Driven through the REAL verb, so the refusal is
+    // acli's rather than a stub of the CLI.
+    //
+    // WHY THE RUN STILL TERMINATES, measured rather than argued: `in-progress` is excluded by
+    // the composed query too, so a claimed ticket whose sweep never landed is out of the next
+    // count anyway. The zero-progress guard is the backstop for the case where the CLAIM is
+    // what failed, which the #127 QA section above covers.
+    seedStubs({
+      labels: '["frontend","p2"]',
+      editBody: `case "\$*" in *failed*) exit 1 ;; esac${LF}touch "\$RALPH_TEST_FLAG"`,
+    })
+
+    const res = runJira()
+    finished(res)
+    expect(res.stderr).toContain('FOO-123 was not completed (state: working). Labelling it failed.')
+    expect(res.stderr).toContain('jira-queue.js: could not label FOO-123 failed')
+    expect(boardLabels()).toBe('frontend,p2,in-progress')
+    // NOTHING IS REMOVED AFTER AN ADD THAT FAILED: a ticket that lost its claim without
+    // gaining the terminal label would be back in the queue with no owner at all.
+    const removals = callsFor('edit').filter((call) => call.args.includes('--remove-labels'))
+    expect(removals, readLog(acliLog())).toEqual([])
+    expect(res.stdout).toContain('Queue empty, exiting.')
+    expect(res.stdout).toContain('0 ok, 1 failed')
+    expect(agentCalls()).toHaveLength(1)
+  })
+
+  it('leaves the ticket alone when locate says `done`, whatever the board holds', () => {
+    // The contract stated as an isolation: the branch trusts ONE word on stdout and nothing
+    // else — not the agent's exit code, and not a second look at the board. The board here
+    // still says `in-progress`, and no sweep runs.
+    seedStubs({ labels: '["frontend","p2"]' })
+    overrideVerb('locate', `    echo done${LF}    exit 0`)
+
+    const res = runJira()
+    finished(res)
+    expect(res.stderr).not.toContain('was not completed')
+    expect(res.stdout).toContain('1 ok, 0 failed')
+    expect(res.stdout).toContain('OK: #FOO-123')
+    expect(res.stdout).toContain('FAIL: -')
+    // The claim is the only write, so no argv carries the sweep's label.
+    const edits = callsFor('edit')
+    expect(edits, readLog(acliLog())).toHaveLength(1)
+    expect(valueAfter(edits[0], '--labels')).toBe('frontend,p2,in-progress')
+    expect(boardLabels()).toBe('frontend,p2,in-progress')
+  })
+
+  it('abandons the ticket to the guard when the claim AND the sweep both fail', () => {
+    // Both writes refused, which is the only shape that keeps the ticket eligible: the loop
+    // then re-selects it and the zero-progress guard is what stops the run rather than the
+    // sweep. Asserted as a BOUNDED number of paid invocations — one, because the guard sits
+    // ahead of the dispatch in this arm — plus `signal === null`, because a loop that spun
+    // forever would satisfy the text assertions just as happily.
+    seedStubs({ labels: '["frontend","p2"]', editBody: 'exit 1' })
+
+    const res = runJira()
+    finished(res)
+    expect(res.stderr).toContain('FOO-123 was not completed (state: open). Labelling it failed.')
+    expect(res.stderr).toContain('no progress on FOO-123 (re-selected). Aborting the loop.')
+    expect(agentCalls(), readLog(claudeLog())).toHaveLength(1)
+    expect(boardLabels()).toBe('')
+    expect(res.stdout).toContain('0 ok, 1 failed')
+
+    // THE CEILING ASSERTED ELSEWHERE IN THIS FILE, RE-MEASURED HERE AS THE EXACT SEQUENCE.
+    // `every failure path terminates` bounds this same run at fewer than 14 acli calls and its
+    // comment spells the twelve out; a ceiling cannot tell a reordering from a spin, and a
+    // prose breakdown is only as good as the run it was read off. This is that breakdown,
+    // measured: two counts before the first pick (the announced queue depth, then the loop's
+    // own), iteration one's claim (view + refused edit), its sweep (`locate`'s view, then
+    // `fail`'s view + refused edit), then iteration two's count, pick and claim, which the
+    // guard cuts short ahead of the dispatch.
+    const kindOfCall = (call) =>
+      call.args[2] === 'search' ? (call.args.includes('--count') ? 'count' : 'pick') : call.args[2]
+    expect(acliCalls().map(kindOfCall), readLog(acliLog())).toEqual([
+      'count',
+      'count',
+      'pick',
+      'view',
+      'edit',
+      'view',
+      'view',
+      'edit',
+      'count',
+      'pick',
+      'view',
+      'edit',
+    ])
   })
 })

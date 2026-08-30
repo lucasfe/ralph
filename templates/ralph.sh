@@ -490,21 +490,26 @@ while :; do
   node "$RALPH_PKG_DIR/lib/run-state.js" begin-task "$PROJECT_ROOT" "$num" "$iter" "$task_key" || true
 
   if [ "$TASK_SOURCE" = "jira" ]; then
-    # CLAIM THE TICKET, then hand it to the agent (#127 selection + claim, #128 the
-    # dispatch). The block still returns to the top of the loop rather than falling
-    # through: NONE of the outcome handling below applies to a Jira ticket, because
-    # it is written against gh (PR merge state, `claude-working`/`claude-failed`
-    # labels, `Closes #N`). Jira's own bookkeeping is not all here either, and the
-    # half that IS here is not in this file: #129 gave the SUCCESS path a `done`
+    # CLAIM THE TICKET, hand it to the agent, then sweep it if it did not finish
+    # (#127 selection + claim, #128 the dispatch, #130 the sweep). The block still
+    # returns to the top of the loop rather than falling through: NONE of the outcome
+    # handling below applies to a Jira ticket, because it is written against gh (PR
+    # merge state, `claude-working`/`claude-failed` labels, `Closes #N`).
+    #
+    # THE TWO HALVES OF JIRA'S BOOKKEEPING BELONG TO DIFFERENT PROCESSES, and that is
+    # the shape of this arm. The SUCCESS half is the AGENT's: #129 gave it a `done`
     # label, a comment carrying the commit SHA, and — only where JIRA_DONE_STATUS
-    # names a status this project's workflow accepts — a transition, and the AGENT
-    # makes all of them itself, as step 7 of prompt-team-jira.md, calling
+    # names a status this project's workflow accepts — a transition, and the agent
+    # makes all three itself as step 7 of prompt-team-jira.md, calling
     # `lib/jira-queue.js complete` and `comment`. It is the agent's job because only
-    # the agent knows whether the work landed and what SHA it landed as — this file
-    # cannot read either out of an exit code it does not inspect. What is still
-    # missing is the FAILURE half (#130's `failed` sweep for an iteration that
-    # produced nothing) and per-ticket telemetry (#131), which is why nothing here
-    # reads `claude_failed`.
+    # the agent knows whether the work landed and what SHA it landed as. The FAILURE
+    # half has to be THIS FILE's for the mirror-image reason (#130): the invocation
+    # that most needs sweeping is the one that DIED, and a dead agent writes nothing.
+    # See the outcome branch below the dispatch.
+    #
+    # What is still missing is per-ticket telemetry (#131): no RALPH_ISSUE_EVENT line
+    # is appended under this source, which is why nothing here reads `claude_failed`
+    # even now that the outcome is known.
     #
     # The claim adds the `in-progress` label, which is the label the composed query
     # EXCLUDES (lib/jira-jql.js), so a claimed ticket drops out of the next count
@@ -576,6 +581,57 @@ while :; do
     # per task, no per-role logs — the same rule the other two sources follow.
     task_log_handle="${task_key//[^A-Za-z0-9._-]/_}"
     run_agent_for_issue "$task_log_handle"
+
+    # THE OUTCOME, READ OFF THE BOARD (#130) — jira mode's forward-progress guarantee,
+    # and the structural twin of the folder arm's sweep below.
+    #
+    # THE BOARD DECIDES, NOT THE EXIT CODE, and this sweep is deliberately
+    # unconditional on `claude_failed`: an agent killed after committing did the work
+    # and labelled the ticket `done`, while an agent that exited 0 having done nothing
+    # did not, so the exit code is the one thing here that cannot answer the question.
+    # `locate` asks acli what labels the ticket carries now and prints one word;
+    # `unknown` is what it prints when the ticket could not be read at all, and
+    # `${outcome:-unknown}` covers the narrower case of a node that printed nothing.
+    # Either way the comparison is the same: anything that is not `done` gets swept.
+    #
+    # A LABEL IS WHY THIS IS A GUARANTEE. Folder mode can promise the queue drains
+    # because bash can always `mv` a file; here bash can always write a LABEL — Jira
+    # labels are freeform text no workflow rule can veto, needing no transition and no
+    # status this file would have to guess. `failed` is excluded by the composed query
+    # (lib/jira-jql.js), so the swept ticket is out of the next count and the queue
+    # drains even when the agent recorded nothing at all.
+    #
+    # THE TWO CALLS ARE REDIRECTED DIFFERENTLY, and each on its own merits. `locate`
+    # drops stderr because its whole answer is the word on STDOUT and it writes no
+    # sentence of its own — an unreadable ticket is reported as `unknown`, not as
+    # prose — so `2>/dev/null` there can only hide a node that crashed, which the
+    # empty capture already says. THE SWEEP'S STDERR IS KEPT, unlike the folder arm's
+    # `mv`: `fail` does write a sentence, naming the ticket and what acli said, and
+    # that line is the only record of why the board never changed. `|| true` all the
+    # same — a sweep Ralph could not write is still not a reason to abort the run, and
+    # the guard above is what stops the loop from handing the ticket out forever.
+    outcome=$(node "$RALPH_PKG_DIR/lib/jira-queue.js" locate "$task_key" 2>/dev/null)
+    if [ "$outcome" != "done" ]; then
+      echo "⚠️  $task_key was not completed (state: ${outcome:-unknown}). Labelling it failed." >&2
+      node "$RALPH_PKG_DIR/lib/jira-queue.js" fail "$task_key" >/dev/null || true
+      outcome="failed"
+    fi
+
+    # The end-of-run summary counts TICKETS BY KEY here — `successes`/`failures` hold
+    # whatever the source names its work, and in this mode that is `FOO-123` rather
+    # than a number, which is also how the iteration line and the run record name it.
+    #
+    # A SECOND `if` ON A VARIABLE THAT NOW HOLDS ONE OF TWO WORDS, and it is the folder
+    # arm's shape rather than a second test: after the block above, `outcome` is
+    # provably `done` or `failed`, so this can only take the branch already decided.
+    # The folder arm below writes it exactly this way because its per-task TELEMETRY
+    # block sits in the gap between the two, reading `$outcome` — which is where #131
+    # will put this arm's, so the split stays where the twin keeps it.
+    if [ "$outcome" = "done" ]; then
+      successes+=("$task_key")
+    else
+      failures+=("$task_key")
+    fi
     continue
   fi
 

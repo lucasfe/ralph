@@ -236,7 +236,10 @@ Ralph ships **four** orchestrator templates:
   `acli jira workitem view`, never `gh`; and where folder mode's completion is a
   file move, this template's step 7 records the ticket on the board through
   `lib/jira-queue.js complete` and `comment` (#129) — the only board writes it is
-  allowed to make, and never before the commit exists.
+  allowed to make, and never before the commit exists. The `failed` sweep is
+  deliberately **not** the agent's (#130): the template forbids it, and
+  `templates/ralph.sh` runs `locate` and `fail` itself after the dispatch returns,
+  because the invocation most in need of sweeping is the one that died.
 
 The last two are picked by source rather than by agent: `build-prompt.js` keeps a
 `SOURCE_TEMPLATES` map (`{ folder, jira }`) whose entry **overrides** the
@@ -313,7 +316,9 @@ delegation instructions differently — just keep the shared structure in lockst
   **writes** to somebody's board — the claim's label, the completion's transition
   and label removal, and the comment (#129) — so this is a standing rule and not a
   gap to close: if you need to see the real thing, do it by hand against a throwaway
-  project, never from the suite.
+  project, never from the suite. #130's sweep added two verbs and no eighth
+  invocation: `locate` is the claim's label read, and `fail` reuses the label write
+  and the removal, so the count above is still the whole surface.
 - **The `acli` interface is transcribed, not measured.** The flag spellings, the
   fields `search` accepts, the ordering assumption behind `--limit 1`, the `--yes`
   on `comment create` (extrapolated from the three writes documented as taking one),

@@ -207,6 +207,82 @@ export const STALE_CLAIM_PATTERNS = [
  * same reason: "no PR" and "nothing pushes" are still TRUE of this source and of
  * folder mode, so nothing keys on them.
  */
+/**
+ * Sentences that would assert a `jira` run leaves an unfinished ticket unswept.
+ *
+ * Before #130 that was TRUE — the arm ended at the dispatch, so a killed or idle agent
+ * left the ticket carrying `in-progress` with no `failed` label and nothing to clear it
+ * — and every doc that describes the source said so, at length, because it was the one
+ * caveat a reader had to know before pointing this at a real board. #130 writes the
+ * sweep, so those sentences now tell a reader the opposite of what happens: that they
+ * must go into Jira and strip a label Ralph already replaced.
+ *
+ * THE SHAPE OF THIS LIST IS #128's, and for the reason its header records: that slice
+ * corrected two hunks of README.md while five more copies of the same claim stood, and
+ * `grep` found nothing pinning any of them. The same claim was spelled in five files
+ * this time (README.md, templates/ralph.config.sh, templates/prompt-team-jira.md,
+ * lib/task-source.js and test/loop.jira.adversarial.test.js's pinned-gap test), so the
+ * cheap edit and the sweep are the same amount of work only if the sweep exists.
+ *
+ * Match against `claimText()`, not `prose()`: every spelling wrapped the labels in code
+ * spans (`` `failed` ``) or the emphasis a README warning block uses, and the config
+ * template makes the argument in a `#` comment block.
+ *
+ * DELIBERATELY NARROW, and the constraint bites in two places. Folder mode has a real
+ * **failure sweep** of its own that README.md documents (`- The bash loop owns the
+ * failure sweep…`), so nothing here may key on that phrase alone. And the honest
+ * remaining caveat — "what is still missing is the per-ticket telemetry (#131)" — is
+ * written in the same sentence shape as the claims below, so every "missing" pattern
+ * here requires the failure half or the sweep as its object.
+ */
+export const JIRA_UNSWEPT_CLAIM_PATTERNS = [
+  // "…but has no failure half" — the config table's row, and the shortest spelling.
+  /\bno failure half\b/i,
+  // "WHAT IS STILL MISSING IS THE FAILURE HALF" / "The missing half is now the failure
+  // half", i.e. the denial with `missing` leading.
+  /\b(missing|absent|unbuilt|unwired)\b[^.]{0,40}?\bfailure half\b/i,
+  // …and trailing: "while the failure half is unbuilt".
+  /\bfailure half\b[^.]{0,30}?\b(unbuilt|unwired|not wired|missing|absent)\b/i,
+  // "the sweep for a ticket the agent could not finish" as the thing that is MISSING.
+  // Bound to the denial, because the same phrase describes the sweep that now exists.
+  /\b(missing|absent|unbuilt|unwired|not wired|no)\b[^.]{0,60}?\bsweep for a ticket\b/i,
+  // "that sweep is not wired yet" — prompt-team-jira.md's Failed path.
+  /\bsweep\b[^.]{0,30}?\bnot wired\b/i,
+  // "nothing sweeps a ticket the invocation could not finish back out of `in-progress`".
+  /\bnothing sweeps\b/i,
+  // The consequence clauses, which deny the sweep without naming it. Each is the exact
+  // shape #130 had to delete.
+  /\bno failed label\b/i,
+  // "so `in-progress` stays on it until you strip the label yourself" — the reader-facing
+  // consequence, and the one sentence of the set that names no label but `in-progress`.
+  // BOUND TO "until you", deliberately: lib/jira-queue.qa.test.js says "the mixed-case
+  // in-progress label stays on the ticket" about a label whose CASE stopped a removal
+  // matching, which is true and must stay sayable, so `stays on` alone cannot be the key.
+  /\bin-progress\b[^.]{0,60}?\b(until|unless) you\b/i,
+  // The README warning's headline. `comes back[^.]{0,6}off` rather than the plain phrase
+  // because it wrapped mid-clause inside a `>` blockquote, and `claimText` strips markdown
+  // emphasis but not the quote marker.
+  /\bonly a ticket (it|ralph|the agent|the loop) (finished|resolved|completed)\b[^.]{0,40}?\bcomes back[^.]{0,6}?off\b/i,
+  /\ba failed iteration does not\b/i,
+  // THE COUNT-SHAPED CLAIM, which is the shape that survived the first sweep of this slice:
+  // a sentence that denies the sweep by COUNTING Ralph's labels rather than by describing
+  // what it does not do. Five copies stood at HEAD — two README sentences ("Two of those
+  // four labels are Ralph's own writes", "the two labels Ralph writes"), two comments
+  // ("BOTH LABELS RALPH WRITES ARE COMPOSED IN…" in lib/jira-jql.js and one in
+  // lib/jira-jql.test.js) and one test TITLE in lib/jira-jql.qa.test.js. Measured against
+  // the ten patterns above: each of the five is matched by one of the two below and by
+  // NOTHING else. Naming a label is not enough to be caught, and deliberately so — every
+  // pattern up there binds `in-progress` or `failed` to a denial, because both words appear
+  // all over prose that is true.
+  /\b(two|both) of (those|the) four labels\b/i,
+  // Bound through `ralph` to the verb, deliberately: "the two labels a ticket's SUCCESS path
+  // writes" is TRUE (the claim and the completion) and lib/jira-jql.test.js says it, so a
+  // count beside the word `labels` alone cannot be the key. `[^.]` and not `.` because the
+  // README copy wrapped between `Ralph` and `writes`, and a negated class matches a newline
+  // where a dot does not.
+  /\b(two|both) labels\b[^.]{0,20}?\bralph\b[^.]{0,20}?\bwrites?\b/i,
+]
+
 export const JIRA_AGENTLESS_CLAIM_PATTERNS = [
   // "No agent is invoked for a Jira ticket" / "…for one yet" / "…on it, so a green…"
   // — the denial with its object trailing.
