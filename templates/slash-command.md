@@ -13,7 +13,7 @@ ralph start
 ```
 
 The CLI runs sanity checks, ensures the required GitHub labels exist,
-offers to clean up orphaned `claude-working` labels, and launches the
+offers to clean up orphaned `in-progress` labels, and launches the
 loop in a detached `tmux` session called `ralph`.
 
 Report the script output to the user (success, errors, or `[y/N]`

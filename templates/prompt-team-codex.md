@@ -36,13 +36,13 @@ and triage uses only Tier 0 (Light) and Tier 1 (Standard).
 
 1. **Select issue**: run
    ```
-   gh issue list --state open --search '-label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge sort:created-asc' --limit 1 --json number,title,body
+   gh issue list --state open --search '-label:in-progress -label:failed -label:do-not-ralph -label:pending-merge sort:created-asc' --limit 1 --json number,title,body
    ```
    Take the first. If the list is empty, write "RALPH_DONE" and exit.
    (The bash already checks this before invoking you, so normally there
    will be one.)
 
-2. **Mark in progress**: `gh issue edit N --add-label claude-working`
+2. **Mark in progress**: `gh issue edit N --add-label in-progress`
 
 3. **Prepare branch**: `git checkout {{DEV_BRANCH}} && git pull && git checkout -b issue-N`
 
@@ -293,7 +293,7 @@ reviewers** instead of a single pass:
    - `gh issue view N --json state -q .state`
    - If `OPEN` (PR was merged into a non-default branch like
      `{{DEV_BRANCH}}`, so GitHub auto-close did NOT fire):
-     `gh issue edit N --remove-label claude-working --add-label pending-merge`
+     `gh issue edit N --remove-label in-progress --add-label pending-merge`
      The issue will close automatically when {{DEV_BRANCH}} rolls
      forward to {{MAIN_BRANCH}}.
    - If `CLOSED` (auto-close fired because PR_TARGET=={{MAIN_BRANCH}}):
@@ -301,7 +301,7 @@ reviewers** instead of a single pass:
 
 ## Failed (at any point)
 
-- `gh issue edit N --remove-label claude-working --add-label claude-failed`
+- `gh issue edit N --remove-label in-progress --add-label failed`
 - `gh issue comment N --body "Ralph tried but failed: <short reason>. See log in logs/ralph-issue-N.log and PR (if opened)."`
 - If a PR was opened: `gh pr close <pr>`
 - Exit.

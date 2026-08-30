@@ -97,7 +97,7 @@ exit 0
 // A single-issue OPEN, never-excluded queue for FAILURE paths: #98 is returned
 // for every sort:created-asc (appended to selected.log for bounding) and stays
 // OPEN with no exclusion label, so a non-zero codex exit makes the loop add
-// claude-failed (recorded to edit.log) and, on re-selection, the zero-progress
+// failed (recorded to edit.log) and, on re-selection, the zero-progress
 // guard breaks the loop — it can never spin forever.
 function seedOpenFailing() {
   writeStub(
@@ -342,13 +342,16 @@ exit 137
     // Real jq must NOT have choked on the truncated non-JSON line (fromjson?).
     expect(`${res.stdout}\n${res.stderr}`).not.toMatch(/parse error|Invalid numeric literal/i)
 
-    // Failure detection: #98 was marked claude-failed (the truncated, non-zero
+    // Failure detection: #98 was marked failed (the truncated, non-zero
     // run was NOT mistaken for a successful/empty run).
     const editLog = existsSync(join(workdir, 'edit.log'))
       ? readFileSync(join(workdir, 'edit.log'), 'utf8')
       : ''
-    expect(editLog).toContain('--add-label')
-    expect(editLog).toContain('claude-failed')
+    // Flag and name in one string, not two assertions: since #140 the label is spelled
+    // `failed`, an ordinary word, so `toContain('--add-label')` beside `toContain('failed')`
+    // would also pass on `--add-label build-failed` or on an `--add-label` of something else
+    // in a line that merely mentions failure.
+    expect(editLog).toContain('--add-label failed')
 
     // Bounded re-selection: #98 selected at least twice (guard fires on the
     // re-selection) but not thousands of times — proves the loop advanced.
@@ -413,11 +416,13 @@ exit 1
     expect(logText).toContain('partial work')
     expect(logText).toContain('==> result: error')
 
-    // The failure was detected (claude-failed applied), not swallowed.
+    // The failure was detected (failed applied), not swallowed.
     const editLog = existsSync(join(workdir, 'edit.log'))
       ? readFileSync(join(workdir, 'edit.log'), 'utf8')
       : ''
-    expect(editLog).toContain('claude-failed')
+    // The stamp, flag and name together — `failed` alone would match a line that only
+    // mentions the word (see the note at the sibling assertion above).
+    expect(editLog).toContain('--add-label failed')
 
     // stderr error-signal count is recorded in telemetry (the "auth" line matches
     // the auth/credit/rate-limit signal regex), tagged codex.

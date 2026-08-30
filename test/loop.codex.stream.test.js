@@ -23,7 +23,7 @@ const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.exec
 //      (agent messages + shell commands + `==> result: success`),
 //   2. the RAW JSONL sidecar (logs/ralph-issue-N.jsonl) is tee'd verbatim,
 //   3. a `turn.failed` stream whose process exits non-zero is detected as a
-//      failure (issue gets the claude-failed label), rendering `==> result: error`.
+//      failure (issue gets the failed label), rendering `==> result: error`.
 //
 // Real-jq caveat: we deliberately do NOT create a `jq` stub, so the real
 // /opt/homebrew/bin/jq resolves from the rest of PATH. The loop's other jq uses
@@ -218,7 +218,7 @@ exit 1
     )
 
     // gh stub: #98 stays OPEN with no exclusion label. Because codex exited
-    // non-zero the loop adds the claude-failed label (captured to edit.log) and,
+    // non-zero the loop adds the failed label (captured to edit.log) and,
     // on re-selection of the same #98, the zero-progress guard breaks the loop —
     // so it cannot spin forever. Selections captured to selected.log for bounds.
     writeStub(
@@ -250,14 +250,16 @@ exit 0
     // Must exit on its own — never killed by the timeout (would mean it spun).
     expect(res.signal, `loop was killed by timeout — it spun forever. stdout:\n${res.stdout}`).toBeNull()
 
-    // Failure detection: the loop marked #98 claude-failed (it did NOT treat the
+    // Failure detection: the loop marked #98 failed (it did NOT treat the
     // non-zero, turn.failed run as a successful/empty run). If failure detection
     // regressed (e.g. exit code ignored) no edit would ever fire.
     const editLog = existsSync(join(workdir, 'edit.log'))
       ? readFileSync(join(workdir, 'edit.log'), 'utf8')
       : ''
-    expect(editLog).toContain('--add-label')
-    expect(editLog).toContain('claude-failed')
+    // Flag and name in one string: since #140 the label is spelled `failed`, so two separate
+    // assertions would also be satisfied by `--add-label build-failed` or by an unrelated
+    // `--add-label` on a line that happens to say `failed`.
+    expect(editLog).toContain('--add-label failed')
 
     // Bounded re-selection: #98 selected at least twice (guard fires on
     // re-selection) but not thousands of times — proves the loop advanced.

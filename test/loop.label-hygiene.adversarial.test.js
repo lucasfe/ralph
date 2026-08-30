@@ -13,7 +13,7 @@ const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.exec
   encoding: 'utf8',
 }).trim()
 
-// Adversarial coverage for the #40 `claude-working` label sweep in
+// Adversarial coverage for the #40 `in-progress` label sweep in
 // templates/ralph.sh. The dev-facing suite (one describe per issue) lives in
 // test/loop.test.js; this file carries the hostile paths, which is the split the
 // repo already uses (test/loop.adversarial.test.js, lib/*.qa.test.js). Its
@@ -158,7 +158,7 @@ afterEach(() => {
   }
 })
 
-describe('ralph.sh claude-working label hygiene — QA adversarial (#40)', () => {
+describe('ralph.sh in-progress label hygiene — QA adversarial (#40)', () => {
   // A one-issue GitHub queue whose `gh issue view` reports the given labels +
   // state, and whose `gh issue edit` records the argv it received to
   // gh-edit.log (so a test can prove exactly what the loop asked GitHub to
@@ -170,7 +170,7 @@ describe('ralph.sh claude-working label hygiene — QA adversarial (#40)', () =>
   // test/loop.test.js carries the same generator without those last two options
   // (harness duplication is the convention here — see loop.adversarial.test.js).
   function seedLabelledIssue({
-    labels = 'claude-working',
+    labels = 'in-progress',
     state = 'CLOSED',
     editExit = 0,
     claudeExit = 0,
@@ -261,13 +261,13 @@ exit 0
   // issue SELECTION. This one keeps per-issue label/state files that
   // `gh issue edit --add-label/--remove-label` really mutate, and an
   // `issue list` that evaluates the loop's own exclusion filter
-  // (`-label:claude-working -label:claude-failed -label:do-not-ralph
+  // (`-label:in-progress -label:failed -label:do-not-ralph
   // -label:pending-merge`) against them — so queue eligibility is derived,
   // not hardcoded. `action` scripts what the AGENT does after claiming the
-  // issue with claude-working (prompt-team.md step 2):
+  // issue with in-progress (prompt-team.md step 2):
   //   close   -> a merged PR closed it via `Closes #N`; neither agent removal
-  //              path runs, so claude-working is LEFT behind (this is #40)
-  //   pending -> opened a PR: adds pending-merge, removes claude-working
+  //              path runs, so in-progress is LEFT behind (this is #40)
+  //   pending -> opened a PR: adds pending-merge, removes in-progress
   //   nothing -> claimed the issue, achieved nothing, exited 0
   function seedStatefulRepo(issues) {
     const db = join(workdir, 'issuedb')
@@ -285,15 +285,15 @@ DB="${db}"
 n=$(cat "$DB/current" 2>/dev/null)
 if [ -n "$n" ]; then
 # prompt-team.md step 2: claim the issue.
-gh issue edit "$n" --add-label claude-working >/dev/null 2>&1
+gh issue edit "$n" --add-label in-progress >/dev/null 2>&1
 case "$(cat "$DB/$n.action" 2>/dev/null)" in
   close)
-    # A merged PR closed it via \`Closes #N\`: claude-working stays on.
+    # A merged PR closed it via \`Closes #N\`: in-progress stays on.
     echo "CLOSED" > "$DB/$n.state"
     ;;
   pending)
     gh issue edit "$n" --add-label pending-merge >/dev/null 2>&1
-    gh issue edit "$n" --remove-label claude-working >/dev/null 2>&1
+    gh issue edit "$n" --remove-label in-progress >/dev/null 2>&1
     ;;
 esac
 fi
@@ -313,7 +313,7 @@ for f in "$DB"/*.state; do
   n=$(basename "$f"); n="\${n%.state}"
   [ "$(cat "$f")" = "OPEN" ] || continue
   case ",$(cat "$DB/$n.labels" 2>/dev/null)," in
-    *,claude-working,*|*,claude-failed,*|*,do-not-ralph,*|*,pending-merge,*) continue ;;
+    *,in-progress,*|*,failed,*|*,do-not-ralph,*|*,pending-merge,*) continue ;;
   esac
   elig="$elig $n"
 done
@@ -379,14 +379,14 @@ exit 0
   // issue eligible again: re-selected, tripped `[ "$num" = "$prev_num" ]` and
   // `break`'d the WHOLE loop, abandoning the rest of the queue (2-of-3 → 0-of-3).
   // The shipped code clears only on the three terminal-exclusion branches. This
-  // test fails if a clear_working_label call is ever added to the zero-progress
+  // test fails if a clear_in_progress_label call is ever added to the zero-progress
   // branch.
   // -----------------------------------------------------------------------
-  it('QA: a zero-progress iteration keeps claude-working so the rest of the queue still drains', () => {
+  it('QA: a zero-progress iteration keeps in-progress so the rest of the queue still drains', () => {
     seedStatefulRepo({
       // #1: the agent claims the issue then achieves nothing and exits 0 —
       // a routine real outcome (no PR opened, nothing closed, exit 0), so
-      // bash does NOT add claude-failed.
+      // bash does NOT add failed.
       1: { action: 'nothing' },
       // #2 and #3 are perfectly resolvable.
       2: { action: 'close' },
@@ -411,7 +411,7 @@ exit 0
     expect(res.stderr, detail).not.toMatch(/Aborting the loop/)
   })
 
-  // Control for the test above: when the agent leaves claude-working on an
+  // Control for the test above: when the agent leaves in-progress on an
   // issue a merged PR CLOSED (the actual #40 story), clearing it is harmless —
   // the closed state keeps it out of the queue — and the whole queue drains.
   it('QA: clearing on the CLOSED success path still drains the whole queue', () => {
@@ -427,12 +427,12 @@ exit 0
     expect(readSelections().sort()).toEqual(['1', '2', '3'])
     expect(res.stdout).toMatch(/3 ok, 0 failed/)
 
-    // Every issue ends with claude-working gone — the acceptance criterion,
+    // Every issue ends with in-progress gone — the acceptance criterion,
     // asserted against the label state gh actually holds, not against argv.
     for (const n of [1, 2, 3]) {
       const labels = readFileSync(join(workdir, 'issuedb', `${n}.labels`), 'utf8').trim()
-      expect(labels.split(',').filter(Boolean), `#${n} kept claude-working`).not.toContain(
-        'claude-working',
+      expect(labels.split(',').filter(Boolean), `#${n} kept in-progress`).not.toContain(
+        'in-progress',
       )
     }
     // ...and pending-merge survived on #2 (the sweep is surgical).
@@ -444,9 +444,9 @@ exit 0
   // the verdict is computed, so it can never move the tally or the event.
   // -----------------------------------------------------------------------
   it.each(['OPEN', 'CLOSED'])(
-    'QA: claude-working + claude-failed on a %s issue is still counted a FAILURE (removal cannot corrupt the verdict)',
+    'QA: in-progress + failed on a %s issue is still counted a FAILURE (removal cannot corrupt the verdict)',
     (state) => {
-      seedLabelledIssue({ labels: 'claude-working,claude-failed', state })
+      seedLabelledIssue({ labels: 'in-progress,failed', state })
 
       const res = runLoop({ timeout: 15000 })
       expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
@@ -461,13 +461,13 @@ exit 0
       expect(ev.status).toBe('failed')
 
       const edits = readEdits()
-      expect(edits.some((e) => /--remove-label claude-working/.test(e))).toBe(true)
+      expect(edits.some((e) => /--remove-label in-progress/.test(e))).toBe(true)
       // The failure branch touches no labels of its own, so the ONLY edit is
-      // the sweep — claude-failed is not re-added, claude-working never re-added.
+      // the sweep — failed is not re-added, in-progress never re-added.
       expect(edits.filter((e) => /--add-label/.test(e))).toEqual([])
 
       // Telemetry integrity: the verdict is derived from what the AGENT left
-      // (claude-failed wins even over a CLOSED state), never from the
+      // (failed wins even over a CLOSED state), never from the
       // post-removal label set.
       const events = readIssueEvents()
       expect(events.length).toBe(1)
@@ -478,8 +478,8 @@ exit 0
 
   it('QA: pending-merge success path — accounting + telemetry are captured BEFORE the removal', () => {
     // Label order reversed vs. the dev's test, so the classification cannot
-    // be depending on claude-working being last in the joined string.
-    seedLabelledIssue({ labels: 'claude-working,pending-merge', state: 'OPEN', logAllCalls: true })
+    // be depending on in-progress being last in the joined string.
+    seedLabelledIssue({ labels: 'in-progress,pending-merge', state: 'OPEN', logAllCalls: true })
 
     const res = runLoop({ timeout: 15000 })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
@@ -503,7 +503,7 @@ exit 0
     const trace = `gh calls:\n${calls.join('\n')}`
     const viewLabels = calls.findIndex((c) => /^issue view 1 --json labels/.test(c))
     const sidecar = calls.findIndex((c) => /^pr list --head issue-1/.test(c))
-    const removal = calls.findIndex((c) => /^issue edit 1 .*--remove-label claude-working/.test(c))
+    const removal = calls.findIndex((c) => /^issue edit 1 .*--remove-label in-progress/.test(c))
     expect(viewLabels, trace).toBeGreaterThanOrEqual(0)
     expect(sidecar, trace).toBeGreaterThanOrEqual(0)
     expect(removal, trace).toBeGreaterThanOrEqual(0)
@@ -519,21 +519,21 @@ exit 0
     (editExit) => {
       // `gh issue view` still succeeds here, so this is also the "gh works for
       // reads but fails only for the label edit" case.
-      seedLabelledIssue({ labels: 'claude-working', state: 'CLOSED', editExit })
+      seedLabelledIssue({ labels: 'in-progress', state: 'CLOSED', editExit })
 
       const res = runLoop({ timeout: 15000 })
       expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
       expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
       expect(res.stdout).toContain('Queue empty, exiting.')
       expect(res.stdout).toMatch(/1 ok, 0 failed/)
-      expect(readEdits().some((e) => /--remove-label claude-working/.test(e))).toBe(true)
+      expect(readEdits().some((e) => /--remove-label in-progress/.test(e))).toBe(true)
       expect(singleCycleEvent().ok).toBe(1)
     },
   )
 
   it('QA: a gh issue edit that spews stderr and garbage stdout cannot corrupt the loop output', () => {
     seedLabelledIssue({
-      labels: 'claude-working',
+      labels: 'in-progress',
       state: 'CLOSED',
       editExtra:
         'echo "gh: warning: could not resolve label GARBAGE-STDERR" >&2\n' +

@@ -210,8 +210,10 @@ than typed. It exports the four names — `IN_PROGRESS_LABEL`, `FAILED_LABEL`,
 applies and the only one of the four Ralph never creates — plus `RALPH_LABELS`
 (all four, in the order the exclusion uses them), `MANAGED_LABELS` (the three
 Ralph *does* create, each with the colour and the user-visible description
-`gh label create` publishes), `LEGACY_LABELS` (names Ralph has retired; empty
-today), `LABEL_EXCLUSION` (the `-label:` clauses alone) and
+`gh label create` publishes), `LEGACY_LABELS` (each name Ralph has **retired**,
+mapped to the name that replaced it — #140 filled it with the two labels that
+used to carry a `claude-` prefix), `LABEL_EXCLUSION` (the `-label:` clauses
+alone) and
 `ISSUE_SEARCH_QUERY` (the whole `state:open …` query). It is pure and
 **edgeless** — no clock, no environment, no filesystem, and no imports at all,
 like `git-remote-slug.js` and `jira-jql.js` beside it — and everything it hands
@@ -235,34 +237,70 @@ assembled query as whole exec-mock command lines, so a reordering is a behaviour
 change as far as the suite is concerned (`lib/labels.js`'s header carries the
 measured count).
 
-Four specs hold that up, and they fail in different directions on purpose:
+**#140 spent the mechanism, and changed what a text sweep can prove.** The two
+labels Ralph stamps on an issue used to carry a `claude-` prefix; they now say
+what the *loop* is doing instead, because Ralph has driven Codex as well as
+Claude since #554. On the JavaScript side that was the one-line edit the module
+was built for. On the sweeps it cost something worth knowing about before you
+write another one: the old spellings were coinages nothing else in this
+repository had a use for, so "this file does not contain the string" was a
+faithful proxy for "this file does not spell the label". The new ones are not —
+the folder lane's status directories, the Jira lane's own board labels, and
+plain English all write them. So the static guards were re-pointed at needles
+that are still exact (a name next to the `gh` flag that issues it; the retired
+spellings, which remain unique) and the claim they could no longer make was
+handed to the behavioural spec. **Absence of a label's name from a file is no
+longer evidence about labels** — say what shape you are looking for.
+
+Five specs hold that up, and they fail in different directions on purpose:
 
 - `lib/labels.test.js` — the module's own contract, plus a sweep of every
-  non-test `.js` under `lib/` for a leftover literal of the three GitHub-only
-  names. The sweep reads source with `codeWithoutComments`, so **a comment may
-  still name a label** — several explain the mechanism and should.
+  non-test `.js` under `lib/` for a leftover literal. Since #140 that sweep asks
+  about `PENDING_MERGE_LABEL` alone: nine modules legitimately write the other
+  two names for the folder, Jira and digest lanes, and an allowlist of them
+  would go stale the next time anybody writes `status: 'failed'`. The sweep
+  reads source with `codeWithoutComments`, so **a comment may still name a
+  label** — several explain the mechanism and should.
 - `lib/labels.seam.qa.test.js` — substitutes the module with an obviously fake
   vocabulary (`qa-…`), drives the consumers for real, and reads back the argv
   they hand `gh`. Absence of a literal is a static argument; this is the
-  behavioural one, and it is what a rename actually depends on.
+  behavioural one, and it is what a rename actually depends on. Since #140 it is
+  also the *only* spec that can still catch a consumer that retyped one of the
+  two renamed names, because substitution does not care that a label is spelled
+  like an English word. The fake names must not **contain** a real one, either:
+  `qa-in-progress` became `qa-claimed` when the real label became `in-progress`.
 - `lib/labels.parity.test.js` — the copies that **cannot** import:
   `templates/ralph.sh` composes its own `SEARCH_QUERY` because it runs
-  standalone in tmux, and a prompt template is text an agent reads. A per-file
-  table pins which names each template and prose doc carries, in **both**
-  directions — a listed name must be present, and an unlisted one must be
-  absent.
+  standalone in tmux, and a prompt template is text an agent reads. It asks
+  three questions at three strengths: what each file **writes** (a table of
+  exact `gh` argv fragments, flag and name together — the strong half, added by
+  #140), what each file **mentions** (the per-file name table, in both
+  directions, with the negative half scoped to the two names still unique to
+  Ralph), and whether any **retired** spelling survives anywhere — a sweep over
+  every file `git ls-files` reports, whose matcher and argued exemption list it
+  shares with the QA spec below (`test/helpers/legacy-label-sweep.js`).
 - `lib/labels.vocabulary.qa.test.js` — the direction a hardcoded table cannot
   look: it globs `templates/` from the filesystem, so a **new** label-bearing
-  template goes red the day it lands, and it proves the legacy check has teeth
-  against a synthetic retired name while `LEGACY_LABELS` is still empty.
+  template goes red the day it lands, and it runs the legacy check against the
+  real retired spellings while demonstrating on a green tree that the matcher
+  reports something when there is something to report.
+- `lib/labels.rename.qa.test.js` — the questions the four above only ask
+  *separately*. That the word a copy **stamps** is the word its own query
+  **excludes**, parsed out of that file's own text rather than looked up, so the
+  two halves of the invariant are compared to each other instead of both being
+  compared to the module. That no copy of the exclusion is a **partial** copy —
+  an almost-copy is invisible to a verbatim count, and is how a doc comes to
+  describe a filter that does not run. And, since the rename put Ralph's label
+  names into the space of words other boards already use, that a colliding
+  third-party label is not read as Ralph's own bookkeeping.
 
 **One exemption, and it is allowlisted rather than tolerated.**
 `lib/jira-jql.js` still spells `do-not-ralph` itself, because its purity spec
 pins that module at **zero imports** — the property that keeps `ralph doctor`
 able to reach Jira knowledge without dragging anything onto its import graph is
 worth more than deduplicating one string, and the Jira lane names it beside the
-exclusion it feeds either way. So the `lib/` sweep guards three names, not four,
-and the fourth is guarded as an allowlist of exactly one file: a *second*
+exclusion it feeds either way. So the `lib/` sweep never guarded that name, and
+it is guarded instead as an allowlist of exactly one file: a *second*
 `do-not-ralph` literal has to be argued for.
 
 **Editing a doc can turn the suite red.** `README.md` and `CONTRIBUTING.md` are
@@ -272,10 +310,15 @@ README is asserted to carry all four names **and exactly one verbatim copy** of
 `ISSUE_SEARCH_QUERY` — counted, not merely contained, so a second copy is a
 deliberate table edit rather than an accident. `CONTRIBUTING.md` is listed with
 the human's `do-not-ralph` **only**, and the negative half of the table means
-introducing one of the other three here fails the suite: that is why this
-section names them by their export identifiers. `CHANGELOG.md` is out of the
-table on purpose — its label mentions sit inside shipped release entries, which
-describe what a past version did, and a rename must not falsify them.
+writing `PENDING_MERGE_LABEL`'s name out in full here fails the suite. Naming
+the other three by their export identifiers rather than by their words is still
+the habit worth keeping — it is what the negative half enforced until #140 made
+two of those words ordinary English — and this section spends `in-progress` and
+`failed` only where the sentence is *about* the spelling. `CHANGELOG.md` is out
+of the table on purpose: every mention of a label there sits inside a shipped
+release entry describing what a past version did, so it keeps the **retired**
+spelling and the repo-wide sweep exempts it by name. Leave it alone — a rename
+that "completed" itself through the changelog would be falsifying history.
 
 ## Pull requests
 

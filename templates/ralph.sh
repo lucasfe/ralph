@@ -331,7 +331,7 @@ claude_failed=0
 # own, and "which pass are we on?" is what makes a stuck run legible from outside.
 iter=0
 
-SEARCH_QUERY='state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge'
+SEARCH_QUERY='state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge'
 
 # --- Task source dispatch (#565, #127) --------------------------------------
 # Ralph draws work from GitHub issues (the default, unchanged), a local
@@ -400,22 +400,22 @@ node "$RALPH_PKG_DIR/lib/run-state.js" begin \
   "$(queue_count)" || true
 # ---------------------------------------------------------------------------
 
-# --- Stale `claude-working` sweep (#40) -------------------------------------
+# --- Stale `in-progress` sweep (#40, renamed #140) --------------------------
 # A merged PR that closes its issue (`Closes #N`) runs neither of the agent's
-# label-removal paths, so `claude-working` survives on an issue this loop counts
+# label-removal paths, so `in-progress` survives on an issue this loop counts
 # as a SUCCESS — and if that issue is ever reopened it is silently dropped from
-# the queue (`-label:claude-working`).
+# the queue (`-label:in-progress`).
 #
 # Called ONLY from the outcome branches that leave the issue in a terminal
-# exclusion state (closed, pending-merge, claude-failed), never from the
+# exclusion state (closed, pending-merge, failed), never from the
 # zero-progress branch: there the sticky label is what keeps a stuck issue out
 # of the queue, and clearing it would make the loop re-select the same issue and
 # `break` on the re-selection guard, abandoning everything still queued — so
 # that residue is left to the cycle-level sweep in `lib/orphan-cleanup.js`.
 #
 # No "does it have the label?" pre-check: gh no-ops on an absent label.
-clear_working_label() {
-  gh issue edit "$1" --remove-label claude-working >/dev/null 2>&1 || true
+clear_in_progress_label() {
+  gh issue edit "$1" --remove-label in-progress >/dev/null 2>&1 || true
 }
 # ---------------------------------------------------------------------------
 
@@ -494,7 +494,7 @@ while :; do
     # (#127 selection + claim, #128 the dispatch, #130 the sweep). The block still
     # returns to the top of the loop rather than falling through: NONE of the outcome
     # handling below applies to a Jira ticket, because it is written against gh (PR
-    # merge state, `claude-working`/`claude-failed` labels, `Closes #N`).
+    # merge state, `in-progress`/`failed` labels, `Closes #N`).
     #
     # THE TWO HALVES OF JIRA'S BOOKKEEPING BELONG TO DIFFERENT PROCESSES, and that is
     # the shape of this arm. The SUCCESS half is the AGENT's: #129 gave it a `done`
@@ -765,21 +765,21 @@ while :; do
 
   # Classify from what the AGENT left behind: $labels/$state were read ABOVE, so
   # neither this nor the telemetry capture can observe our own label edits. The
-  # terminal-exclusion branches also call clear_working_label (see its header).
-  if echo ",$labels," | grep -q ",claude-failed,"; then
-    clear_working_label "$num"
+  # terminal-exclusion branches also call clear_in_progress_label (see its header).
+  if echo ",$labels," | grep -q ",failed,"; then
+    clear_in_progress_label "$num"
     failures+=("$num")
   elif [ "$state" = "CLOSED" ] || echo ",$labels," | grep -q ",pending-merge,"; then
-    clear_working_label "$num"
+    clear_in_progress_label "$num"
     successes+=("$num")
   else
-    # No exclusion label and still open. If claude failed (non-zero exit) mark
-    # the issue claude-failed so the queue advances on the next iteration.
+    # No exclusion label and still open. If the agent failed (non-zero exit) mark
+    # the issue `failed` so the queue advances on the next iteration.
     if [ "$claude_failed" = "1" ]; then
-      echo "⚠️  claude failed on issue #$num (non-zero exit). Marking claude-failed." >&2
-      gh issue edit "$num" --add-label claude-failed >/dev/null 2>&1 || true
-      # claude-failed now excludes the issue, so claude-working is stale.
-      clear_working_label "$num"
+      echo "⚠️  claude failed on issue #$num (non-zero exit). Marking failed." >&2
+      gh issue edit "$num" --add-label failed >/dev/null 2>&1 || true
+      # `failed` now excludes the issue, so `in-progress` is stale.
+      clear_in_progress_label "$num"
     fi
 
     # Zero-progress guard: if we just re-selected the SAME issue we worked on
