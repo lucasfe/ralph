@@ -853,7 +853,11 @@ to catch path/template bugs that unit tests can't surface.
      `acli jira auth logout` — `! jira auth (not authenticated)` carrying the
      `acli jira auth login` hint. The thing to confirm deliberately is that
      `doctor`'s **exit code is unchanged** across both, because that row is reported
-     and never enforced. `! jira auth (not verified)`
+     and never enforced **by `doctor`** — `ralph cycle` is the command that enforces
+     it, from #134: its preflight defaults to the same `lib/jira-auth.js` probe, so
+     the logged-out half of this step is also a repo where a scheduled pass aborts
+     with `jira not authenticated — run: acli jira auth login`. Log back in before
+     smoke-testing anything that starts a `jira` run. `! jira auth (not verified)`
      is the state a real `ralph doctor` should *never* show you: it means the command
      had no process runner to ask with, which for the shipped CLI means
      `bin/ralph.js` stopped handing `doctor` its `exec`. A **missing** `acli` is not
