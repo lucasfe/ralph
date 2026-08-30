@@ -1776,4 +1776,103 @@ exit 0
     expect(readLog(claudeLog()).split('\n').filter(Boolean)).toHaveLength(1)
     expect(res.stdout).toMatch(/0 ok, 1 failed/)
   })
+
+  // --- #131: PER-TICKET TELEMETRY ------------------------------------------------------
+  // The arm now appends one RALPH_ISSUE_EVENT per iteration, the way the other two do, and
+  // the event carries the ticket KEY as a field of its own beside the number derived from
+  // it. These read the file the real sidecar wrote (the `node` stub delegates
+  // capture-issue-event.js to the real binary), so what is pinned is bash's env block and
+  // lib/capture-issue-event.js agreeing — which is the one thing neither side's unit tests
+  // can prove alone.
+  const metricsFile = () => join(workdir, '.ralph', 'metrics', 'issues.jsonl')
+  const events = () =>
+    readLog(metricsFile())
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l.slice('RALPH_ISSUE_EVENT '.length)))
+
+  it('appends one event carrying the ticket key and the derived number — #131', () => {
+    seedJiraStubs()
+    seedCompletingAgent()
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+
+    expect(existsSync(metricsFile()), `no metrics. stderr:\n${res.stderr}`).toBe(true)
+    const all = events()
+    expect(all).toHaveLength(1)
+    expect(all[0].task_key).toBe('FOO-123')
+    expect(all[0].issue_number).toBe(123)
+    // A completed ticket is a pass, read off the board rather than off the exit code.
+    expect(all[0].verdict).toBe('pass')
+    // The run id joins this event to the run's own RALPH_CYCLE_EVENT, and the agent, the
+    // exit code and a measured duration are all populated — the same fields the github and
+    // folder arms pass. The duration is a COUNT OF MILLISECONDS the loop measured; it can
+    // legitimately be 0 for a stub that returns inside one second, so its type is what is
+    // asserted rather than a floor a fast machine would break.
+    expect(all[0].run_id).toMatch(/^ralph-test-\d+$/)
+    expect(all[0].agent).toBe('claude')
+    expect(all[0].claude_exit_code).toBe(0)
+    expect(typeof all[0].duration_ms).toBe('number')
+    expect(Number.isFinite(all[0].duration_ms)).toBe(true)
+
+    // NO gh call, from the loop or from the sidecar: jira mode opens no PR, so there is no
+    // diff to fetch, and a machine without `gh` must still get complete telemetry.
+    expect(
+      existsSync(join(workdir, 'gh-called.log')),
+      `gh was invoked in jira mode:\n${readLog(join(workdir, 'gh-called.log'))}`,
+    ).toBe(false)
+    expect(all[0].files).toBe(0)
+    expect(all[0].insertions).toBe(0)
+    expect(all[0].deletions).toBe(0)
+  })
+
+  it('records a SWEPT ticket as a fail, so the summary and the log agree — #131', () => {
+    // The default stub leaves the board untouched, so the loop sweeps the ticket to
+    // `failed` — and the event must carry the same verdict the run summary printed, or the
+    // two records of one iteration disagree.
+    seedJiraStubs()
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).toMatch(/0 ok, 1 failed/)
+
+    const all = events()
+    expect(all).toHaveLength(1)
+    expect(all[0].task_key).toBe('FOO-123')
+    expect(all[0].verdict).toBe('fail')
+  })
+
+  it('names the per-ticket logs by the KEY, so the event describes the right transcript — #131', () => {
+    // The env block passes `$task_log_handle`, not `$num`: `$num` is deliberately empty in
+    // this mode, so a copy of the folder arm's `logs/ralph-issue-$num.*` would have handed
+    // the sidecar `logs/ralph-issue-.jsonl` and every field read out of the stream would be
+    // a zero. The stderr signal count is what proves the right file was read.
+    seedJiraStubs()
+    writeStub(
+      'claude',
+      `#!/bin/bash\ncat > /dev/null\necho "$*" >> "${claudeLog()}"\necho "Credit balance too low" >&2\nexit 1\n`,
+    )
+    const res = runJira()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    const all = events()
+    expect(all).toHaveLength(1)
+    expect(all[0].stderr_error_signals).toBe(1)
+    expect(all[0].claude_exit_code).toBe(1)
+  })
+
+  it('a telemetry write that CANNOT succeed leaves the outcome and the exit code untouched — #131', () => {
+    // `.ralph/metrics` occupied by a FILE, so the sidecar's mkdir can only fail. Telemetry
+    // is a sidecar: the ticket is still completed, the summary still says 1 ok, and the run
+    // still exits 0.
+    seedJiraStubs()
+    seedCompletingAgent()
+    mkdirSync(join(workdir, '.ralph'), { recursive: true })
+    writeFileSync(join(workdir, '.ralph', 'metrics'), 'not a directory')
+
+    const res = runJira()
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stdout).toMatch(/1 ok, 0 failed/)
+    expect(res.stdout).toContain('OK: #FOO-123')
+    expect(boardLabels().split(',')).toContain('done')
+  })
 })

@@ -24,8 +24,9 @@ it is transitioned to whatever status `JIRA_DONE_STATUS` names — a knob that s
 board. An iteration that produced **nothing** is swept instead: the loop reads the
 ticket's labels back off the board after the agent returns and gives anything that is
 not `done` the `failed` label, `in-progress` off, so a killed or idle invocation
-cannot leave the loop spinning on one ticket. Nothing pushes the commit either, and
-nothing records a per-ticket telemetry event. It has also never been run against a live
+cannot leave the loop spinning on one ticket. Nothing pushes the commit either. The
+iteration **is** recorded: one telemetry event per ticket, carrying the ticket key beside
+the number derived from it. It has also never been run against a live
 Jira — every Jira surface is stub-tested only. See
 [Choosing the task source](#choosing-the-task-source).
 
@@ -816,10 +817,12 @@ Ralph draws its work from one **task source** per project, recorded as
   board. **And a ticket it did not resolve is swept**: after the agent returns the loop
   reads the ticket's labels back off the board and, for anything that is not `done`,
   adds `failed` and takes `in-progress` off, warning on stderr with the ticket and the
-  state it found. What is still missing is the **per-ticket telemetry** — no issue event
-  is appended under this source, so nothing narrates a Jira iteration the way the digest
-  narrates a GitHub one. Nothing is read from GitHub issues under this value either —
-  the loop runs no `gh` command at all.
+  state it found. **And the iteration is recorded**: the loop appends one issue event per
+  ticket to `.ralph/metrics/issues.jsonl`, carrying the ticket key as `task_key` beside the
+  number derived from it, so the task table and the pace/spend figures in `ralph status`,
+  the idle report card and `ralph cycle`'s `N ok, N failed` summary account for a Jira
+  iteration the way they account for a GitHub one. Nothing is read from GitHub issues under
+  this value either — the loop runs no `gh` command at all, telemetry included.
   [`ralph status`](#run-state--ralphrun-statejson-and-ralph-status) and
   `ralph cycle` take the queue depth by running the
   [`JIRA_JQL`](#configuration-reference) you configure through Atlassian's `acli`,
@@ -943,13 +946,20 @@ completion differ:
   consecutive iterations with no state change, Ralph stops rather than spin
   forever.
 
-Per-task telemetry works exactly as in GitHub mode: the same
-`.ralph/metrics/issues.jsonl` stream and daily heartbeat rollup serve both
-sources, keyed on the task id, with the terminal directory (`done`/`failed`) as
-the outcome and the frontmatter labels recorded (see
-[Monitoring data model](#monitoring-data-model)). So does
-[`ralph status`](#run-state--ralphrun-statejson-and-ralph-status): the loop
-writes its run-state record from both sources, and in folder mode `status`
+Per-task telemetry is the **same stream**: one event per iteration, written by the
+same sidecar, and the same `.ralph/metrics/issues.jsonl` and daily heartbeat
+rollup serve both sources — keyed here on the task id. **Two rows of the
+[event table](#per-issue-stream--ralphmetricsissuesjsonl) answer to the mode
+rather than to GitHub**:
+the `verdict` is the terminal directory (`done` → `pass`, `failed` → `fail`)
+rather than anything read off a label, and `files`/`insertions`/`deletions` stay
+`0` because the `gh` call that would fetch them is skipped — folder mode opens no
+PR, so there is nothing to diff. A task's frontmatter **labels are not part of the
+event**: it has no field for them, and the only labels the loop ever hands the
+sidecar are the ones the `github` arm reads off the issue.
+[`ralph status`](#run-state--ralphrun-statejson-and-ralph-status) serves both
+sources as well: the loop
+writes its run-state record from both, and in folder mode `status`
 counts the queue off the local `.ralph/tasks/` tree — no `gh` call, in keeping
 with the rest of the mode.
 
@@ -967,10 +977,10 @@ back off, comments the commit SHA, and transitions it to
 [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where that knob
 names a status the project's workflow accepts. A ticket the agent did **not** finish
 is swept by the loop instead: it reads the labels back off the board and gives anything
-that is not `done` the `failed` label, `in-progress` off. What is still missing is the
-per-ticket telemetry — and what `ralph start` does around the loop has not moved with
-it either. [Both have a section of their own](#what-is-still-githubs) at the bottom of
-this one.
+that is not `done` the `failed` label, `in-progress` off. The iteration is recorded too —
+one issue event per ticket, carrying the key. What has **not** moved with the arm is what
+`ralph start` does around the loop. [That has a section of its
+own](#what-is-still-githubs) at the bottom of this one.
 
 > **⚠️ None of this has been run against a live Jira.** Every Jira surface is unit-
 > and stub-tested — the composed query, the queue count, the ticket selection, the
@@ -1288,21 +1298,33 @@ is still GitHub's count.
 
 And one consequence you will see rather than infer: `ralph status`'s `progress` line
 counts the tasks this run has **completed**, read back out of
-[`issues.jsonl`](#per-issue-stream--ralphmetricsissuesjsonl) — and **nothing appends a
-task event under this source**: the ticket does get worked, but the per-ticket telemetry
-that would record it is a follow-up, so the only two arms that append an event are
-`folder` and `github`. So a `jira` run reads `0` completed for its whole life against a
-denominator that is the Jira depth, with the ticket in hand as the one task in flight.
-That task is named by its **key** (`FOO-123`) rather than a `#number`, in the progress
-line and in the per-task table
-under it, and by the key alone: the run state records the key, not the summary the
-selection read. Every other place a human is told which task this was follows the
+[`issues.jsonl`](#per-issue-stream--ralphmetricsissuesjsonl) — and this arm appends one
+event per ticket, so that count climbs for a `jira` run exactly as it does for the other
+two, against a denominator that is the Jira depth, with the ticket in hand as the one task
+in flight. That task is named by its **key** (`FOO-123`) rather than a `#number`, in the
+progress line and in the per-task table
+under it — the rows a **finished** ticket leaves behind included, because the event carries
+the key too — and by the key alone: the run state records the key, not the summary the
+selection read. The places that name a task a run has *finished with* mostly follow the
 same rule — the `last task` row on the report card a killed run leaves behind, and
-the task [`ralph digest`](#quick-start) narrates. The derived `#number` is left where
+the task [`ralph digest`](#quick-start) narrates — with two exceptions, both named below.
+The derived `#number` is mostly left where
 machines read it: `current.number` in
-[the record itself](#run-state--ralphrun-statejson-and-ralph-status), and
+[the record itself](#run-state--ralphrun-statejson-and-ralph-status),
 [`ralph status --json`](#machine-readable-output--ralph-status---json)'s
-`tasks.current.number`, whose key set is frozen.
+`tasks.current.number`, whose key set is frozen, and each event's `issue_number`.
+
+**Two human surfaces still show that number**, and both are summary lines a command builds
+out of the events rather than out of the run record. `ralph cycle`'s summary builds its
+`OK:`/`FAIL:` lists from the events' `issue_number`, and it both prints the line and
+sends it as the run's notification — so a Jira cycle reports `OK: #123` for a ticket called
+`FOO-123`. That is the line the **command** composes from the events, not the `OK:`/`FAIL:`
+line the loop script prints at the end of a run, which holds the keys themselves
+(`OK: #FOO-123`). The report card's `outcome` row is the other: its failed list is drawn
+from the same field, so one card carries `outcome    1 ok · 2 failed  — #123` and, further
+down, `last task  FOO-123` — the same ticket, spelled both ways. Rendering either list from
+the key the event now carries is a follow-up, and one worth doing to both at once; the
+counts beside them are right, and so is the cycle's exit code.
 
 **One path is still derived from that number rather than from the key, and under this
 source it points at the wrong file.** `ralph digest` picks the per-task transcript it
@@ -1349,10 +1371,19 @@ Neither label comes back off by itself — a swept ticket is yours to re-open, a
 carries no comment when the agent died before writing one, so the per-ticket log in
 `logs/` is the record of what happened.
 
-What is **not** wired is the **telemetry**, and it is a follow-up: no per-ticket issue
-event is appended under this source, so `ralph status` and the digest have no
-per-iteration Jira record to narrate. The end-of-run summary does name the tickets it
-worked, by key, under `OK:` and `FAIL:`.
+**The telemetry is wired**, and it is the loop's own: after the sweep, each iteration
+appends one issue event to `.ralph/metrics/issues.jsonl` carrying the ticket key as
+`task_key`, the number derived from it as `issue_number`, and the same agent, duration,
+cost, turn-count, model and context-window fields every other source records. The
+iteration's two log files are **inputs** to that, not fields of it: the sidecar reads the
+raw stream and the stderr log it wrote to get the figures above and the error-signal count
+beside them, and records what it counted rather than where it read it. So `ralph status`
+counts a Jira run's completed tickets and names them by key, the idle report card can tally
+an interrupted one off its events, and `ralph cycle` gets the `N ok, N failed` it decides
+its exit code with. It is a **sidecar**: every write runs with `|| true` and exits 0
+whatever happens, so an unwritable `.ralph/` costs the run its record and nothing else.
+The end-of-run summary the loop prints names the tickets it worked, by key, under `OK:` and
+`FAIL:`.
 
 The loop itself is clean of GitHub: no `gh` command runs in a `jira` iteration, and
 the run records `jira` as its
@@ -1741,7 +1772,7 @@ be committed. Re-running `ralph init` never overwrites it.
 | `RALPH_CODEX_MODEL`   | unset (ships commented-out)          | Model id for the Codex agent (ignored when `RALPH_AGENT=claude`). Unset/empty lets Codex use its configured default and leaves the telemetry `model` field `null`. Example: `RALPH_CODEX_MODEL="gpt-5-codex"`. It is also the model the identity box [`ralph start`](#quick-start) opens with names on a Codex project — ``agent   codex — gpt-5-codex (configured)`` — and the tag is literal: for Codex this value *is* the answer, so the metrics log is never consulted for that row (Codex's stream carries no model id, so the log would hold nothing but a staler copy of this same value). Unset, the row reads ``codex — model resolves at first run`` and names no model at all. |
 | `RALPH_DIGEST_INTERVAL` | `""` (off)                         | How often the digest narrates while the loop works. Empty (the default `ralph init` writes) or any spelling of zero (`0`, `0m`) means no digest at all — nothing here costs a model call until you ask for one. Set an interval and `ralph start` opens a second tmux window named `digest` running `ralph digest --loop` on it, next to the loop's window; `ralph stop` takes both down (see [`ralph digest`](#quick-start)). Same duration grammar as [`ralph schedule install --interval`](#scheduling-ralph-macos-launchd): a whole number with an optional single-letter unit — `60` (bare = seconds), `30m`, `2h`, `1d`. A fraction (`0.5h`) is rejected, as is anything longer than a JS timer can wait (`24d` is the ceiling). A rejected value costs the digest and never the launch: a warning on stderr, `NOT running` on the box's digest line, loop unaffected. Read by two commands, on one shared rule: `ralph start` opens the window with it, and [`ralph status`](#the-digest-section) measures a narration's staleness against it — twice this interval late reads `stale`, falling back to a 30-minute interval (so an hour late) when the value is empty, zero or refused. A scheduled `ralph cycle` neither reads it nor opens a window. |
 | `RALPH_DIGEST_MODEL`  | unset (ships commented-out)          | Model the digest asks for its narration — unset means the cheap per-agent default (`haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`). It is primarily an [environment variable](#environment-variables), and that row is the full behavior; the reason it appears in this file too is the digest **window**: `ralph start` text-parses this assignment out of `ralph.config.sh` and forwards it (with `RALPH_AGENT`) into the window it opens, so a repo can fix its digest's model without exporting anything. A `ralph digest` you run yourself reads the process environment only, so export it or prefix it on the command line. |
-| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today **works a ticket and records on the board what became of it**: the queue depth, the ticket and the claim all come from your Jira project by running [`JIRA_JQL`](#the-eligibility-query--jira_jql) through Atlassian's `acli` — each iteration selects the oldest eligible ticket, records it, labels it `in-progress`, and hands the key to the agent, which reads the work item itself and commits straight to `DEV_BRANCH` with no branch, no PR and no push, then labels the ticket `done`, takes `in-progress` back off, comments the commit SHA, and transitions the ticket to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where that knob names a status the project's workflow accepts. A ticket the agent did **not** finish is swept by the loop rather than by the agent — after the dispatch returns it reads the ticket's labels back off the board and gives anything that is not `done` the `failed` label with `in-progress` removed, warning on stderr — so a killed, crashed or idle invocation can never leave the loop spinning on the same ticket. What is **not** wired is the telemetry: no per-ticket event is appended under this source at all. The loop runs no `gh` command. `ralph start` has not moved with the loop: it still demands an authenticated `gh` and still counts GitHub issues to decide whether to launch, so its number can differ from `ralph status`'s and it can refuse to start over an empty GitHub queue. [`ralph doctor`](#the-jira-source-today) also asks for `acli` instead of `gh` here and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. **That holds for the commands, not for the loop:** `ralph start`, `status`, `cycle` and `doctor` lowercase and trim this value, while the loop's own dispatch compares it exactly — so `TASK_SOURCE=JIRA` has the commands reading Jira while the loop works GitHub. A known divergence, older than the `jira` source (`FOLDER` behaves the same way), pinned in the test suite and left for its own fix; write the value in lower case. Set by `ralph init --source <name>`; the interactive picker offers `github` and `folder` only, so `jira` is flag-only. This file is read **first** and the environment only where this file does not assign the name at all — the loop *sources* it with `set -a`, and `ralph start`, `ralph status` and `ralph doctor` resolve it the same way round. See [Choosing the task source](#choosing-the-task-source). |
+| `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today **works a ticket and records on the board what became of it**: the queue depth, the ticket and the claim all come from your Jira project by running [`JIRA_JQL`](#the-eligibility-query--jira_jql) through Atlassian's `acli` — each iteration selects the oldest eligible ticket, records it, labels it `in-progress`, and hands the key to the agent, which reads the work item itself and commits straight to `DEV_BRANCH` with no branch, no PR and no push, then labels the ticket `done`, takes `in-progress` back off, comments the commit SHA, and transitions the ticket to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where that knob names a status the project's workflow accepts. A ticket the agent did **not** finish is swept by the loop rather than by the agent — after the dispatch returns it reads the ticket's labels back off the board and gives anything that is not `done` the `failed` label with `in-progress` removed, warning on stderr — so a killed, crashed or idle invocation can never leave the loop spinning on the same ticket. The iteration **is** recorded: the loop appends one per-ticket event to `.ralph/metrics/issues.jsonl` carrying the ticket key as `task_key` beside the numeric `issue_number` derived from it, so `ralph status`'s completed count and `ralph cycle`'s `N ok, N failed` account for a Jira run like any other — best-effort, so a telemetry failure costs the run its record and never its outcome. The loop runs no `gh` command, telemetry included. `ralph start` has not moved with the loop: it still demands an authenticated `gh` and still counts GitHub issues to decide whether to launch, so its number can differ from `ralph status`'s and it can refuse to start over an empty GitHub queue. [`ralph doctor`](#the-jira-source-today) also asks for `acli` instead of `gh` here and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. **That holds for the commands, not for the loop:** `ralph start`, `status`, `cycle` and `doctor` lowercase and trim this value, while the loop's own dispatch compares it exactly — so `TASK_SOURCE=JIRA` has the commands reading Jira while the loop works GitHub. A known divergence, older than the `jira` source (`FOLDER` behaves the same way), pinned in the test suite and left for its own fix; write the value in lower case. Set by `ralph init --source <name>`; the interactive picker offers `github` and `folder` only, so `jira` is flag-only. This file is read **first** and the environment only where this file does not assign the name at all — the loop *sources* it with `set -a`, and `ralph start`, `ralph status` and `ralph doctor` resolve it the same way round. See [Choosing the task source](#choosing-the-task-source). |
 | `JIRA_JQL`            | `""` (not configured)                | The Jira **eligibility** query, read only under `TASK_SOURCE="jira"` and ignored otherwise: which work items are candidates for Ralph, and nothing about labels or ordering. One query answers both questions the source asks — how deep the queue is, and which ticket is next — so a count and a selection can never disagree about what is eligible. **Ralph appends its own half and you cannot turn that off** — your clause is wrapped in parentheses (so an `OR` in it keeps its meaning against the `AND` that follows), then `AND (labels NOT IN (in-progress, done, failed, do-not-ralph) OR labels IS EMPTY)`, then the ordering. Three of those four labels are Ralph's own writes — `in-progress` when it claims a ticket, `done` when the agent records one as complete, `failed` when the loop sweeps one the agent did not finish — so claiming is what makes the next pass skip work in flight, completing is what makes the queue drain rather than hand a resolved ticket out again, and the sweep is what makes it drain even when the agent recorded nothing at all. `do-not-ralph` is the one label here Ralph never writes: that one is yours, for a ticket you want the loop to leave alone. A trailing `ORDER BY` of yours is **relocated, not refused** — Jira requires it last, so it is cut off, the exclusion is inserted, and your ordering goes back verbatim at the end; write none and you get `ORDER BY created ASC`, the analog of `github` mode's `sort:created-asc`. Empty means **not configured**, deliberately not "everything": Ralph's half alone would select every work item on the Jira site, so a blank value counts nothing, spawns no `acli`, selects nothing (a loop started with it prints `Queue empty, exiting.` on its first pass), and leaves `ralph status` reporting `queue      unknown` while `ralph cycle` exits saying the queue is empty. Config-**only**, with no environment fallback beside it, unlike `TASK_SOURCE`: an eligibility query is a property of the repository, and since the template ships this assignment empty, `set -a` would export that blank into every child the loop spawns. A value containing a `#` needs **single** quotes — `JIRA_JQL='summary ~ "#123"'` — because the file is text-parsed rather than sourced and a `#` after a closing double quote is taken for a comment; the truncated query is then rejected by Jira, which costs you the count. `ralph doctor` never reads this line. See [The eligibility query](#the-eligibility-query--jira_jql). |
 | `JIRA_DONE_STATUS`    | `""` (do not transition)             | The status Ralph asks Jira to move a ticket to once the work is committed, read only under `TASK_SOURCE="jira"` and ignored otherwise — the third of the three writes a completion makes, beside the `done` label and the comment carrying the commit SHA. **There is no default because no name is right everywhere:** status names come from your project's own workflow (`Done` on one board, `Resolved`, `Closed`, `Complete` or `Ready for Release` on the next), so write yours exactly as that workflow spells it, capitalisation included — `JIRA_DONE_STATUS="Done"`. **Empty or unset means "do not transition"**, and is not an error: Ralph skips the move, warns once on stderr, and still labels and comments. **A refused transition costs you a board move and never the run** — a workflow can decline the move for reasons Ralph can neither see nor satisfy (no transition to that status from where the ticket sits, a required field, a validator), and when it does Ralph warns on stderr naming the ticket and the status, then finishes the job anyway: it still labels the ticket `done`, still comments the SHA, and still counts the ticket as resolved. What you are left with is one ticket to move by hand, and the warning says which. **The label is what actually drains the queue**, which is why the transition is allowed to fail: Jira labels are freeform and no workflow rule can veto one, and `done` is in the exclusion Ralph appends to [`JIRA_JQL`](#the-eligibility-query--jira_jql), so a completed ticket stops being eligible whatever the board's status column says. A `done` label that could **not** be written is the one failure that fails a completion — it is the only outcome that leaves a resolved ticket in the queue — and Ralph says so, both on stderr and in the exit code. **No `ralph` command reads this line**: not `doctor`, not `status`, not `cycle`. Its only transport is the loop *sourcing* `ralph.config.sh` with `set -a`, which exports the assignment into the agent's environment, where `lib/jira-queue.js complete` reads it. See [Recording a ticket as done](#recording-a-ticket-as-done--jira_done_status). |
 | `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. |
@@ -2258,14 +2289,15 @@ raw-output sidecar:
 | Path | Contents |
 | --- | --- |
 | `.ralph/metrics/issues.jsonl` | One appended `RALPH_ISSUE_EVENT <json>` line per iteration. **Append-only** — events accumulate across runs and are never truncated. Maps to the future `issues` table. |
-| `logs/ralph-issue-N.jsonl` | The agent's raw JSON stdout for that issue, tee'd verbatim (Claude's `stream-json`, or Codex's `codex exec --json` JSONL). Truncated fresh per issue. |
+| `logs/ralph-issue-N.jsonl` | The agent's raw JSON stdout for that issue, tee'd verbatim (Claude's `stream-json`, or Codex's `codex exec --json` JSONL). Truncated fresh per issue. Under [`TASK_SOURCE="jira"`](#the-jira-source-today) the name comes from the **ticket key** rather than a number — `logs/ralph-issue-FOO-123.jsonl` — and the event's fields are parsed from that file, so the two agree. |
 
 Each event line is the tag `RALPH_ISSUE_EVENT ` followed by a JSON object
 with these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `issue_number` | The issue resolved this iteration. |
+| `issue_number` | The task this iteration worked, as a **number**: the GitHub issue under `github`, the numeric task id under `folder`, and under `jira` the number **derived** from the ticket key (`FOO-123` → `123`, see the [`jira` source](#the-jira-source-today)) — `null` when there is none to read, which for a Jira key the grammar does not recognise is a real case. Two projects' tickets can share a number (`FOO-1`, `BAR-1`); that is accepted, because a `JIRA_JQL` is normally scoped to one project and the key beside it is the identity. |
+| `task_key` | The Jira ticket key this iteration worked (`FOO-123`), recorded verbatim — the spelling a reader recognises on the board, beside the number derived from it. **Present only under `jira`**: a `github` or `folder` event has no such concept and carries **no such field** rather than a `null` one, so their key set is byte-for-byte what it has always been. |
 | `run_id` | The [join key](#run_id--the-join-key) — ties every issue event from one loop invocation to its run. |
 | `ts` | Event timestamp (epoch milliseconds). |
 | `agent` | The **resolved** coding agent that produced the event: `claude` or `codex`. A `RALPH_AGENT` typo records the fallback (`claude`), so a misconfiguration stays auditable. |
@@ -2274,10 +2306,10 @@ with these fields:
 | `num_turns` | Number of turns in the iteration. |
 | `duration_ms` | Wall-clock duration for the iteration. Claude self-reports it in its `result` line; **Codex's stream carries no duration**, so the loop supplies its own measured wall-clock time (`RALPH_DURATION_MS`). |
 | `usage` | The four raw token counts, broken out: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (each zeroed if absent). **For Codex**, `reasoning_output_tokens` are folded into `output_tokens` (they are billable output and dominate even trivial turns; the raw split stays in the `.jsonl` sidecar), `cached_input_tokens` map to `cache_read_input_tokens`, and `cache_write_input_tokens` map to `cache_creation_input_tokens`. |
-| `claude_exit_code` | The agent's exit code for the iteration. (The field name is kept verbatim for both agents so the schema is unchanged.) |
+| `claude_exit_code` | Whether the agent failed, as `1` or `0` — a **flag, not a status**. The loop reduces the agent's real exit code to non-zero/zero before the sidecar ever sees it, so an invocation killed on `127` records `1` exactly like one that exited `1`; what actually killed it is in that iteration's `logs/ralph-issue-*.log`, teed there as it happened. All three task sources hand over the same variable, so the field means the same thing in every event. (The field name is kept verbatim for both agents so the schema is unchanged.) |
 | `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
-| `verdict` | `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. |
-| `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. |
+| `verdict` | Under `github`: `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. Under `folder` and `jira` the **outcome the loop read back** decides instead, and it overrides the labels entirely — the terminal task directory there, the ticket's own label here — with `done` → `pass`, `failed` → `fail`, and anything else `unknown`. One mapping serves both, so the two sources cannot drift apart. |
+| `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. **Only `github` is asked**: `folder` and `jira` commit straight to `DEV_BRANCH` and open no PR, so the `gh` call is skipped rather than left to fail its way to the same zeros — which is what lets a machine with no `gh` at all write a complete event. |
 | `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The input side of the **most recent** model request: for Claude, the sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage); for Codex, the same sum taken from the last `turn.completed` usage. `0` when no usage is present. |
 | `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (see [`RALPH_CONTEXT_WINDOW`](#configuration-reference) for the Anthropic + OpenAI/Codex maps) or from the override. |
 | `model` | The resolved model id. For Claude it comes from the last `message_start`. **Codex's stream carries no model id**, so this is the configured [`RALPH_CODEX_MODEL`](#configuration-reference), or `null` when that is unset — Ralph never guesses. This is the one field of this stream with a reader outside the metrics: the `agent` row of the identity box [`ralph start`](#quick-start) opens with reads it back out of the **newest** event in this file to report which model the last run used, which is why that row is tagged `(last run)` rather than presented as a promise about the run about to start. It does so for Claude only — a Codex row is served straight from `RALPH_CODEX_MODEL`, because what is recorded here for a Codex run is that same configured value, one run staler. |

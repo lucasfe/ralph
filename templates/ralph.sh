@@ -507,9 +507,21 @@ while :; do
     # that most needs sweeping is the one that DIED, and a dead agent writes nothing.
     # See the outcome branch below the dispatch.
     #
-    # What is still missing is per-ticket telemetry (#131): no RALPH_ISSUE_EVENT line
-    # is appended under this source, which is why nothing here reads `claude_failed`
-    # even now that the outcome is known.
+    # AND THE ITERATION IS RECORDED (#131): once the outcome is known, one
+    # RALPH_ISSUE_EVENT line goes into .ralph/metrics/issues.jsonl carrying the ticket
+    # key, so `ralph status`, the idle report card, `ralph digest` and `ralph cycle`'s counts
+    # can all see a Jira iteration. (`ralph digest` reaches it INDIRECTLY: it collects the
+    # same status snapshot `ralph status --json` prints, which for a live run is built from
+    # this file, so the completed count and task rows in its prompt come from these events.
+    # Its per-task TRANSCRIPT path is a separate matter and still derived from the number —
+    # see lib/jira-key.js.) That event is the one place `claude_failed` is read
+    # in this arm — and what it records is a FAILURE FLAG, not the agent's exit status:
+    # run_agent_stream reduces ${PIPESTATUS[1]} to 1 or 0 before this ever sees it (see its
+    # header), so an agent that died on 127 is recorded as `claude_exit_code: 1` exactly
+    # like one that exited 1. All three arms pass this same variable to the sidecar, so the
+    # field means the same thing in every event and the lost detail is lost identically —
+    # what actually killed an invocation is in its own log, teed there as it happened.
+    # Either way it is never the verdict, which the board decides.
     #
     # The claim adds the `in-progress` label, which is the label the composed query
     # EXCLUDES (lib/jira-jql.js), so a claimed ticket drops out of the next count
@@ -580,7 +592,21 @@ while :; do
     # so passing it would collapse every ticket onto `logs/ralph-issue-.log`. One log
     # per task, no per-role logs — the same rule the other two sources follow.
     task_log_handle="${task_key//[^A-Za-z0-9._-]/_}"
+
+    # TIMED, and this arm has to do its own timing (#131). The `issue_start_ms` /
+    # `issue_end_ms` pair that serves the other two sources sits AFTER this block's
+    # `continue`, and TASK_SOURCE is fixed before the loop starts — so a jira run never
+    # reaches that pair at all, and before #131 a jira iteration measured no wall clock
+    # whatsoever. Without this pair the telemetry below would have nothing but an unset
+    # variable to report. It is the same second-resolution `date +%s000` the other arms use,
+    # so the field means the same thing
+    # in every event; sub-second iterations therefore measure 0, which is what the sidecar
+    # reads as "no wall clock to fall back on" (a Claude run's own reported duration wins
+    # anyway — the fallback exists for Codex, whose stream reports none).
+    issue_start_ms=$(date +%s000)
     run_agent_for_issue "$task_log_handle"
+    issue_end_ms=$(date +%s000)
+    issue_dur_ms=$(( issue_end_ms - issue_start_ms ))
 
     # THE OUTCOME, READ OFF THE BOARD (#130) — jira mode's forward-progress guarantee,
     # and the structural twin of the folder arm's sweep below.
@@ -621,12 +647,38 @@ while :; do
     # whatever the source names its work, and in this mode that is `FOO-123` rather
     # than a number, which is also how the iteration line and the run record name it.
     #
+    # Best-effort per-ticket telemetry (#131): capture one RALPH_ISSUE_EVENT line into
+    # .ralph/metrics/issues.jsonl, the same stream the other two sources append to.
+    # TASK_SOURCE=jira makes the sidecar record RALPH_TASK_KEY as the event's `task_key`
+    # and DERIVE the numeric `issue_number` from it (`FOO-123` → 123, lib/jira-key.js), read
+    # the verdict off RALPH_TASK_OUTCOME exactly as folder mode does (done => pass,
+    # failed => fail — and `$outcome` is provably one of those two by here), and skip the gh
+    # PR-diff call entirely, since this arm opens no PR. Telemetry failure MUST NEVER abort
+    # the loop, hence `|| true`.
+    #
+    # THE LOG PATHS USE $task_log_handle, NOT $num. `$num` is deliberately empty in this mode
+    # (see the selection arm), so the folder arm's `logs/ralph-issue-$num.*` would hand the
+    # sidecar `logs/ralph-issue-.jsonl` — a file nothing wrote — and every field parsed out of
+    # the stream would silently read as a zero. The handle is what named these two files a few
+    # lines up, so it is what can find them again.
+    TASK_SOURCE="jira" \
+      RALPH_TASK_KEY="$task_key" \
+      RALPH_TASK_OUTCOME="$outcome" \
+      RALPH_RUN_ID="$RALPH_RUN_ID" \
+      RALPH_CLAUDE_EXIT="$claude_failed" \
+      RALPH_DEV_BRANCH="${DEV_BRANCH:-}" \
+      RALPH_RAW_JSONL_PATH="logs/ralph-issue-$task_log_handle.jsonl" \
+      RALPH_STDERR_LOG_PATH="logs/ralph-issue-$task_log_handle.log" \
+      RALPH_AGENT="${RALPH_RESOLVED_AGENT:-claude}" \
+      RALPH_CODEX_MODEL="${RALPH_CODEX_MODEL:-}" \
+      RALPH_DURATION_MS="$issue_dur_ms" \
+      node "$RALPH_PKG_DIR/lib/capture-issue-event.js" || true
+
     # A SECOND `if` ON A VARIABLE THAT NOW HOLDS ONE OF TWO WORDS, and it is the folder
     # arm's shape rather than a second test: after the block above, `outcome` is
     # provably `done` or `failed`, so this can only take the branch already decided.
-    # The folder arm below writes it exactly this way because its per-task TELEMETRY
-    # block sits in the gap between the two, reading `$outcome` — which is where #131
-    # will put this arm's, so the split stays where the twin keeps it.
+    # The folder arm below writes it exactly this way for the same reason this one does:
+    # the per-task TELEMETRY block sits in the gap between the two, reading `$outcome`.
     if [ "$outcome" = "done" ]; then
       successes+=("$task_key")
     else

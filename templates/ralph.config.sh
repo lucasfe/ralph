@@ -52,10 +52,17 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # and it is a LABEL for the same reason: no workflow rule can refuse one. The per-ticket
 # log (`logs/ralph-issue-<KEY>.log`) is where the attempt itself is recorded in full.
 #
-# WHAT IS STILL MISSING IS THE PER-TICKET TELEMETRY: no issue event is appended under this
-# source, so `ralph status` and the digest cannot narrate a Jira iteration the way they do
-# a GitHub one. The end-of-run summary does name the tickets under OK and FAIL — by key,
-# carrying github mode's `#` prefix (`OK: #FOO-123`), since one line serves all sources.
+# AND THE ITERATION IS RECORDED. Once the outcome is known, the loop appends one issue
+# event to `.ralph/metrics/issues.jsonl` — the same stream the other two sources write —
+# carrying the TICKET KEY as `task_key` beside the number derived from it, the outcome as
+# the verdict, and the agent, duration, cost, model and context window of the run. The
+# per-ticket logs are what it READS to get those — the paths themselves are not recorded. So
+# `ralph status` counts a Jira run's completed tickets and names them by key, and
+# `ralph cycle` gets the `N ok, N failed` it sets its exit code from. It is a SIDECAR: the
+# write is `|| true` and exits 0 whatever happens, so an unwritable `.ralph/` costs the run
+# its record and never its outcome. The end-of-run summary names the tickets under OK and
+# FAIL — by key, carrying github mode's `#` prefix (`OK: #FOO-123`), since one line serves
+# all sources.
 #
 # THE COMMANDS THAT START THE LOOP have NOT moved with it either, and BOTH of them still
 # want `gh`: `ralph start` and `ralph cycle` each abort unless `gh auth status` succeeds,
