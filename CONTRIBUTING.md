@@ -339,6 +339,102 @@ delegation instructions differently — just keep the shared structure in lockst
   live Jira; do not upgrade that claim until a real run against a real project has
   happened (#136).
 
+## Task-source modules: the `folder` and `jira` queues
+
+`TASK_SOURCE` is resolved in **one** pure place, `lib/task-source.js` — `VALID_SOURCES`
+is `['github', 'folder', 'jira']`, `DEFAULT_SOURCE` is `github`, and anything unset,
+blank or unrecognised falls back to the default so a typo never aborts a run. Read its
+header before adding a fourth name: a value that used to fall back to `github` arrives at
+every `resolveSource` caller as *itself*, so a gate spelled `=== 'github'` silently stops
+firing for it. `worksThroughGitHub(source)` is the allowlist that exists because of that
+lesson — prefer it to a `!== 'folder'` chain, so a new source gets the safe answer by
+default and has to opt **in** to GitHub's bookkeeping.
+
+`github` needs no queue module of its own — the loop shells out to `gh` directly. The
+other two each get one, and they are **structural mirrors**: a library API for the JS
+commands, plus a `node <module>.js <verb>` CLI so neither `templates/ralph.sh` nor the
+orchestrator prompt has to hold queue knowledge of its own.
+
+- `lib/folder-queue.js` — the `.ralph/tasks/` queue. `queueCount` / `queuePick` /
+  `locateTask` plus the status moves, over the four `afk` status directories and the
+  human-only `hitl` lane. Its seam is an **injectable `fs`** (`{ fs }`), which
+  *does* default to `node:fs`, so a test drives it against memfs.
+- `lib/task-file.js` — the pure half of folder mode: `parseTaskFile` (the YAML-ish
+  frontmatter), `taskIdFromFilename` and `nextTaskNumber`. No I/O.
+- `lib/jira-queue.js` — the **verbs and their policy** for the Jira queue:
+  `queueCountResult` / `queueCount`, `queuePick`, `claimTask`, `completeTask`,
+  `commentTask`, `locateTask`, `failTask`, `titlesFor`. It holds no `acli` spelling — it
+  holds *what a failure means for a queue*, which is where the interesting decisions
+  live. Read the header for the two that a change is most likely to break: every label
+  write is **read-then-union** (a bare `--labels` write would wipe a team's labels if
+  `--labels` turns out to replace rather than append, and nothing here can find out
+  which), and `ok: false` on `completeTask`/`failTask` means **only** that the terminal
+  label could not be written — a refused transition and a stuck `in-progress` are
+  warnings on `stderr` and a successful write.
+- `lib/jira-jql.js` — **pure JQL composition, no I/O.** `composeJiraJql` wraps the user's
+  `JIRA_JQL` in parentheses, appends `JIRA_LABEL_EXCLUSION`, and appends
+  `JIRA_DEFAULT_ORDER_BY` (`ORDER BY created ASC`) unless the user's clause ends with an
+  ordering of its own, in which case that ordering is cut off and put back verbatim last.
+  It also **owns the three label constants** — `JIRA_IN_PROGRESS_LABEL`,
+  `JIRA_DONE_LABEL`, `JIRA_FAILED_LABEL` — and that is deliberate rather than incidental:
+  the module that composes the query which *excludes* a label is the module that names it,
+  so the write and the exclusion cannot drift into a loop that hands the same ticket out
+  forever. An empty value is a **refusal** (`ok: false`), never a permissive default,
+  because Ralph's half alone selects every work item on the site.
+- `lib/jira-key.js` — the key grammar, `/^([A-Za-z][A-Za-z0-9_]*)-(\d+)$/`, and **two
+  deliberate postures** that a change must not collapse into one. STRICT (`isJiraKey`,
+  `normalizeJiraKey`, `numberFromKey`) refuses anything the grammar does not recognise,
+  and is what guards the one place a key becomes **query syntax** (`titlesFor`'s
+  `key IN (…)`). PERMISSIVE (`usableJiraKey`) passes any non-blank string through,
+  because everywhere else the key is the *subject* of an `acli` call in its own argv slot
+  — refusing a project key Ralph's regex has never seen would be Ralph overruling the
+  board.
+- `lib/jira-acli.js` — the argv layer and the spawn seam; see [Jira maturity](#jira-maturity--the-stub-is-the-only-jira-ralph-has-met)
+  above, which is the section that governs edits to it.
+- `lib/jira-auth.js` — `probeJiraAuth`, the one `acli jira auth status` invocation, shared
+  by `ralph doctor`'s `jira auth` row and `ralph cycle`'s preflight. **Sharing the
+  function and not just the argv is the guarantee**: the diagnostic cannot report
+  `✓ jira auth` on a machine where the cycle refuses to start.
+
+### Testing them: injected `exec`, and never a real `acli`
+
+Every Jira module that spawns takes its process spawner as an **injected `exec`, with no
+default** — `jira-queue.js`, `jira-acli.js` and `jira-auth.js` all do. Two properties
+depend on that and both are pinned:
+
+- **No importer gains a spawner.** A defaulted parameter would need a module-scope
+  `import { execa }`, which would put execa on the import graph of every importer —
+  including a command that only wanted the pure count. So callers hand the spawner down
+  (`lib/commands/status.js` and `lib/commands/cycle.js` each default their own
+  `exec = execa`; `bin/ralph.js` injects one for `doctorCommand`), and `jira-queue.js`
+  names `execa` exactly once, as a **dynamic** import inside its CLI verb.
+  `lib/jira-queue.qa.test.js` pins the static import list to
+  `['./jira-acli.js', './jira-jql.js', './jira-key.js', 'node:path', 'node:url']` and
+  asserts those three are **edgeless** — they import nothing at all. Adding a name to
+  that import list means updating the pin; do not reflow an `import` line in
+  `jira-queue.js`, because the pin reads the specifier off every line beginning
+  `import ` and a wrapped statement makes it throw rather than fail.
+- **`ralph doctor` stays reachable-from-nothing.** `lib/jira-queue.js` must not appear on
+  doctor's import graph at all — `lib/commands/doctor.version-line.qa.test.js` extracts
+  dynamic specifiers as well as static ones and greps every file on the graph for the
+  token `execa`, so the laziness above is a runtime property and not a pass. A diagnostic
+  that wants Jira knowledge imports `./jira-jql.js` or `./jira-acli.js`, both pure and
+  edgeless; anything needing a live count belongs behind an injected seam.
+
+**No test may invoke the real `acli`, ever** — the standing rule from
+[Jira maturity](#jira-maturity--the-stub-is-the-only-jira-ralph-has-met), restated here
+because it is a rule about *tests* and not about documentation. Four of the eight `acli`
+invocations write to somebody's live board, and there is no `acli` in CI. Unit tests pass
+a fake `exec` and assert the argv it was handed. The tests that must exercise a real
+spawn — `lib/jira-queue.qa.test.js`'s CLI-footer suite and
+`test/loop.jira.adversarial.test.js`, which drives the whole bash arm end to end — write
+a **bash script named `acli` into a temp directory and put that directory on `PATH`**
+(the CLI-footer suite makes it the *only* entry; the loop test prepends it), so the real
+CLI is not what gets run, and the stub records every argv it was handed. The stub never
+comes off `PATH`, not even in the test about a missing binary: that test has the stub
+answer the way an absent command does instead. If
+you need to see the real thing, do it by hand against a throwaway project.
+
 ## The sprite banner: generated asset, placeholder art
 
 `ralph start` plays a one-second pixel-sprite splash as its first output on a

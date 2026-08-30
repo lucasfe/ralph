@@ -835,6 +835,30 @@ Ralph draws its work from one **task source** per project, recorded as
   queue. See [The `jira` source today](#the-jira-source-today) for the query Ralph
   composes, what a broken `acli` costs you, and what is still GitHub's.
 
+Side by side, and the row worth reading first is **delivery shape** — it is the one
+that surprises people, because two of the three sources never publish anything:
+
+| | `github` | `folder` | `jira` |
+| --- | --- | --- | --- |
+| Work comes from | open issues on the repo's GitHub board, read with `gh` | numbered `.md` files under the gitignored `.ralph/tasks/` tree | work items on a Jira site, read with Atlassian's `acli` |
+| Eligibility is expressed as | a **fixed search query** inside the generated `ralph.sh` — `state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge` — not a config knob; the pick adds `sort:created-asc` | the **directory** itself: the lowest-numbered file in `afk/todo/` | **your JQL**, in [`JIRA_JQL`](#the-eligibility-query--jira_jql) — eligibility only, with Ralph appending the label exclusion and the ordering |
+| CLI and auth it needs | `gh`, authenticated (`gh auth login`) | **no source CLI at all** — `ralph doctor` skips both `gh` and `acli` | `acli`, logged in (`acli jira auth login`) |
+| **Delivery shape** | an `issue-N` **branch**, **pushed**, with a PR set to **auto-merge** (`gh pr merge … --auto`) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** |
+| Ralph claims work by | the **agent** adding the `claude-working` label to the issue | the **agent** moving the file `afk/todo → afk/in-progress` | the **loop** adding the `in-progress` label to the ticket |
+| Completion is recorded as | the issue reaching `CLOSED` (usually via `Closes #N` on the merge) or carrying `pending-merge` | the file arriving in `afk/done/` | the `done` label, with `in-progress` removed, a comment carrying the commit SHA, and a transition to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where the project's workflow accepts one |
+| Failure is recorded as | the `claude-failed` label | the loop moving the file to `afk/failed/` | the loop adding the `failed` label and removing `in-progress` |
+| The human parking lot is | the `do-not-ralph` label on an issue | the whole [`hitl/` lane](#folder-mode-layout) — release a task by moving its file `hitl/todo → afk/todo` | the `do-not-ralph` label on a ticket |
+| Orchestrator prompt template | `prompt-team.md` (Claude) or `prompt-team-codex.md` (Codex) — picked by **agent** | `prompt-team-folder.md` | `prompt-team-jira.md` |
+
+Two asymmetries in that table are worth stating outright rather than inferring.
+**Only `github` publishes anything** — the other two leave the work as commits on
+`DEV_BRANCH` in the clone Ralph ran in, so pushing or merging it onward is a step you
+take by hand (see [What is still GitHub's](#what-is-still-githubs) for what that means
+on a shared Jira board). And **the `jira` column has never been run against a live
+Jira**: every one of its surfaces is driven against a stubbed `acli`, and the shape of
+`acli` itself is transcribed from Atlassian's documentation rather than measured — see
+[the callout under `The jira source today`](#the-jira-source-today).
+
 Pick the source at `ralph init` time:
 
 ```bash
@@ -1119,6 +1143,20 @@ tighter than `OR`, so appending `AND <exclusion>` to a bare `a OR b` would leave
 every item matching `a` eligible however it is labelled — which is the in-progress
 work the exclusion exists to skip.
 
+**A fifth label matters to a Jira run and is not in this query at all:
+`ralph-heavy`.** The four above are about *eligibility* — they decide which tickets the
+loop may pick — while `ralph-heavy` is about *how hard the team works the ticket it
+already picked*, and it is the orchestrator that reads it rather than the query. A
+ticket carrying it is forced to
+[**Tier 2 / Heavy**](#how-ralph-resolves-issues), the tier that adds the three-explorer
+understand phase and the three-reviewer adversarial panel. The override is **subject to
+`RALPH_HEAVY_TIER`**, which ships `0`: with the flag off, Tier 2 is unavailable and
+triage falls back to Tier 1 whatever the label says. It needs no Jira-specific
+translation — a Jira label is the same first-class field a GitHub label is, and the
+orchestrator reads it out of the same `labels` array it already fetched with the work
+item. So the full label vocabulary of a Jira run is five words: `in-progress`, `done`
+and `failed`, which Ralph writes; `do-not-ralph` and `ralph-heavy`, which you write.
+
 **Ordering is relocated, not refused.** Jira requires `ORDER BY` to be the final
 clause, so a query that ends with one cannot simply have text appended to it: Ralph
 cuts the ordering off, inserts the exclusion into the where-clause, and puts your
@@ -1139,6 +1177,23 @@ therefore counts nothing and runs no `acli` at all. A `jira` init does not leave
 there — it writes the working default above, interactively or under `--source jira`
 — so the empty case is now a config you blanked yourself, or one written by a
 `github`/`folder` init that was later switched over by hand.
+
+**Keep the query inside one project.** A Jira key is Ralph's only identity for a ticket,
+but several record fields predate Jira and are typed as **numbers**, so the loop derives
+one from the key by taking the digits after the hyphen: `FOO-123` becomes
+`issue_number: 123`. That derivation **is not unique across projects** — `FOO-1` and
+`BAR-1` both yield `1` — so a `JIRA_JQL` spanning two projects can conflate two
+different tickets on every surface that publishes the number rather than the key. Three
+do: `ralph cycle`'s `OK:`/`FAIL:` summary (printed *and* sent as the run's
+notification), the interrupted run's report-card `outcome` row, and the transcript path
+[`ralph digest`](#quick-start) quotes — where two tickets sharing a number collide on
+one `logs/ralph-issue-<number>.log`. The surfaces that name a task by its **key** are
+unaffected, because the key is what they print: `ralph status`'s progress line and task
+table, the report card's `last task` row, `ralph digest`'s `TASK` line (its *narration*
+names the key even where its transcript *path* does not), and `ralph status --json`, which
+publishes `tasks.current.task_key` beside the number. The event itself always carries
+both, so nothing is *lost* — but a single-project query is what keeps the number-shaped
+half of that reporting readable, and it is the shape the derivation was accepted for.
 
 Unlike [`TASK_SOURCE`](#configuration-reference), this knob is read from the
 committed file **only**, with no environment fallback beside it. An eligibility
@@ -1417,6 +1472,19 @@ it would in `github` mode: the [comment a completion
 posts](#recording-a-ticket-as-done--jira_done_status), carrying the SHA and the branch,
 is the only record of the work that leaves the machine.
 
+**Read that once more before you point Ralph at a board somebody else reads.** The two
+halves of a Jira iteration land in different places and only one of them is shared: the
+*code* stays on one machine, while the *ticket* moves on a board a whole team is looking
+at. So a ticket Ralph transitioned to `JIRA_DONE_STATUS` and labelled `done` can be
+describing work that exists **nowhere but the clone Ralph ran in** — the board says
+finished, and a colleague pulling the dev branch finds nothing there. That is a
+**deliberate trade-off**, not an oversight: the delivery shape was taken from `folder`
+mode wholesale so that the arm could be built and reasoned about before anything
+published on its own. It is also why the guidance everywhere on this page is to give
+`JIRA_JQL` a narrow, personal scope — `assignee = currentUser()`, which is what a `jira`
+init offers — rather than a shared team board. A private queue makes "the board is ahead
+of the repo" a note to yourself; a shared one makes it somebody else's wrong information.
+
 **Both outcomes are written to the board, and by different processes.** A ticket Ralph
 resolved is labelled `done` with `in-progress` gone and a comment naming the local
 commit — the agent does that itself, because only the agent knows whether the work
@@ -1429,6 +1497,24 @@ queue drains either way and one killed run cannot leave the loop spinning on one
 Neither label comes back off by itself — a swept ticket is yours to re-open, and it
 carries no comment when the agent died before writing one, so the per-ticket log in
 `logs/` is the record of what happened.
+
+**The orphan sweep is GitHub's, and there is no Jira one.** `lib/orphan-cleanup.js` — the
+thing that finds work a dead run left claimed and un-claims it — is spelled entirely in
+`gh`: it lists with `gh issue list --state all --label claude-working …` and clears with
+`gh issue edit N --remove-label claude-working`. So it can only ever repair a **GitHub**
+issue, and running it under this source does nothing for your board (it does still spend
+`gh` — see below). The in-iteration sweep covers the case it was built for: an agent that
+died still gets its ticket labelled `failed`, because that sweep runs after the dispatch
+returns. What it cannot cover is the **loop itself** dying — the tmux session killed, the
+machine rebooted, an `acli` that refused the label write — because then no sweep runs at
+all. The ticket is left carrying `in-progress`, which the eligibility query **excludes**,
+so it is quietly out of the queue and stays there until somebody takes the label off by
+hand. In `github` mode that residue gets cleared for you on the next scheduled pass —
+`ralph cycle` runs this very module and removes `claude-working` from every orphan it
+finds — and `ralph start` at least *names* the affected issues and prints the `gh issue
+edit` to clear them by hand. Neither has a Jira analog. A narrow
+[`JIRA_JQL`](#the-eligibility-query--jira_jql) is what keeps that recoverable: on a board
+you own, a stray `in-progress` is one label you can find.
 
 **The telemetry is wired**, and it is the loop's own: after the sweep, each iteration
 appends one issue event to `.ralph/metrics/issues.jsonl` carrying the ticket key as
