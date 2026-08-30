@@ -312,18 +312,23 @@ delegation instructions differently — just keep the shared structure in lockst
 - **No test has ever spoken to a real Jira site, and none should.** The `acli`
   the suite drives is a bash script on a prepended `PATH`, and it never comes off
   `PATH` — not even in the test about a missing binary, which makes the stub answer
-  the way an absent command does instead. Four of the seven `acli` invocations are
+  the way an absent command does instead. Four of the eight `acli` invocations are
   **writes** to somebody's board — the claim's label, the completion's transition
   and label removal, and the comment (#129) — so this is a standing rule and not a
   gap to close: if you need to see the real thing, do it by hand against a throwaway
-  project, never from the suite. #130's sweep added two verbs and no eighth
-  invocation: `locate` is the claim's label read, and `fail` reuses the label write
-  and the removal, so the count above is still the whole surface.
+  project, never from the suite. #130's sweep added two verbs and no invocation of
+  its own: `locate` is the claim's label read, and `fail` reuses the label write
+  and the removal. The eighth is #132's batch title lookup, which `ralph status`
+  makes **once** for the whole task table however many ticket keys are on it — a
+  **read**, so the four writes above are still all of them, and the eight argv
+  builders in `lib/jira-acli.js` are still the whole surface.
 - **The `acli` interface is transcribed, not measured.** The flag spellings, the
   fields `search` accepts, the ordering assumption behind `--limit 1`, the `--yes`
   on `comment create` (extrapolated from the three writes documented as taking one),
-  and the JSON envelope a work item arrives in are all what Atlassian's
-  documentation describes — or, in that one case, what it does not.
+  the `key IN (…)` title lookup — which passes the ticket count as its own `--limit`
+  precisely because acli's default page size is not something this repo can
+  measure — and the JSON envelope a work item arrives in are all what Atlassian's
+  documentation describes — or, in those cases, what it does not.
   `lib/jira-acli.js` keeps every argv in one place and says so at each one — that
   is where a field-reported usage error is fixed, and the comments naming which
   lines are unmeasured are load-bearing. Do not delete them. `lib/jira-queue.js`
