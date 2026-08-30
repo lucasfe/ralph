@@ -230,10 +230,12 @@ export const STALE_CLAIM_PATTERNS = [
  *
  * DELIBERATELY NARROW, and the constraint bites in two places. Folder mode has a real
  * **failure sweep** of its own that README.md documents (`- The bash loop owns the
- * failure sweep…`), so nothing here may key on that phrase alone. And the honest
- * remaining caveat — "what is still missing is the per-ticket telemetry (#131)" — is
- * written in the same sentence shape as the claims below, so every "missing" pattern
- * here requires the failure half or the sweep as its object.
+ * failure sweep…`), so nothing here may key on that phrase alone. And the caveat that was
+ * honest when this list was written — "what is still missing is the per-ticket telemetry
+ * (#131)" — was written in the same sentence shape as the claims below, so every "missing"
+ * pattern here requires the failure half or the sweep as its object. #131 has since landed
+ * and falsified that caveat too; JIRA_UNRECORDED_CLAIM_PATTERNS below is its sweep, and
+ * the two lists stay disjoint by each binding to its own object.
  */
 export const JIRA_UNSWEPT_CLAIM_PATTERNS = [
   // "…but has no failure half" — the config table's row, and the shortest spelling.
@@ -305,4 +307,61 @@ export const JIRA_AGENTLESS_CLAIM_PATTERNS = [
   /\bnothing is coded\b/i,
   /\b(resolves|resolve|works|work|does|do) no ticket\b/i,
   /\bwork(ed|s|ing)? none of them\b/i,
+]
+
+/**
+ * Sentences that would assert a `jira` iteration records no telemetry event.
+ *
+ * Before #131 that was TRUE — the arm counted, selected, claimed, dispatched and swept, and
+ * appended nothing to `.ralph/metrics/issues.jsonl` — so the caveat was written wherever the
+ * source is described: six hunks of README.md, the `TASK_SOURCE` comment block in
+ * templates/ralph.config.sh, the arm's own comment in templates/ralph.sh,
+ * lib/task-source.js's history paragraph, and lib/progress.js's closed row, which had no
+ * name to show precisely because no event carried one. #131 appends the event, so each of
+ * those now tells a reader their Jira run leaves no record — the opposite of what
+ * `ralph status`'s task table and `ralph cycle`'s counts will show them.
+ *
+ * THE SHAPE OF THIS LIST IS #128's AND #130's, for the reason their headers record: each of
+ * those slices corrected the hunks it could find and left copies standing, because nothing
+ * pinned the prose. Same three surfaces, then — markdown, tracked `.js`, tracked `.sh`.
+ *
+ * DELIBERATELY NARROW, and the constraint bites in three places, all of them sentences this
+ * slice WROTE. `lib/task-source.js` now says the digest and the counts "finally have a
+ * per-iteration record of a Jira run", so the per-iteration pattern is bound to the denial
+ * ahead of it rather than to the phrase. README.md now says the loop "appends one per-ticket
+ * event", so the telemetry patterns are bound to a word of absence. And `lib/jira-key.js`
+ * still describes a real remaining defect — the digest's number-derived transcript path — in
+ * the same sentence shape, so nothing here keys on `follow-up` alone.
+ */
+export const JIRA_UNRECORDED_CLAIM_PATTERNS = [
+  // "What is still missing is the per-ticket telemetry" / "…is a per-ticket telemetry event
+  // (#131)", the caveat's headline, with the absence leading and trailing.
+  /\b(missing|absent|unbuilt|unwired|not wired|no)\b[^.]{0,40}?\bper-ticket (issue )?(telemetry|event)\b/i,
+  /\bper-ticket telemetry\b[^.]{0,30}?\b(missing|absent|unbuilt|unwired|not wired|a follow-?up)\b/i,
+  // "What is NOT WIRED is the telemetry" — the same claim with the noun bare, which is why
+  // this binds to `wired` and never to the word `telemetry` on its own: that word is all
+  // over prose about the sidecar that now exists.
+  /\bnot wired is the telemetry\b/i,
+  // The denial by way of the WRITE, in the four spellings that stood: "no issue event is
+  // appended under this source", "nothing appends a task event under this source",
+  // "nothing appends one under this source", "no RALPH_ISSUE_EVENT line is appended".
+  /\bno (issue|task|per-ticket|per-iteration) event is appended\b/i,
+  /\bnothing appends\b[^.]{0,30}?\b(event|one under)\b/i,
+  /\bnothing records\b[^.]{0,40}?\btelemetry\b/i,
+  /\bno RALPH_ISSUE_EVENT line is appended\b/i,
+  // "the only two arms that append an event are `folder` and `github`" — the claim made by
+  // COUNTING the arms, which is the shape that survives a grep for the word it never uses.
+  /\bonly two arms\b/i,
+  // The consequence clauses, which deny the event without naming it.
+  /\b(have|has|with) no per-iteration\b/i,
+  /\bcannot narrate a jira iteration\b/i,
+  /\breads 0 completed\b/i,
+  // lib/progress.js's closed row: "records `issue_number` and nothing else to name a task
+  // by" — the same denial from the READER's side, in the module that draws the row, and the
+  // one copy that named neither Jira nor telemetry.
+  /\bnothing else to name a task by\b/i,
+  // And the FUTURE TENSE, which is its own kind of stale: "#131 will put this arm's
+  // telemetry block in the gap" was a promise, and a promise that has been kept reads as one
+  // still outstanding. Bound to a verb so a reference to the slice itself stays sayable.
+  /#131 (will|would|is going to) \w+/i,
 ]

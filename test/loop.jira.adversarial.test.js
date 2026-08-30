@@ -1401,3 +1401,310 @@ describe('ralph.sh jira arm — the outcome branch, adversarially (#130 QA)', ()
     ])
   })
 })
+
+// ===========================================================================
+// #131 QA — THE EVENT, WRITTEN BY BASH AND JS TOGETHER.
+// ===========================================================================
+//
+// test/loop.test.js owns the happy event: an ordinary key, a `pass`, no `gh`. lib/*.qa.test.js
+// owns the sidecar's own edges with an injected `env`. What only this file can ask is what the
+// arm exports when the ITERATION went wrong, because three of the values in that env block are
+// computed by bash and by nothing else:
+//
+//   `$task_log_handle` — the sanitised key, and the name of the two files every parsed field
+//   comes out of. A key the grammar refuses still reaches it (lib/jira-key.js passes one
+//   through), so the handle and the recorded `task_key` are deliberately DIFFERENT strings, and
+//   the event has to carry the ticket's name while reading the handle's files.
+//
+//   `$issue_dur_ms` — timed by this arm alone (#131 added the pair around the dispatch, because
+//   the shared one below the branch's `continue` never ran for a jira iteration). An agent that
+//   dies between the two `date` calls must still leave a number there, under `set -u`.
+//
+//   `$claude_failed` — recorded, never a verdict. The board decides the verdict, so a failing
+//   agent and a swept ticket have to agree in one event, and what the field actually holds is
+//   pinned below because the name it lands under says something narrower.
+describe('ralph.sh jira arm — the recorded event, adversarially (#131 QA)', () => {
+  const metricsFile = () => join(workdir, '.ralph', 'metrics', 'issues.jsonl')
+  const eventLines = () => readLog(metricsFile()).split(LF).filter(Boolean)
+  const events = () => eventLines().map((line) => JSON.parse(line.slice('RALPH_ISSUE_EVENT '.length)))
+
+  const agentStub = ({ status = 0, stdout = '', stderr = '' } = {}) =>
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+echo "$*" >> "${claudeLog()}"
+${stdout ? `echo ${JSON.stringify(stdout)}` : ''}
+${stderr ? `echo ${JSON.stringify(stderr)} >&2` : ''}
+exit ${status}
+`,
+    )
+
+  it('records a key the grammar refuses under its own name, with a null number', () => {
+    // `FOO/1` is the key acli handed out, `FOO_1` is the handle the logs are named by, and the
+    // event must carry the FORMER while having read the LATTER's files. That is the pair no unit
+    // test can check: one side is a bash parameter expansion and the other is a JS derivation.
+    seedStubs({ key: 'FOO/1' })
+    agentStub({ status: 1, stderr: 'Credit balance too low' })
+    const res = runJira()
+    finished(res)
+    const all = events()
+    expect(all, readLog(metricsFile())).toHaveLength(1)
+    expect(all[0].task_key).toBe('FOO/1')
+    expect(all[0].issue_number).toBeNull()
+    // The stderr signal is the proof the sidecar read `logs/ralph-issue-FOO_1.log` — the handle's
+    // file — rather than a path built from the raw key or from the empty `$num`.
+    expect(all[0].stderr_error_signals).toBe(1)
+  })
+
+  it('leaves no NaN, no Infinity and no null-padded key in the line it appends', () => {
+    // The bytes, once, for a real iteration: every downstream reader parses this file with
+    // `JSON.parse`, and a bare `NaN` from a numeric env var that arrived empty would take the
+    // whole log out for `ralph status`, `ralph cycle` and the digest at the same time.
+    const res = runJira()
+    finished(res)
+    const line = eventLines()[0]
+    expect(line).not.toMatch(/NaN|Infinity/)
+    expect(() => JSON.parse(line.slice('RALPH_ISSUE_EVENT '.length))).not.toThrow()
+  })
+
+  for (const [what, spec] of Object.entries({
+    'exits non-zero': { status: 1, stderr: 'claude: credit balance too low' },
+    'answers like a missing binary': { status: 127, stderr: 'bash: claude: command not found' },
+    'exits 0 having printed nothing at all': {},
+    'prints a non-JSON line jq cannot parse': { stdout: 'Segmentation fault' },
+  })) {
+    it(`still records ONE event with a finite duration when the agent ${what}`, () => {
+      // The timing pair straddles the dispatch, so every one of these outcomes runs between the
+      // two `date` calls. `set -u` is on and there is no `set -e`, which is what makes "the
+      // second read never happened" a live possibility rather than a theoretical one.
+      agentStub(spec)
+      const res = runJira()
+      finished(res)
+      expect(`${res.stdout}${res.stderr}`, what).not.toContain('unbound variable')
+      const all = events()
+      expect(all, `${what}: ${readLog(metricsFile())}`).toHaveLength(1)
+      expect(Number.isFinite(all[0].duration_ms), `${what}: ${all[0].duration_ms}`).toBe(true)
+      expect(all[0].duration_ms, what).toBeGreaterThanOrEqual(0)
+      // The agent's fate is RECORDED and the verdict comes off the board: none of these
+      // outcomes completed the ticket, so the sweep makes every one of them a `fail`.
+      expect(all[0].verdict, what).toBe('fail')
+      expect(all[0].task_key, what).toBe('FOO-123')
+    })
+  }
+
+  it('records `claude_exit_code` as the 0/1 flag bash keeps, not the agent exit status', () => {
+    // PINNED BECAUSE THE FIELD NAME PROMISES OTHERWISE, and the promise is inherited rather
+    // than this arm's: `run_agent_stream` reduces `${PIPESTATUS[1]}` to `claude_failed=1` or
+    // `0` (templates/ralph.sh:244-249, whose own docblock notes the name is "kept for the
+    // telemetry sidecar's RALPH_CLAUDE_EXIT"), and ALL THREE telemetry blocks pass that flag
+    // as RALPH_CLAUDE_EXIT. So a missing binary and an ordinary non-zero exit are
+    // indistinguishable in the event, in every source, and have been since before this arm
+    // existed.
+    //
+    // Worth a test rather than a bug report for exactly that reason: #131 chose to record
+    // what the other two record, which is the right call for a slice about parity, and the
+    // day somebody widens the flag to the real status this reddens in one place instead of
+    // silently changing the meaning of a field three arms write.
+    agentStub({ status: 127, stderr: 'bash: claude: command not found' })
+    const res = runJira()
+    finished(res)
+    expect(events()[0].claude_exit_code).toBe(1)
+  })
+
+  it('appends ONE event per iteration when a re-selection makes the loop take two', () => {
+    // An unwritable claim leaves the ticket eligible, so the loop selects it twice and the
+    // zero-progress guard ends the run. The guard fires BEFORE the second dispatch, so the
+    // second iteration records nothing — which means the count of events is the count of
+    // iterations that actually ran an agent, and telemetry cannot inflate a run's completed
+    // count above what it paid for.
+    seedStubs({ editBody: 'echo "permission denied" >&2; exit 1' })
+    agentStub()
+    const res = runJira()
+    finished(res)
+    expect(agentCalls(), readLog(claudeLog())).toHaveLength(1)
+    expect(events(), readLog(metricsFile())).toHaveLength(1)
+  })
+
+  it('writes the event even when the agent never produced a transcript to parse', () => {
+    // `logs/ralph-issue-FOO-123.jsonl` is created empty by the dispatch, so the parse has
+    // nothing to read: every stream-derived field is a zero and the event is still complete —
+    // the key, the verdict and the exit code are the fields that matter here and none of them
+    // comes from the stream.
+    agentStub({ status: 0 })
+    const res = runJira()
+    finished(res)
+    const e = events()[0]
+    expect(e.total_cost_usd).toBe(0)
+    expect(e.num_turns).toBe(0)
+    expect(e.subtype).toBeNull()
+    expect(e.task_key).toBe('FOO-123')
+    expect(readLog(ghLog()), 'gh was invoked in jira mode').toBe('')
+  })
+
+  it('fills the stream-derived fields from the transcript the HANDLE names', () => {
+    // The other direction of the same seam: the test above proves an unparsed stream degrades
+    // to zeros, which is also what a WRONG PATH looks like — so zeros alone cannot tell the
+    // two apart. This one hands the agent a real two-message stream and asserts the numbers
+    // arrive, which is the only way to know the sidecar opened the file this arm wrote rather
+    // than silently missing it. (`$num` is empty in this mode, so the folder arm's
+    // `logs/ralph-issue-$num.jsonl` would be exactly the indistinguishable zeros above.)
+    const stream = [
+      // `type: 'message_start'` at the TOP level, which is the shape lib/agent-stream.js
+      // actually looks for (it also accepts a `stream_event` envelope around one).
+      JSON.stringify({
+        type: 'message_start',
+        message: { model: 'claude-opus-4-20250514', usage: { input_tokens: 1200, cache_read_input_tokens: 800 } },
+      }),
+      JSON.stringify({ type: 'result', subtype: 'success', total_cost_usd: 0.42, num_turns: 6, duration_ms: 9000 }),
+    ]
+    writeStub(
+      'claude',
+      `#!/bin/bash\ncat > /dev/null\necho "$*" >> "${claudeLog()}"\n${stream.map((l) => `echo ${JSON.stringify(l)}`).join('\n')}\nexit 0\n`,
+    )
+    const res = runJira()
+    finished(res)
+    const e = events()[0]
+    expect(e.subtype, JSON.stringify(e)).toBe('success')
+    expect(e.num_turns).toBe(6)
+    expect(e.total_cost_usd).toBe(0.42)
+    // The stream reports its own duration, which outranks the wall clock this arm measures —
+    // so 9000 here also proves the injected `RALPH_DURATION_MS` is a FALLBACK and not an
+    // override, on a sub-second iteration whose measured value is 0.
+    expect(e.duration_ms).toBe(9000)
+    expect(e.model).toBe('claude-opus-4-20250514')
+    expect(e.context_window).toBe(1_000_000)
+    expect(e.context_end_tokens).toBe(2000)
+    // And the two fields bash resolves for every source alike.
+    expect(e.agent).toBe('claude')
+    expect(e.run_id, JSON.stringify(e)).toMatch(/\S/)
+  })
+
+  it('costs the iteration nothing when `.ralph/metrics` cannot be created', () => {
+    // AC: a telemetry failure changes neither the outcome nor the exit code. `.ralph/metrics`
+    // is occupied by a FILE, so the sidecar's `mkdirSync` fails before it can append — the
+    // failure mode a read-only or quota-full `.ralph/` produces, arranged deterministically.
+    // The sidecar exits 0 on its own and the loop wraps it in `|| true`, so BOTH belts are
+    // being tested at once; what proves the run was unaffected is the board, which still
+    // shows the sweep, and the summary line, which still names the ticket.
+    writeFileSync(join(workdir, '.ralph', 'metrics'), 'not a directory')
+    agentStub({ status: 1 })
+    const res = runJira()
+    finished(res)
+    // `#FOO-123`, `#`-prefixed by the summary's own `printf '#%s '` over a list that holds
+    // keys in this mode — measured, and the spelling README documents for this line.
+    expect(res.stdout).toContain('FAIL: #FOO-123')
+    expect(boardLabels(), readLog(acliLog())).toContain('failed')
+    // The occupying file is untouched — nothing half-wrote through it.
+    expect(readFileSync(join(workdir, '.ralph', 'metrics'), 'utf8')).toBe('not a directory')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #131 QA — THE CASE-VARIANT `TASK_SOURCE`, WHICH IS A GITHUB RUN.
+// ---------------------------------------------------------------------------
+//
+// The divergence itself is old and deliberately unfixed: the loop's dispatch is an exact string
+// compare while every JS entrypoint trims and lowercases, so `TASK_SOURCE=Jira` runs the GITHUB
+// arm (pinned above, and documented in README's configuration table). #131 gave the telemetry
+// sidecar its own opinion of the source — `resolveSource` reads `Jira` as `jira` and the arms
+// now differ in the number they resolve, the verdict they trust and whether they call `gh` at
+// all — which makes the sidecar a NEW way for that divergence to bite, and the reason this block
+// exists rather than trusting the pinned comment above.
+//
+// IT DOES NOT BITE, and the reason is one line nobody has to remember: the dispatch does not
+// merely COMPARE the value, it OVERWRITES it (templates/ralph.sh:357-362, since #127) —
+// `TASK_SOURCE="github"` in the else branch, and the variable arrived from the environment, so
+// the assignment is what every child process sees. The github telemetry block
+// (the third and last of them in that file) is the only one of the three that pins no
+// `TASK_SOURCE` of its own,
+// so that overwrite is the entire guarantee, and nothing marks it as load-bearing where it is
+// written. These three tests are what fails if it is ever narrowed to a plain comparison.
+//
+// Not a redundant pin on the boundary test above, either: that one asserts which QUEUE bash
+// drains, on a run whose queue is empty and which therefore never reaches this code.
+describe('ralph.sh github arm — a case-variant TASK_SOURCE and the event it records (#131 QA)', () => {
+  const metricsFile = () => join(workdir, '.ralph', 'metrics', 'issues.jsonl')
+  const events = () =>
+    readLog(metricsFile())
+      .split(LF)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line.slice('RALPH_ISSUE_EVENT '.length)))
+
+  // One GitHub issue, #42, closed by the agent — the same fixture the shared-`task_key` block
+  // above uses, which is where the shape of this `gh` stub comes from.
+  const seedGithubIssue = () => {
+    writeFileSync(join(workdir, 'count.txt'), '1')
+    writeStub(
+      'gh',
+      `#!/bin/bash
+echo "$*" >> "${ghLog()}"
+CNT="${join(workdir, 'count.txt')}"
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cnt=$(cat "$CNT")
+  case "$*" in
+    *sort:created-asc*) echo 42; echo 0 > "$CNT" ;;
+    *) echo "$cnt" ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *state*) echo "CLOSED" ;;
+    *) echo "pending-merge" ;;
+  esac
+  exit 0
+fi
+exit 0
+`,
+    )
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+echo "$*" >> "${claudeLog()}"
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`,
+    )
+  }
+
+  it('records issue #42 with a verdict when TASK_SOURCE is unset (the baseline)', () => {
+    seedGithubIssue()
+    const res = runLoop()
+    finished(res)
+    expect(res.stdout).toContain('==> Iteration for issue #42')
+    expect(events()[0]).toMatchObject({ issue_number: 42, verdict: 'pass' })
+  })
+
+  it('records the SAME event under TASK_SOURCE=Jira, which runs this same github arm', () => {
+    // The three fields that would move if the sidecar took the jira arm on this iteration:
+    // `issue_number` (derived from RALPH_TASK_KEY there, and there is none, so it would be
+    // null), `verdict` (read off RALPH_TASK_OUTCOME there, which this arm never sets, so it
+    // would fall back to `unknown` and flip `ralph cycle`'s exit code), and `task_key`.
+    seedGithubIssue()
+    const res = runLoop({ extraEnv: { TASK_SOURCE: 'Jira', JIRA_JQL: JQL } })
+    finished(res)
+    expect(res.stdout).toContain('==> Iteration for issue #42')
+    expect(acliCalls(), readLog(acliLog())).toEqual([])
+    const e = events()[0]
+    expect(e.issue_number, JSON.stringify(e)).toBe(42)
+    expect(e.verdict, JSON.stringify(e)).toBe('pass')
+    expect('task_key' in e, JSON.stringify(e)).toBe(false)
+  })
+
+  it('does not let an ambient RALPH_TASK_KEY name a github iteration', () => {
+    // A developer's export, or a jira run in the same shell: the loop leaves an ambient
+    // RALPH_TASK_KEY alone in a github iteration (pinned above), and the github telemetry
+    // block does not clear it either — so the only thing keeping `BAR-9` out of a GitHub
+    // issue's event is the source the sidecar resolves. `task_key` is the one field in the
+    // event that is ABSENT rather than null when there is none, so `in` and not a value
+    // comparison: a stale key would show up as a new key on the object.
+    seedGithubIssue()
+    const res = runLoop({ extraEnv: { TASK_SOURCE: 'Jira', RALPH_TASK_KEY: 'BAR-9', JIRA_JQL: JQL } })
+    finished(res)
+    const e = events()[0]
+    expect('task_key' in e, JSON.stringify(e)).toBe(false)
+    expect(e.issue_number, JSON.stringify(e)).toBe(42)
+  })
+})
