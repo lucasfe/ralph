@@ -41,12 +41,21 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # loop pushes it, so `git log DEV_BRANCH` on the machine that ran Ralph is the only place
 # the work itself exists, and the ticket is the only thing that says where to look.
 #
-# WHAT IS STILL MISSING IS THE FAILURE HALF. An iteration that produced nothing leaves a
-# comment saying why and NOTHING ELSE: no `failed` label, and `in-progress` stays on. So
-# a ticket Ralph tried and could not finish stops being eligible and stays that way until
-# you strip the label yourself, in Jira — there is no Jira analog yet of the
-# `claude-working` cleanup the github source does. The per-ticket log
-# (`logs/ralph-issue-<KEY>.log`) is where that attempt is recorded in full.
+# AND A TICKET IT DID NOT RESOLVE IS SWEPT TO `failed`. After the agent returns, the loop
+# READS THE BOARD BACK and asks what labels the ticket carries now: anything that is not
+# `done` gets the `failed` label and has `in-progress` taken off, with a warning on stderr
+# naming the ticket and the state it was found in. THE BOARD DECIDES, NOT THE AGENT'S EXIT
+# CODE — an agent killed after committing labelled the ticket itself, and one that exited 0
+# having done nothing did not. That is the loop's job rather than the agent's precisely
+# because the invocation that most needs sweeping is the one that DIED, and a dead agent
+# writes nothing. `failed` is excluded by the query below, so the queue drains even then,
+# and it is a LABEL for the same reason: no workflow rule can refuse one. The per-ticket
+# log (`logs/ralph-issue-<KEY>.log`) is where the attempt itself is recorded in full.
+#
+# WHAT IS STILL MISSING IS THE PER-TICKET TELEMETRY: no issue event is appended under this
+# source, so `ralph status` and the digest cannot narrate a Jira iteration the way they do
+# a GitHub one. The end-of-run summary does name the tickets under OK and FAIL — by key,
+# carrying github mode's `#` prefix (`OK: #FOO-123`), since one line serves all sources.
 #
 # THE COMMANDS THAT START THE LOOP have NOT moved with it either, and BOTH of them still
 # want `gh`: `ralph start` and `ralph cycle` each abort unless `gh auth status` succeeds,
@@ -56,11 +65,13 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 # one that already counts Jira, like `ralph status`. So a jira repo still needs `gh`
 # installed and logged in, even though `ralph doctor` no longer lists it here.
 #
-# EVERY LABEL RALPH WRITES IS A WRITE TO YOUR BOARD, and only one of them comes back off
-# on its own: a completion removes the `in-progress` it added, and a failed iteration does
-# not. So point a NARROW JIRA_JQL at this while the failure half is unbuilt — a pass over
-# a wide query can leave you a row of tickets reading as in flight that nothing but you
-# will clear.
+# EVERY LABEL RALPH WRITES IS A WRITE TO YOUR BOARD, and `in-progress` is the only one
+# that comes back off: a completion removes it and adds `done`, a sweep removes it and adds
+# `failed`, and both of those stay on the ticket until somebody takes them off. The one
+# ticket that can still be left reading as in flight is one Ralph could not EDIT at all —
+# the sweep is a write too, so an `acli` that refuses it leaves the label where it was and
+# says so on stderr. So point a NARROW JIRA_JQL at this: a pass over a wide query relabels
+# every ticket it touches, and no run has ever touched a live Jira (see the README).
 #
 # The prerequisites are checkable BEFORE they are needed. A jira run wants
 # Atlassian's `acli` on PATH and an authenticated session (`acli jira auth login`),

@@ -426,12 +426,13 @@ reviewers** instead of a single pass:
   Say what you tried, where it stopped, and what a human would have to decide. It
   always exits 0; a comment that could not be posted prints its reason on stderr.
 - Do **not** mark the ticket complete. `complete` is step 7's command and step 7
-  only: it labels the ticket `done`, which takes it out of Ralph's queue for good,
-  and a ticket nobody resolved must stay in the queue.
+  only: it labels the ticket `done`, which is the one word the outer bash reads as
+  "this worked", and a ticket nobody resolved must not carry it.
 - Do **not** label the ticket `failed`, and do not remove `in-progress`. Sweeping
-  a ticket this invocation could not finish belongs to the outer bash, and that
-  sweep is not wired yet — a label you invent here is a label nothing will ever
-  clear.
+  a ticket this invocation could not finish belongs to the outer bash, which reads
+  the ticket's labels back after you exit and labels anything that is not `done`
+  `failed` for you — including when this invocation is killed before it reaches
+  this section. So the sweep is covered; a label you invent here is not.
 - Exit.
 
 ## Absolute restrictions
