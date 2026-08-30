@@ -35,8 +35,9 @@ RALPH_AGENT="{{RALPH_AGENT}}"
 #
 # AND A TICKET IT RESOLVED IS THEN RECORDED ON YOUR BOARD: labelled `done`, stripped of
 # `in-progress`, given a comment carrying the commit SHA, the branch and the test/lint
-# result — and transitioned to JIRA_DONE_STATUS, which ships EMPTY, so until you set it
-# (below) the ticket is recorded without being moved on the board. That comment is
+# result — and transitioned to JIRA_DONE_STATUS, which a jira `ralph init` asks for
+# (offering "Done") and a github/folder init leaves empty, so while the value below is
+# empty the ticket is recorded without being moved on the board. That comment is
 # the whole audit trail, and it has to be, because THE COMMIT STAYS LOCAL: nothing in the
 # loop pushes it, so `git log DEV_BRANCH` on the machine that ran Ralph is the only place
 # the work itself exists, and the ticket is the only thing that says where to look.
@@ -132,19 +133,39 @@ TASK_SOURCE="{{TASK_SOURCE}}"
 # a cycle says the queue is empty). Either spelling avoids it — quote the VALUE with single
 # quotes, JIRA_JQL='summary ~ "#123"', or write the JQL literal with them,
 # JIRA_JQL="summary ~ '#123'". A query with no `#` in it is unaffected.
-JIRA_JQL=""
+#
+# THE QUOTES ON THE LINE BELOW COME FROM `ralph init`, WHICH IS WHY THEY ARE NOT WRITTEN
+# HERE. Unlike every other setting in this file, this one's quote character depends on
+# its value: `ralph init --source jira` (and answering `jira` at its source prompt)
+# offers a default query that CONTAINS DOUBLE QUOTES, and a double-quoted value does not
+# survive them — the shell that sources this file drops the inner quotes and hands the
+# loop a different query than Ralph's own reader takes off the same line, saying nothing
+# about it. So init writes single quotes when the value needs them and double quotes when
+# it does not. A github or folder init writes an empty value here, unchanged. If you edit
+# this line by hand, the two paragraphs above are the rules to follow.
+JIRA_JQL={{JIRA_JQL}}
 
 # Jira completion status, used when TASK_SOURCE="jira" and ignored otherwise. The status
 # Ralph asks Jira to move a ticket to once the work is committed — the third of the three
 # things it writes to the board when it finishes one, beside the `done` label and a comment
 # carrying the commit SHA.
 #
-# THERE IS NO DEFAULT BECAUSE THERE IS NO ANSWER THAT IS RIGHT EVERYWHERE. Status names come
+# THIS FILE SHIPS NO DEFAULT, BECAUSE NO ANSWER IS RIGHT EVERYWHERE. Status names come
 # from your project's own workflow: "Done" on one board, "Resolved", "Closed", "Complete" or
 # "Ready for Release" on the next. Write the name exactly as your workflow spells it,
 # capitalisation included:
 #
 # JIRA_DONE_STATUS="Done"
+#
+# WHAT `ralph init` PUT HERE IS A CHOICE, NOT A SHIPPED DEFAULT, and the distinction is the
+# whole reason the paragraph above still stands. A jira init ASKS for this name, offering
+# "Done" — the answer pressing enter gives — and writes what you land on; a github or folder
+# init writes an empty value below, exactly as this template shipped before the prompt
+# existed. So an empty line here means
+# either "not a jira repo" or "a jira repo that emptied it deliberately", and both mean the
+# same thing to the loop (see the last paragraph). Like JIRA_JQL above, the quotes on the
+# assignment come from init rather than from this template, because that knob's quote
+# character depends on its value and the two are written the same way.
 #
 # A REFUSED TRANSITION COSTS YOU A BOARD MOVE AND NEVER THE RUN. A Jira workflow can decline
 # the move for reasons Ralph cannot see or satisfy — there is no transition to that status
@@ -162,11 +183,11 @@ JIRA_JQL=""
 # can actually fail a completion is that label write; if it fails, Ralph says so and the
 # ticket stays in the queue, which is the honest outcome.
 #
-# EMPTY OR UNSET MEANS "DO NOT TRANSITION" — the default, and not an error. Ralph skips the
+# EMPTY OR UNSET MEANS "DO NOT TRANSITION" — not an error. Ralph skips the
 # move, warns once, and still labels and comments. So a repo that never sets this still gets
 # a draining queue and an audit trail on every ticket; what it does not get is tickets moving
 # on the board.
-JIRA_DONE_STATUS=""
+JIRA_DONE_STATUS={{JIRA_DONE_STATUS}}
 
 # How much of the startup banner `ralph start` draws. "full" (the default) plays the
 # one-second sprite splash, settles on its final frame, and prints the identity box

@@ -356,8 +356,10 @@ reviewers** instead of a single pass:
    That one command makes **up to three** board writes: it transitions the ticket to
    the status this repo configured (`JIRA_DONE_STATUS` in `ralph.config.sh`), adds the
    `done` label, and takes `in-progress` back off. Up to, because **this repo may not
-   have configured a status at all** — `JIRA_DONE_STATUS` ships empty, and when it is
-   empty the command deliberately skips the transition and makes the label write, plus
+   have configured a status at all** — a `ralph init` that chose jira writes a value
+   (`Done` unless you answered its prompt with another), but the knob can be blanked, and
+   a config from before that prompt existed has it empty. When it is empty the command
+   deliberately skips the transition and makes the label write, plus
    the `in-progress` removal if the ticket still carries it. Run it and read its
    output; do **not** write any of it yourself with `acli`, because every flag it needs
    is already spelled in Ralph's acli layer (`lib/jira-acli.js`, named in step 1) and a
@@ -370,8 +372,8 @@ reviewers** instead of a single pass:
    two causes, either of which can start that sentence:
 
    - `Jira refused to transition …` — the workflow would not make the move;
-   - `JIRA_DONE_STATUS is not set, so … was not moved on the board` — the likelier of
-     the two, because that knob ships empty; nothing was even attempted.
+   - `JIRA_DONE_STATUS is not set, so … was not moved on the board` — the knob is empty
+     in this repo's config; nothing was even attempted.
 
    **The ending is what classifies the run**, because the `done` label — not the board
    status — is what takes the ticket out of Ralph's queue, and the command only knows
