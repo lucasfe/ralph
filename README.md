@@ -164,7 +164,7 @@ a purely **cosmetic** knob does not earn a line in a diagnostic. `ralph start` �
 the command the setting is actually about — is where that typo is reported.
 
 `ralph start` runs sanity checks (tmux session uniqueness, deps,
-`gh auth`, `.mcp.json`, label setup, orphan `claude-working` cleanup),
+`gh auth`, `.mcp.json`, label setup, orphan `in-progress` cleanup),
 optionally prints an update notice (and, on an interactive terminal, at
 most once a week, offers to install it — see
 [Updating Ralph](#updating-ralph)), and launches the bash loop inside
@@ -841,12 +841,12 @@ that surprises people, because two of the three sources never publish anything:
 | | `github` | `folder` | `jira` |
 | --- | --- | --- | --- |
 | Work comes from | open issues on the repo's GitHub board, read with `gh` | numbered `.md` files under the gitignored `.ralph/tasks/` tree | work items on a Jira site, read with Atlassian's `acli` |
-| Eligibility is expressed as | a **fixed search query** inside the generated `ralph.sh` — `state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge` — not a config knob; the pick adds `sort:created-asc` | the **directory** itself: the lowest-numbered file in `afk/todo/` | **your JQL**, in [`JIRA_JQL`](#the-eligibility-query--jira_jql) — eligibility only, with Ralph appending the label exclusion and the ordering |
+| Eligibility is expressed as | a **fixed search query** inside the generated `ralph.sh` — `state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge` — not a config knob; the pick adds `sort:created-asc` | the **directory** itself: the lowest-numbered file in `afk/todo/` | **your JQL**, in [`JIRA_JQL`](#the-eligibility-query--jira_jql) — eligibility only, with Ralph appending the label exclusion and the ordering |
 | CLI and auth it needs | `gh`, authenticated (`gh auth login`) | **no source CLI at all** — `ralph doctor` skips both `gh` and `acli` | `acli`, logged in (`acli jira auth login`) |
 | **Delivery shape** | an `issue-N` **branch**, **pushed**, with a PR set to **auto-merge** (`gh pr merge … --auto`) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** |
-| Ralph claims work by | the **agent** adding the `claude-working` label to the issue | the **agent** moving the file `afk/todo → afk/in-progress` | the **loop** adding the `in-progress` label to the ticket |
+| Ralph claims work by | the **agent** adding the `in-progress` label to the issue | the **agent** moving the file `afk/todo → afk/in-progress` | the **loop** adding the `in-progress` label to the ticket |
 | Completion is recorded as | the issue reaching `CLOSED` (usually via `Closes #N` on the merge) or carrying `pending-merge` | the file arriving in `afk/done/` | the `done` label, with `in-progress` removed, a comment carrying the commit SHA, and a transition to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where the project's workflow accepts one |
-| Failure is recorded as | the `claude-failed` label | the loop moving the file to `afk/failed/` | the loop adding the `failed` label and removing `in-progress` |
+| Failure is recorded as | the `failed` label | the loop moving the file to `afk/failed/` | the loop adding the `failed` label and removing `in-progress` |
 | The human parking lot is | the `do-not-ralph` label on an issue | the whole [`hitl/` lane](#folder-mode-layout) — release a task by moving its file `hitl/todo → afk/todo` | the `do-not-ralph` label on a ticket |
 | Orchestrator prompt template | `prompt-team.md` (Claude) or `prompt-team-codex.md` (Codex) — picked by **agent** | `prompt-team-folder.md` | `prompt-team-jira.md` |
 
@@ -858,6 +858,18 @@ on a shared Jira board). And **the `jira` column has never been run against a li
 Jira**: every one of its surfaces is driven against a stubbed `acli`, and the shape of
 `acli` itself is transcribed from Atlassian's documentation rather than measured — see
 [the callout under `The jira source today`](#the-jira-source-today).
+
+One **coincidence** in that table is not a shared mechanism. `in-progress` and
+`failed` read the same in all three columns, and they name three unrelated things:
+a GitHub **label** under `github`, a **directory** under `folder`
+(`afk/in-progress/` and `afk/failed/` in the [layout below](#folder-mode-layout)),
+and a label on **your own Jira board** under `jira`. Each lane defines its own copy
+— `lib/labels.js`, `lib/folder-queue.js` and `lib/jira-jql.js` share no code for
+these words — so renaming one leaves the other two exactly where they are, and a
+Jira board that already carries an `in-progress` label is spelling the same word
+rather than sharing Ralph's. Ralph also reads these names **exactly**: a board of
+your own that runs a `build-failed` or `failed-review` label is not read as Ralph's
+`failed`, and `pending-merged` is not its `pending-merge`.
 
 Pick the source at `ralph init` time:
 
@@ -1057,7 +1069,7 @@ own](#what-is-still-githubs) at the bottom of this one.
 > lived long enough to leave one. Both labels are excluded by the query, so the queue
 > drains either way; neither is ever removed by Ralph, so **a swept or resolved ticket
 > is yours to re-open**, and the `github` source's two ways back (the loop removes
-> `claude-working` once an issue reaches a state the queue filter excludes anyway, and
+> `in-progress` once an issue reaches a state the queue filter excludes anyway, and
 > the next `ralph start` offers to clear the residue a killed run left) still have no
 > Jira analog. The one ticket a run can leave reading as in flight is one Ralph could
 > not edit at all: the sweep is a write too, and an `acli` that refuses it leaves
@@ -1500,8 +1512,8 @@ carries no comment when the agent died before writing one, so the per-ticket log
 
 **The orphan sweep is GitHub's, and there is no Jira one.** `lib/orphan-cleanup.js` — the
 thing that finds work a dead run left claimed and un-claims it — is spelled entirely in
-`gh`: it lists with `gh issue list --state all --label claude-working …` and clears with
-`gh issue edit N --remove-label claude-working`. So it can only ever repair a **GitHub**
+`gh`: it lists with `gh issue list --state all --label in-progress …` and clears with
+`gh issue edit N --remove-label in-progress`. So it can only ever repair a **GitHub**
 issue, and running it under this source does nothing for your board (it does still spend
 `gh` — see below). The in-iteration sweep covers the case it was built for: an agent that
 died still gets its ticket labelled `failed`, because that sweep runs after the dispatch
@@ -1510,7 +1522,7 @@ machine rebooted, an `acli` that refused the label write — because then no swe
 all. The ticket is left carrying `in-progress`, which the eligibility query **excludes**,
 so it is quietly out of the queue and stays there until somebody takes the label off by
 hand. In `github` mode that residue gets cleared for you on the next scheduled pass —
-`ralph cycle` runs this very module and removes `claude-working` from every orphan it
+`ralph cycle` runs this very module and removes `in-progress` from every orphan it
 finds — and `ralph start` at least *names* the affected issues and prints the `gh issue
 edit` to clear them by hand. Neither has a Jira analog. A narrow
 [`JIRA_JQL`](#the-eligibility-query--jira_jql) is what keeps that recoverable: on a board
@@ -1550,8 +1562,8 @@ gets a `✓ jira auth` row and a cycle that refuses to start over the session.
 A broken `gh` no longer *stops* a `jira` cycle, but such a run still spends `gh` twice,
 plus a `gh issue edit` write per orphan found — measured, not assumed: the cosmetic
 repo-slug lookup behind the notification (which falls back to the repo path), plus the
-orphan sweep's `gh issue list --state all --label claude-working` and, per orphan found, a
-`gh issue edit N --remove-label claude-working` **write** to the GitHub board. A healthy
+orphan sweep's `gh issue list --state all --label in-progress` and, per orphan found, a
+`gh issue edit N --remove-label in-progress` **write** to the GitHub board. A healthy
 repo has no orphans, so the steady state is those first two calls and nothing else. The
 sweep is not source-gated, so under
 `jira` a logged-out `gh` produces neither a named abort nor a clean pass: every tick
@@ -1564,7 +1576,7 @@ preflight change deliberately left it alone.
 - `ralph start` **aborts** unless `gh auth status` succeeds — `❌ gh not authenticated`
   — even though nothing in the run will use `gh`.
 - `ralph start` creates its issue labels in the GitHub repo and reports issues still
-  carrying `claude-working` from an earlier run.
+  carrying `in-progress` from an earlier run.
 - `ralph start` takes the `N issues in the queue` line of the
   [launch box](#the-launch-projection--ralph-start), and the projection under it, from
   **GitHub's** queue, and stops with `ℹ️  No issues in the queue. Nothing to do.` when
@@ -2218,7 +2230,7 @@ means a run started and never wrote a terminal
 record: a `tmux kill-session`, a `kill -9`, or a reboot took it out mid-issue,
 and the issue on the `in flight` line is where it stopped. There is nothing left
 to attach to, so start again — the next `ralph start` offers to clear the
-`claude-working` label that run left behind (see below). One case reads
+`in-progress` label that run left behind (see below). One case reads
 misleadingly stale rather than wrong: a run that never reached the loop at all
 (an empty queue, or a preflight abort) writes no record, so `status` keeps
 reporting the run before it. See
@@ -2309,7 +2321,7 @@ knowledge and does not grep it — so node's own notices and any nvm/shim banner
 the window alongside the warning that matters. Stdout is untouched, and a bridge
 with nothing to say still adds nothing.
 
-**Issues stuck with the `claude-working` label after a crash.** — The
+**Issues stuck with the `in-progress` label after a crash.** — The
 next `ralph start` detects orphans and asks whether to clear them and
 reprocess. Answer `y` to re-queue the issues.
 
@@ -2366,10 +2378,16 @@ printing a bare `unknown` beside a version number, so a pasted report
 cannot be misread as "the installed version is unknown" — that fact is the
 box's title, and it says `ralph unknown` when it is the one missing.
 
-**No issues are picked up.** — Check the queue filter Ralph uses:
-`state:open -label:claude-working -label:claude-failed -label:do-not-ralph`.
-Issues already labelled `claude-working` or `claude-failed` are
-skipped; clear those labels to retry. Ralph applies `claude-failed`
+**No issues are picked up.** — Ralph's queue filter skips any open issue
+carrying **one of four labels**: `in-progress` or `failed` — its own
+bookkeeping — plus `pending-merge`, which parks an issue whose PR is
+merged but not yet rolled forward onto the default branch, and
+`do-not-ralph`, which is yours to apply and which Ralph never creates or
+clears. Remove the label to put the issue back in the queue. The filter
+is written out in full in the eligibility row of
+[the task-source comparison](#choosing-the-task-source), which is the
+only copy of it on this page, so what you read there is the query that
+actually runs. Ralph applies `failed`
 itself when Claude exits non-zero on an issue (auth/credit/rate-limit
 errors, crashes) without otherwise resolving it, so the queue keeps
 advancing instead of stalling on the same issue — see the per-issue log
@@ -2384,11 +2402,12 @@ the odd one out and knowingly so: it still counts the GitHub queue, so it can re
 to launch a Jira run over an empty one
 ([the detail](#what-is-still-githubs)).
 
-`claude-working` is not left behind on a resolved issue. The loop clears
+`in-progress` is not left behind on a resolved issue. The loop clears
 it as soon as an iteration leaves the issue in a state the filter already
-excludes — a PR opened (`pending-merge`), the issue **closed** (including
-closed indirectly by a merged PR's `Closes #N`), or `claude-failed`
-applied — so `claude-working` keeps meaning "Ralph is working on this
+excludes — the PR **merged** into a non-default branch with the issue
+still open (`pending-merge`), the issue **closed** (including
+closed indirectly by a merged PR's `Closes #N`), or `failed`
+applied — so `in-progress` keeps meaning "Ralph is working on this
 right now", and an issue that is later **reopened** comes back into the
 queue instead of being silently skipped for a label left over from the
 run that resolved it. The one case where the label is kept deliberately
@@ -2398,7 +2417,7 @@ forever, and it is cleared later by the sweep below.
 
 Leftovers are swept per pass by `ralph cycle` (see
 [Scheduling Ralph](#scheduling-ralph-macos-launchd)), which clears
-`claude-working` from **both open and closed** issues and prints/notifies
+`in-progress` from **both open and closed** issues and prints/notifies
 what it cleared (`🧹 ralph cycle: cleaned N orphan(s)`). Expect that line
 to be busy on the first pass in a repo that accumulated stale labels
 before this behavior existed. The sweep reads one page of up to 100
@@ -2407,12 +2426,12 @@ drains over several cycles rather than all at once.
 
 **An iteration prints `claude failed on issue #N (non-zero exit)`.** —
 Claude exited non-zero on that issue without opening a PR, closing it,
-or applying an exclusion label. Ralph adds the `claude-failed` label so
+or applying an exclusion label. Ralph adds the `failed` label so
 the next iteration moves on. The cause (auth, credit balance,
 rate-limit, or a crash) is captured in `logs/ralph-issue-N.log`:
 Claude's stderr is now written there (and echoed to the terminal)
 rather than being merged into the JSON stream. Fix the underlying
-problem, clear the `claude-failed` label, and re-run.
+problem, clear the `failed` label, and re-run.
 
 **The per-issue log says `==> result: error`, but the raw `.jsonl`
 for that issue says `"subtype":"success"`.** — Working as intended;
@@ -2436,7 +2455,7 @@ with no change to its exclusion state (no PR, not closed, no label),
 which means the loop could never drain the queue. Rather than burn API
 calls spinning forever, Ralph records the issue as a failure and stops.
 Inspect `logs/ralph-issue-N.log` for the root cause, resolve or label
-the issue (`claude-failed`, `do-not-ralph`), then start Ralph again.
+the issue (`failed`, `do-not-ralph`), then start Ralph again.
 
 ## Monitoring data model
 
@@ -2487,7 +2506,7 @@ with these fields:
 | `usage` | The four raw token counts, broken out: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` (each zeroed if absent). **For Codex**, `reasoning_output_tokens` are folded into `output_tokens` (they are billable output and dominate even trivial turns; the raw split stays in the `.jsonl` sidecar), `cached_input_tokens` map to `cache_read_input_tokens`, and `cache_write_input_tokens` map to `cache_creation_input_tokens`. |
 | `claude_exit_code` | Whether the agent failed, as `1` or `0` — a **flag, not a status**. The loop reduces the agent's real exit code to non-zero/zero before the sidecar ever sees it, so an invocation killed on `127` records `1` exactly like one that exited `1`; what actually killed it is in that iteration's `logs/ralph-issue-*.log`, teed there as it happened. All three task sources hand over the same variable, so the field means the same thing in every event. (The field name is kept verbatim for both agents so the schema is unchanged.) |
 | `stderr_error_signals` | Count of stderr lines matching auth / credit / rate-limit signals. |
-| `verdict` | Under `github`: `pass` (CLOSED or `pending-merge`), `fail` (`claude-failed` label), or `unknown`. Under `folder` and `jira` the **outcome the loop read back** decides instead, and it overrides the labels entirely — the terminal task directory there, the ticket's own label here — with `done` → `pass`, `failed` → `fail`, and anything else `unknown`. One mapping serves both, so the two sources cannot drift apart. |
+| `verdict` | Under `github`: `pass` (CLOSED or `pending-merge`), `fail` (`failed` label), or `unknown`. Under `folder` and `jira` the **outcome the loop read back** decides instead, and it overrides the labels entirely — the terminal task directory there, the ticket's own label here — with `done` → `pass`, `failed` → `fail`, and anything else `unknown`. One mapping serves both, so the two sources cannot drift apart. |
 | `files`, `insertions`, `deletions` | Real PR diff stats, fetched best-effort from the issue's PR (`gh pr list --head issue-<n>`). Degrade to `0` when no PR exists or the fetch fails — never aborts the loop. **Only `github` is asked**: `folder` and `jira` commit straight to `DEV_BRANCH` and open no PR, so the `gh` call is skipped rather than left to fail its way to the same zeros — which is what lets a machine with no `gh` at all write a complete event. |
 | `context_end_tokens` | End-of-job context-window occupancy — the statusline number. The input side of the **most recent** model request: for Claude, the sum of `input_tokens + cache_read_input_tokens + cache_creation_input_tokens` from the **last** `message_start` event (not the cumulative `result` usage); for Codex, the same sum taken from the last `turn.completed` usage. `0` when no usage is present. |
 | `context_end_pct` | `context_end_tokens / window`, rounded to 6 decimal places. `null` when the model's window is unknown or tokens are `0`. The window resolves from the model id (see [`RALPH_CONTEXT_WINDOW`](#configuration-reference) for the Anthropic + OpenAI/Codex maps) or from the override. |

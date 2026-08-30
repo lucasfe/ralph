@@ -25,7 +25,7 @@ const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.exec
 // stub-on-PATH harness but exercise the corners of the issue #505 fix that the
 // dev's happy-path tests don't reach:
 //   - jq `fromjson? // empty` tolerance for stray non-JSON on STDOUT
-//   - queue draining through a transient claude failure (claude-failed advances)
+//   - queue draining through a transient claude failure (failed advances)
 //   - the zero-progress guard only firing on CONSECUTIVE identical re-selection
 //   - claude's stderr landing in the per-issue log (no empty-log signal loss)
 //   - PIPESTATUS[1] reflecting claude's exit, not the tail of the pipe
@@ -202,9 +202,9 @@ exit 0
     expect(res.stdout).toContain('==> result: success')
   })
 
-  it('drains the queue THROUGH a transient claude failure (claude-failed advances the queue)', () => {
+  it('drains the queue THROUGH a transient claude failure (failed advances the queue)', () => {
     // First selected issue (#50) fails: claude exits non-zero, no label yet.
-    // The loop must apply claude-failed; the gh stub then DROPS #50 from the
+    // The loop must apply failed; the gh stub then DROPS #50 from the
     // search so the next iteration selects a DIFFERENT issue (#51), which
     // succeeds. The queue drains; the guard must NOT break on the transient.
     writeStub(
@@ -220,7 +220,7 @@ echo '{"type":"result","subtype":"success"}'
 exit 0
 `
     )
-    // gh: returns #50 first; once #50 is labeled claude-failed, search returns
+    // gh: returns #50 first; once #50 is labeled failed, search returns
     // #51, then empties. View reports the labels we recorded via edit.
     writeFileSync(join(workdir, 'failed50.txt'), '')
     writeStub(
@@ -230,7 +230,7 @@ FAILED="${join(workdir, 'failed50.txt')}"
 CUR="${join(workdir, 'current.txt')}"
 SEL="${join(workdir, 'selected.log')}"
 if [ "$1" = "issue" ] && [ "$2" = "edit" ]; then
-  # record claude-failed on the issue number ($3)
+  # record failed on the issue number ($3)
   echo "$3" >> "$FAILED"
   exit 0
 fi
@@ -262,7 +262,7 @@ if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
   case "$*" in
     *labels*)
       if [ "$num" = "50" ] && grep -q "50" "$FAILED" 2>/dev/null; then
-        echo "claude-failed"
+        echo "failed"
       else
         echo ""
       fi
@@ -400,8 +400,8 @@ exit 0
   it('sets claude_failed from claude exit (PIPESTATUS[1]) even when jq+tee succeed', () => {
     // claude exits non-zero but emits VALID json that jq/tee process fine
     // (so the tail of the pipe is success). The fix reads PIPESTATUS[1]
-    // (claude), so claude_failed must be 1 -> the loop applies claude-failed.
-    // Observable consequence: `gh issue edit --add-label claude-failed` is
+    // (claude), so claude_failed must be 1 -> the loop applies failed.
+    // Observable consequence: `gh issue edit --add-label failed` is
     // called for the issue.
     writeStub(
       'claude',
@@ -442,8 +442,8 @@ exit 0
     const edits = existsSync(join(workdir, 'edits.log'))
       ? readFileSync(join(workdir, 'edits.log'), 'utf8')
       : ''
-    expect(edits, 'claude_failed must have triggered an --add-label claude-failed edit').toMatch(
-      /--add-label claude-failed/
+    expect(edits, 'claude_failed must have triggered an --add-label failed edit').toMatch(
+      /--add-label failed/
     )
   })
 

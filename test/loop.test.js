@@ -162,7 +162,7 @@ exit 0
 
   // --- gh stub: always report 8 open issues, and always select #98 (the
   // sort:created-asc query). \`gh issue view\` reports the issue as OPEN with no
-  // labels — i.e. claude never managed to label it claude-failed / close it.
+  // labels — i.e. claude never managed to label it failed / close it.
   // This is precisely the zero-progress condition that makes the loop respin.
   // Append to a marker file so the test can prove the SAME issue was selected
   // repeatedly before any guard fires. ---------------------------------------
@@ -1189,7 +1189,7 @@ exit 0
     expect(existsSync(join(workdir, '.ralph', 'tasks', 'afk', 'failed', '002-stuck.md'))).toBe(true)
 
     // The decisive assertion: gh was never invoked — not for the queue count,
-    // not for a label read, and above all not for `--remove-label claude-working`.
+    // not for a label read, and above all not for `--remove-label in-progress`.
     const ghLog = join(workdir, 'gh-called.log')
     expect(
       existsSync(ghLog),
@@ -1199,19 +1199,19 @@ exit 0
 })
 
 // ---------------------------------------------------------------------------
-// Issue #40 — no iteration may end with a stale `claude-working` label. The
+// Issue #40 — no iteration may end with a stale `in-progress` label. The
 // label is added when work starts (prompt-team.md step 2) and removed by the
 // agent on only two paths: PR opened (→ pending-merge) and gave up (→
-// claude-failed). When a merged PR closes the issue via `Closes #N` neither
+// failed). When a merged PR closes the issue via `Closes #N` neither
 // path runs, so the label survives on an issue the loop counted as a SUCCESS.
-// That poisons `claude-working` as the "what is the loop on right now?" signal
+// That poisons `in-progress` as the "what is the loop on right now?" signal
 // and, if the issue is ever reopened, silently excludes it from the queue
-// (the search filter is `-label:claude-working`). Bash owns the sweep because
+// (the search filter is `-label:in-progress`). Bash owns the sweep because
 // it is the component that classifies the outcome. Removal must be idempotent
 // and best-effort: a missing label or a failing/hanging gh must never abort the
 // iteration nor flip its outcome to failed.
 // ---------------------------------------------------------------------------
-describe('ralph.sh claude-working label hygiene — issue #40', () => {
+describe('ralph.sh in-progress label hygiene — issue #40', () => {
   // A one-issue GitHub queue whose `gh issue view` reports the given labels +
   // state, and whose `gh issue edit` records the argv it received to
   // gh-edit.log (so a test can prove exactly what the loop asked GitHub to
@@ -1223,7 +1223,7 @@ describe('ralph.sh claude-working label hygiene — issue #40', () => {
   // hostile paths). That copy adds `logAllCalls` / `editExtra` options which only
   // its tests need; keep the two in sync when changing the stub's behavior.
   function seedLabelledIssue({
-    labels = 'claude-working',
+    labels = 'in-progress',
     state = 'CLOSED',
     editExit = 0,
     claudeExit = 0,
@@ -1279,8 +1279,8 @@ exit 0
     return readFileSync(f, 'utf8').trim().split('\n').filter(Boolean)
   }
 
-  it('removes claude-working from an issue counted as a success because it is CLOSED', () => {
-    seedLabelledIssue({ labels: 'claude-working', state: 'CLOSED' })
+  it('removes in-progress from an issue counted as a success because it is CLOSED', () => {
+    seedLabelledIssue({ labels: 'in-progress', state: 'CLOSED' })
 
     const res = runLoop({ timeout: 15000 })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
@@ -1290,16 +1290,16 @@ exit 0
 
     const edits = readEdits()
     expect(
-      edits.some((e) => /^issue edit 1 .*--remove-label claude-working/.test(e)),
-      `loop never removed claude-working. gh issue edit calls:\n${edits.join('\n')}`,
+      edits.some((e) => /^issue edit 1 .*--remove-label in-progress/.test(e)),
+      `loop never removed in-progress. gh issue edit calls:\n${edits.join('\n')}`,
     ).toBe(true)
   })
 
-  it('removes claude-working on the pending-merge success path (never both labels)', () => {
-    // The agent opened a PR and set pending-merge but left claude-working on
+  it('removes in-progress on the pending-merge success path (never both labels)', () => {
+    // The agent opened a PR and set pending-merge but left in-progress on
     // (or the removal half of its two-flag edit failed): after the iteration
     // the two labels must never coexist.
-    seedLabelledIssue({ labels: 'pending-merge,claude-working', state: 'OPEN' })
+    seedLabelledIssue({ labels: 'pending-merge,in-progress', state: 'OPEN' })
 
     const res = runLoop({ timeout: 15000 })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
@@ -1308,19 +1308,19 @@ exit 0
 
     const edits = readEdits()
     expect(
-      edits.some((e) => /^issue edit 1 .*--remove-label claude-working/.test(e)),
-      `loop never removed claude-working. gh issue edit calls:\n${edits.join('\n')}`,
+      edits.some((e) => /^issue edit 1 .*--remove-label in-progress/.test(e)),
+      `loop never removed in-progress. gh issue edit calls:\n${edits.join('\n')}`,
     ).toBe(true)
     // And it never re-adds it.
-    expect(edits.some((e) => /--add-label claude-working/.test(e))).toBe(false)
+    expect(edits.some((e) => /--add-label in-progress/.test(e))).toBe(false)
   })
 
-  it('a failed iteration ends with claude-failed and no claude-working', () => {
-    // Agent exits non-zero, issue still OPEN carrying claude-working and no
-    // exclusion label: bash marks it claude-failed, and the stale
-    // claude-working must go with it.
+  it('a failed iteration ends with failed and no in-progress', () => {
+    // Agent exits non-zero, issue still OPEN carrying in-progress and no
+    // exclusion label: bash marks it failed, and the stale
+    // in-progress must go with it.
     seedLabelledIssue({
-      labels: 'claude-working',
+      labels: 'in-progress',
       state: 'OPEN',
       claudeExit: 1,
       drains: false,
@@ -1332,10 +1332,10 @@ exit 0
     expect(res.stdout).toMatch(/0 ok, [1-9]\d* failed/)
 
     const edits = readEdits()
-    expect(edits.some((e) => /--add-label claude-failed/.test(e))).toBe(true)
+    expect(edits.some((e) => /--add-label failed/.test(e))).toBe(true)
     expect(
-      edits.some((e) => /^issue edit 1 .*--remove-label claude-working/.test(e)),
-      `loop never removed claude-working on the failure path. gh issue edit calls:\n${edits.join('\n')}`,
+      edits.some((e) => /^issue edit 1 .*--remove-label in-progress/.test(e)),
+      `loop never removed in-progress on the failure path. gh issue edit calls:\n${edits.join('\n')}`,
     ).toBe(true)
   })
 
@@ -1349,14 +1349,14 @@ exit 0
 
     // No "does it have the label?" pre-check — gh treats removing an absent
     // label as a no-op, so the terminal path makes exactly one attempt.
-    const removals = readEdits().filter((e) => /--remove-label claude-working/.test(e))
+    const removals = readEdits().filter((e) => /--remove-label in-progress/.test(e))
     expect(removals.length).toBe(1)
   })
 
   it.each([1, 124])(
     'a gh issue edit that exits %i (failure / timeout) neither aborts the iteration nor flips it to failed',
     (editExit) => {
-      seedLabelledIssue({ labels: 'claude-working', state: 'CLOSED', editExit })
+      seedLabelledIssue({ labels: 'in-progress', state: 'CLOSED', editExit })
 
       const res = runLoop({ timeout: 15000 })
       expect(res.signal, `loop hung. stdout:\n${res.stdout}\nstderr:\n${res.stderr}`).toBeNull()
@@ -1365,7 +1365,7 @@ exit 0
       expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
       expect(res.stdout).toContain('Queue empty, exiting.')
       expect(res.stdout).toMatch(/1 ok, 0 failed/)
-      expect(readEdits().some((e) => /--remove-label claude-working/.test(e))).toBe(true)
+      expect(readEdits().some((e) => /--remove-label in-progress/.test(e))).toBe(true)
     },
   )
 })

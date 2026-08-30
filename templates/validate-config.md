@@ -79,6 +79,6 @@ Pre-validation `ralph.config.sh` sha256: `{{CURRENT_CONFIG_HASH}}`
 - Do NOT run `npm install`, `pytest`, `cargo build`, etc. Inspect
   manifests by reading them; do not execute them.
 - Do NOT touch GitHub: no `gh issue ...`, no `gh pr ...`, no
-  `claude-working` label changes.
+  `in-progress` label changes.
 - Do NOT push branches or create PRs.
 - Stay inside `{{PROJECT_ROOT}}`.

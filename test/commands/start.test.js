@@ -64,9 +64,9 @@ const baseDeps = () => ({
 // scope so the #24 notice block and the #25 prompt block drive one identical
 // preflight — a divergence between them would hide a regression in either.
 const ORPHAN_KEY =
-  'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"'
+  'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"'
 const QUEUE_KEY =
-  'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length'
+  'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length'
 const NPM_VIEW = 'npm view @lucasfe/ralph version'
 const LAUNCH_KEY = `tmux new -d -s ${SESSION} cd '/repo' && RALPH_TMUX_SESSION='${SESSION}' bash '${RALPH_TEMPLATE}'`
 const T0 = Date.parse('2026-08-22T12:00:00.000Z')
@@ -127,12 +127,12 @@ describe('startCommand', () => {
         stderr: '',
       },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     const result = await startCommand(deps)
@@ -156,12 +156,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     const result = await startCommand(deps)
@@ -197,12 +197,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     const result = await startCommand(deps)
@@ -218,12 +218,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '3', stderr: '' },
       [launchKey]: {
         exitCode: 0,
@@ -249,12 +249,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${session}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [launchKey]: { exitCode: 0, stdout: '', stderr: '' },
     })
@@ -264,23 +264,23 @@ describe('startCommand', () => {
     expect(session).not.toBe(SESSION)
   })
 
-  it('warns about orphan claude-working labels and never removes them automatically', async () => {
+  it('warns about orphan in-progress labels and never removes them automatically', async () => {
     const deps = baseDeps()
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '  #42 stuck\n  #43 also stuck',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '0', stderr: '' },
     })
     await startCommand(deps)
-    expect(deps.stdout.output()).toContain("⚠️  Issues with the 'claude-working' label")
+    expect(deps.stdout.output()).toContain("⚠️  Issues with the 'in-progress' label")
     expect(deps.stdout.output()).toContain('Keeping labels')
-    expect(deps.stdout.output()).toContain('gh issue edit <n> --remove-label claude-working')
+    expect(deps.stdout.output()).toContain('gh issue edit <n> --remove-label in-progress')
     expect(deps.exec.calls.some((c) => c.includes('--remove-label'))).toBe(false)
   })
 
@@ -976,12 +976,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '2', stderr: '' },
       [launchKey]: {
         exitCode: 0,
@@ -1017,12 +1017,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [launchKey]: {
         exitCode: 0,
@@ -1046,12 +1046,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [launchKey]: {
         exitCode: 0,
@@ -1083,12 +1083,12 @@ describe('startCommand', () => {
     deps.exec = makeExec({
       [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
       'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-      'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+      'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
         exitCode: 0,
         stdout: '',
         stderr: '',
       },
-      'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+      'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
         { exitCode: 0, stdout: '1', stderr: '' },
       [launchKey]: {
         exitCode: 0,
@@ -1147,12 +1147,12 @@ describe('startCommand', () => {
       deps.exec = makeExec({
         [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
         'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-        'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
           exitCode: 0,
           stdout: '',
           stderr: '',
         },
-        'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+        'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
           { exitCode: 0, stdout: '0', stderr: '' },
       })
       const result = await startCommand({ ...deps, cwd })
@@ -1167,12 +1167,12 @@ describe('startCommand', () => {
       deps.exec = makeExec({
         [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
         'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-        'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
           exitCode: 0,
           stdout: '',
           stderr: '',
         },
-        'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+        'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
           { exitCode: 0, stdout: '0', stderr: '' },
       })
       const result = await startCommand({ ...deps, cwd })
@@ -1192,12 +1192,12 @@ describe('startCommand', () => {
       deps.exec = makeExec({
         [`tmux has-session -t ${SESSION}`]: { exitCode: 1, stdout: '', stderr: '' },
         'gh auth status': { exitCode: 0, stdout: '', stderr: '' },
-        'gh issue list --state open --label claude-working --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
+        'gh issue list --state open --label in-progress --json number,title -q .[] | "  #\\(.number) \\(.title)"': {
           exitCode: 0,
           stdout: '',
           stderr: '',
         },
-        'gh issue list --search state:open -label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
+        'gh issue list --search state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge --limit 100 --json number -q . | length':
           { exitCode: 0, stdout: '0', stderr: '' },
       })
       await startCommand({ ...deps, cwd })

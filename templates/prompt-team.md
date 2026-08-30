@@ -34,7 +34,7 @@ the headless run ends the turn and then waits for any surviving background task
 up to a fixed ceiling (10 minutes by default), after which it TERMINATES the
 whole session. The orphaned subagent's report can never reach you, because your
 turn is already over: nothing gets committed, no PR is opened, and the issue is
-left open holding `claude-working` — which excludes it from the queue, so the
+left open holding `in-progress` — which excludes it from the queue, so the
 loop silently skips it on every later cycle until a human intervenes.
 
 This has already cost real work. Three separate invocations died exactly this
@@ -51,7 +51,7 @@ So, without exception:
   account for every subagent you dispatched. Started count must equal finished
   count. If one is still running, wait for it.
 - If a dispatch genuinely hangs and you must abandon it, go to "Failed" and say
-  so in the issue comment. An honest `claude-failed` re-enters triage; a
+  so in the issue comment. An honest `failed` re-enters triage; a
   truncated "success" does not.
 
 ## Required sequence
@@ -60,13 +60,13 @@ So, without exception:
 
 1. **Select issue**: run
    ```
-   gh issue list --state open --search '-label:claude-working -label:claude-failed -label:do-not-ralph -label:pending-merge sort:created-asc' --limit 1 --json number,title,body
+   gh issue list --state open --search '-label:in-progress -label:failed -label:do-not-ralph -label:pending-merge sort:created-asc' --limit 1 --json number,title,body
    ```
    Take the first. If the list is empty, write "RALPH_DONE" and exit.
    (The bash already checks this before invoking you, so normally there
    will be one.)
 
-2. **Mark in progress**: `gh issue edit N --add-label claude-working`
+2. **Mark in progress**: `gh issue edit N --add-label in-progress`
 
 3. **Prepare branch**: `git checkout {{DEV_BRANCH}} && git pull && git checkout -b issue-N`
 
@@ -313,7 +313,7 @@ reviewers** instead of a single pass:
    - `gh issue view N --json state -q .state`
    - If `OPEN` (PR was merged into a non-default branch like
      `{{DEV_BRANCH}}`, so GitHub auto-close did NOT fire):
-     `gh issue edit N --remove-label claude-working --add-label pending-merge`
+     `gh issue edit N --remove-label in-progress --add-label pending-merge`
      The issue will close automatically when {{DEV_BRANCH}} rolls
      forward to {{MAIN_BRANCH}}.
    - If `CLOSED` (auto-close fired because PR_TARGET=={{MAIN_BRANCH}}):
@@ -321,7 +321,7 @@ reviewers** instead of a single pass:
 
 ## Failed (at any point)
 
-- `gh issue edit N --remove-label claude-working --add-label claude-failed`
+- `gh issue edit N --remove-label in-progress --add-label failed`
 - `gh issue comment N --body "Claude tried but failed: <short reason>. See log in logs/ralph-issue-N.log and PR (if opened)."`
 - If a PR was opened: `gh pr close <pr>`
 - Exit.
