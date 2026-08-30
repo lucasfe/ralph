@@ -1099,9 +1099,9 @@ exit 0
   })
 
   it('completes with no transition and ONE warning when JIRA_DONE_STATUS is not configured', () => {
-    // The default configuration — templates/ralph.config.sh ships `JIRA_DONE_STATUS=""` — and
-    // the one that has to work on a board Ralph knows nothing about. No config file at all
-    // here, which is the absent case rather than the empty one.
+    // The unconfigured case, which has to work on a board Ralph knows nothing about. No
+    // config file at all here, which is the ABSENT case rather than the empty one — and it
+    // stays reachable whatever init writes, since a repo can run the loop without one.
     seedStubs({ labels: '["frontend","in-progress"]' })
     completingAgent()
 
