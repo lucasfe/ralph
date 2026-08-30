@@ -988,7 +988,7 @@ own](#what-is-still-githubs) at the bottom of this one.
 > prompt render, and the whole bash arm driven end-to-end against a stubbed `acli` on a
 > prepended `PATH` all have coverage
 > — but no test has ever spoken to a real Jira site, and that is deliberate rather
-> than an omission: four of the seven `acli` invocations are **writes** to somebody's
+> than an omission: four of the eight `acli` invocations are **writes** to somebody's
 > board — a label, a label removal, a transition and a comment — so the stub never
 > comes off `PATH`, not even in the test about a missing binary. What that leaves
 > unverified is the shape of `acli` itself, which is **transcribed from its
@@ -1193,7 +1193,7 @@ count, and text that is not a plain integer is not a count either — an empty a
 is the shape a broken spawn produces, and reading it as `0` would be reading a
 failure as a fact about your board.
 
-The other six calls read the same way. The selection is the **same composed
+The other seven calls read the same way. The selection is the **same composed
 query** with `--limit 1 --json --fields key,summary`, so the ticket that comes back is
 drawn from exactly the set the count counted, and — with the caveat below — first by the
 ordering that query carries. The claim is **two** calls rather than one:
@@ -1222,22 +1222,30 @@ move, a refused removal leaves a ticket carrying both labels (untidy, and still 
 the queue, since the exclusion matches `done` too), and a refused comment costs the
 audit trail — none of the three costs the iteration.
 
-The **sweep** adds no eighth call: `locate` is the claim's label read on its own, and
+The **sweep** adds no call of its own: `locate` is the claim's label read on its own, and
 `fail` is the claim's read-then-union write — with `failed` added instead of
-`in-progress` — followed by the completion's `--remove-labels`. So the seven above are
+`in-progress` — followed by the completion's `--remove-labels`. So those seven are
 the whole inventory whichever way an iteration ends, and the sweep inherits their
 failure shapes. A label list nobody can read is the one that reads differently at each
 end: `locate` reports it as `unknown`, which the loop treats as "not provably done" and
 sweeps, while `fail` writes nothing at all, for the claim's reason — a blind write is
 the one way to lose a label.
 
+The **eighth** call belongs to no iteration at all: `ralph status` asks the board for the
+**summaries** of the tickets on its task table, in one
+`acli jira workitem search --jql "key IN (…)" --limit <n> --json --fields key,summary`.
+It is a read, it is made by a read-only view, and every way it can fail costs prose and
+nothing else — [Where the titles come from, and what they
+cost](#the-progress-line-and-the-task-table) has its gates and its failure shape.
+
 **Every `acli` spelling on this page is transcribed from Atlassian's documentation, not
 measured.** Nothing in this repo has ever run a real `acli` — there is none in CI, and
-four of these seven calls write to a live board — so every test injects its own spawner
+four of these eight calls write to a live board — so every test injects its own spawner
 and every argv on this page is read off the docs rather than observed working. Three
 claims in particular are the docs' and not Ralph's: that `--fields` on `search` accepts
 only `issuetype, key, assignee, priority, status, summary, reporter, labels` (which is
-why the selection asks for `key,summary` and nothing more); that it restricts the fields
+why the selection and the title lookup both ask for `key,summary` and nothing more);
+that it restricts the fields
 *fetched* without touching what may be ordered on — so the `ORDER BY created ASC` above
 is *expected* to decide which single ticket `--limit 1` returns, not confirmed to; and,
 weakest of the three, the `--yes` on the **comment**, which is extrapolated from the
@@ -1247,9 +1255,9 @@ than hedged into uselessness: a flag `acli` rejects exits non-zero, so a bad spe
 costs the count, or costs the read and therefore writes nothing, and says so on stderr;
 a wrong ordering costs you only oldest-first, since the queue still drains one ticket
 per iteration; and a rejected `--yes` on the comment costs the comment alone, quietly,
-with one line on stderr. `lib/jira-acli.js` holds **every** one of those seven argvs in
+with one line on stderr. `lib/jira-acli.js` holds **every** one of those eight argvs in
 one place, and says at each which parts are unmeasured — `lib/jira-queue.js` above it
-holds the verbs (count, pick, claim, complete, comment, locate, fail) and what a failure
+holds the verbs (count, pick, claim, complete, comment, locate, fail, titles) and what a failure
 of each means for the queue, as `lib/jira-auth.js` holds the login probe — so a
 correction is one edit and not a search.
 
@@ -1304,15 +1312,22 @@ two, against a denominator that is the Jira depth, with the ticket in hand as th
 in flight. That task is named by its **key** (`FOO-123`) rather than a `#number`, in the
 progress line and in the per-task table
 under it — the rows a **finished** ticket leaves behind included, because the event carries
-the key too — and by the key alone: the run state records the key, not the summary the
-selection read. The places that name a task a run has *finished with* mostly follow the
-same rule — the `last task` row on the report card a killed run leaves behind, and
-the task [`ralph digest`](#quick-start) narrates — with two exceptions, both named below.
+the key too. The progress line names the key and no summary, because nothing Ralph writes
+records one; a **table row** carries the ticket's summary beside its key, which
+`ralph status` looks up from the board itself in one `acli` search over the keys the table
+is about to draw ([where the titles come from](#the-progress-line-and-the-task-table) has
+that call, its gates and its failure shape) — a courtesy, so a lookup that fails leaves
+every row its key and nothing else. The places that name a task a run has *finished with*
+mostly follow the same rule — the `last task` row on the report card a killed run leaves
+behind, and the task [`ralph digest`](#quick-start) narrates — with two exceptions, both
+named below.
 The derived `#number` is mostly left where
 machines read it: `current.number` in
 [the record itself](#run-state--ralphrun-statejson-and-ralph-status),
 [`ralph status --json`](#machine-readable-output--ralph-status---json)'s
-`tasks.current.number`, whose key set is frozen, and each event's `issue_number`.
+`tasks.current.number` — which now publishes `tasks.current.task_key` beside it, so a
+machine reading that document is handed the ticket's own name and the number is a handle it
+may ignore — and each event's `issue_number`.
 
 **Two human surfaces still show that number**, and both are summary lines a command builds
 out of the events rather than out of the run record. `ralph cycle`'s summary builds its
@@ -2533,8 +2548,9 @@ fails the command, and it never reads as `0 waiting`. Only the live views pay
 for it: `idle` and `never-run` skip the count entirely — no subprocess, no
 directory scan. It is also the **denominator** the `progress` line counts against,
 and it is bought **first** — before the one other subprocess a live view may
-spend, the issue-title lookup described next — because it is the number the view
-cannot do without, and the titles are only prose.
+spend, the task-title lookup described next (`gh` under `github`, `acli` under
+`jira`) — because it is the number the view cannot do without, and the titles are
+only prose.
 
 #### The progress line and the task table
 
@@ -2588,7 +2604,7 @@ Under it, one row per task the run has touched, in the order
 
 | Column | What it says |
 | --- | --- |
-| `task` | The zero-padded number — or the Jira **key** for a ticket that has one — and the issue title beside it when one could be looked up. The number is the fact and the title is context, so a row with no title is the number alone rather than a gap, and the column is only ever as wide as the widest title actually on show. A Jira row is the key alone: titles are looked up for GitHub issue numbers, and a ticket's summary is not in the record. |
+| `task` | The zero-padded number — or the Jira **key** for a ticket that has one — and the task's title beside it when one could be looked up. The name is the fact and the title is context, so a row with no title is that name alone rather than a gap, and the column is only ever as wide as the widest title actually on show. A row is titled by whatever **names** it: a GitHub row asks for its number and a Jira row asks for its key, so a ticket is never titled with the prose of the GitHub issue whose number its key happens to derive to — `FOO-101` beside a `101` in the map is left untitled rather than borrowing it. |
 | `verdict` | `✅ pass`, `❌ fail`, `❔ unknown` for a task the loop closed without recording one, and `🔄 live` for the one still running. Marker **and** word, never the marker alone: the glyph is what you scan for down the column, and the word is what survives a terminal without the font, a `grep`, and a reader who cannot see colour or emoji at all. |
 | `cost` | What the task recorded, to the cent, or `–` when nothing was recorded. Never `$0.00`, which is the whole reason this column is worth a table: a reader scanning it must never have to wonder whether a row was free or unmeasured. A positive amount under a cent reads `<$0.01`, exactly as it does in the `spend` line. |
 | `time` | Minutes, rather than the `3h12m` the run-scale spans use, because this column is read *down* — against the other rows and against the `~84 min/task` pace line below it, which is the unit that comparison happens in. The task in flight wears a `~`, since its number is still moving. |
@@ -2616,30 +2632,33 @@ the three modes that print the report card or the one-line greeting: an
 `interrupted` run's history belongs to its card, not to a table with a `🔄 live` row
 in it.
 
-**Where the titles come from, and what they cost.** Nothing Ralph writes records an
-issue title — neither the
+**Where the titles come from, and what they cost.** Nothing Ralph writes records a
+task's title — neither the
 [per-issue events](#per-issue-stream--ralphmetricsissuesjsonl) nor the run-state
-record carries one — so the live view looks them up with one extra call,
-`gh issue list --state all --limit 100 --json number,title`, made at the git
-toplevel after the queue count. `--state all` is the whole difference between it and
-the count: the table's closed rows are issues this run has just *closed*, so an
-open-only query would title the queue and leave every row above it blank.
+record carries one — so the live view looks them up with one extra call, and **which
+call** is the one thing that varies by task source:
 
-That call is gated **tighter** than the queue count, on three independent
-conditions:
+| Source | The lookup |
+| --- | --- |
+| `github` | `gh issue list --state all --limit 100 --json number,title`, made at the git toplevel after the queue count. `--state all` is the whole difference between it and the count: the table's closed rows are issues this run has just *closed*, so an open-only query would title the queue and leave every row above it blank. |
+| `jira` | `acli jira workitem search --jql "key IN (…)" --limit <n> --json --fields key,summary` — **one** call naming every ticket on the table at once, not one per row. The keys come off the rows themselves (the events' `task_key` plus the one in flight), so the query asks about the tickets actually on show and nothing else, and `--limit` is the number of **tickets** the query names — the keys de-duplicated, not the rows counted — rather than a page size, so a table of nine rows cannot come back titled five. Each key is checked against the [key grammar](#the-jira-source-today) before it goes into that query and dropped if it fails; if none survives, **no process is started**. |
+| `folder` | None. A folder task's title lives inside its own file, and folder mode is deliberately GitHub-free — it is the mode for repos that have no GitHub at all. |
+
+Whichever call it is, it is gated **tighter** than the queue count, on three
+independent conditions:
 
 | Only when | Why |
 | --- | --- |
 | the mode is `running` | The other three modes print the report card or the greeting, so a lookup for them would buy prose that nothing renders. |
 | `--json` is off | [The document](#machine-readable-output--ralph-status---json) publishes no titles and no rows, so the call would buy a consumer nothing — and skipping it keeps `--json` the cheap surface a shell prompt can poll on a timer. |
-| the task source is not `folder` | A folder task's title lives inside its own file, and folder mode is deliberately `gh`-free: it is the mode for repos that have no GitHub at all. Every other source reads its issues from GitHub, so every other source gets the lookup. |
+| the source has somewhere to ask | The table above: GitHub for `github`, the board for `jira`, nowhere for `folder`. A `jira` run makes **no `gh` call at all** — it may be a repo with no GitHub remote — and a `jira` run whose rows carry no key makes no `acli` title call either, because there is nothing to ask about. |
 
-And it is a **courtesy, never a fact**. Every way the lookup can fail — `gh`
-missing, unauthenticated, timed out, or answering with something that is not a list
-of issues — resolves to no titles at all, and every row then renders as its number,
-which is exactly what folder mode renders on purpose. Nothing is said about it,
-because `ralph status` writes to stderr in no mode; the command still exits `0` with
-the table intact.
+And it is a **courtesy, never a fact**. Every way either lookup can fail — the
+binary missing, unauthenticated, timed out, or answering with something that is not a
+list of issues or work items — resolves to no titles at all, and every row then
+renders as its number or its key, which is exactly what folder mode renders on
+purpose. Nothing is said about it, because `ralph status` writes to stderr in no
+mode; the command still exits `0` with the table intact.
 
 A title is also the **second** piece of text in this view that Ralph did not write —
 the other is [the digest narration](#the-digest-section) — and it is the less
@@ -2812,7 +2831,7 @@ clock:
   "mode": "running",
   "run_id": "ralph-ralph-b36ff7b1-1718700000",
   "progress": { "completed": 2, "in_flight": 1, "remaining": 6, "total": 9 },
-  "tasks": { "current": { "number": 31, "started_at": "2026-08-25T18:52:00Z" } },
+  "tasks": { "current": { "number": 31, "started_at": "2026-08-25T18:52:00Z", "task_key": null } },
   "pace": { "basis": "last3-in-run", "per_task_min": 84, "fastest_min": 71, "slowest_min": 97, "samples": 2 },
   "eta": { "remaining_min": 548, "finish_at": "2026-08-26T04:40:00Z", "range_min": [457, 639], "basis": "last3-in-run" },
   "spend": { "usd": 62.85, "per_task_usd": 31.425, "projected_usd": 251.4 },
@@ -2832,15 +2851,20 @@ narration: the document is that block of prose in full, and it is elided here
 because nothing else in the document is prose.
 
 A projection of the snapshot is not the whole of it, and the one thing left out is
-deliberate: the document publishes **no per-task rows and no issue titles**, so
+deliberate: the document publishes **no per-task rows and no task titles**, so
 [the task table](#the-progress-line-and-the-task-table) has no counterpart here and
-the extra `gh` call that titles it is never made under `--json`. The keys below are
+the extra call that titles it — `gh` under `github`, `acli` under `jira` — is never
+made under `--json`. The keys below are
 the one thing about this command that cannot be fixed after release, and a run's
 task-by-task history is already on disk, one line per task, in
 [`issues.jsonl`](#per-issue-stream--ralphmetricsissuesjsonl) — which is where a
 consumer that wants the rows reads them, and where the table's own elision line
 points a human. `progress.completed` and `tasks.current` are what the document says
-about the same fact instead, and they have said it since **0.20.0**, unchanged.
+about the same fact instead, and they have said it since **0.20.0**. No key has
+changed meaning or gone away in that time; what the document has done is **grow**, twice —
+[`digest`](#the-digest-section) in **0.22.0**, and now `tasks.current.task_key`, which
+names a Jira ticket the number beside it cannot and is `null` in every document a `github`
+or `folder` run prints.
 
 | Field | Meaning |
 | --- | --- |
@@ -2848,7 +2872,8 @@ about the same fact instead, and they have said it since **0.20.0**, unchanged.
 | `run_id` | The [join key](#run_id--the-join-key) as a string, or `null` in `never-run`. An `idle` document still names the run that just ended, so its history in `issues.jsonl` stays reachable. |
 | `progress.completed`, `progress.in_flight` | Tasks this run has finished, and whether one is in flight (`0` or `1`). |
 | `progress.remaining`, `progress.total` | The **live** queue depth, and `completed + in_flight + remaining`. Both `null` when the count failed — "nothing left" and "we could not look" are different answers. |
-| `tasks.current` | `{ number, started_at }` for the task in flight, and `null` **exactly** when `progress.in_flight` is `0`. Those two keys and no others, at every task source: under [`TASK_SOURCE="jira"`](#the-jira-source-today) the human view names the ticket by its key while `number` here carries the key's **number** (`FOO-123` → `123`), because this document's key set is the one thing about the command that cannot be fixed after release. Publishing the key itself is a follow-up rather than an omission. Gated on that count rather than on the record, because a terminal record deliberately keeps `current` (it names the last task the run worked on) and reading it directly would have an `idle` document claim a finished run is still working. |
+| `tasks.current` | `{ number, started_at, task_key }` for the task in flight, and `null` **exactly** when `progress.in_flight` is `0`. Those three keys and no others, at every task source. Gated on that count rather than on the record, because a terminal record deliberately keeps `current` (it names the last task the run worked on) and reading it directly would have an `idle` document claim a finished run is still working. |
+| `tasks.current.task_key` | The Jira **key** of the ticket in flight (`"FOO-123"`) under [`TASK_SOURCE="jira"`](#the-jira-source-today), and `null` at every other source — where the task has no key, rather than one that could not be read. Published **verbatim**, exactly as the record spells it, because a key is an identity and a re-spelled one addresses no ticket: the table's cell is scrubbed and truncated for a terminal, and this is not a terminal. **Unbounded in length** for the same reason, and the same rule `run_id` has always had — a 100 kB key hand-written into `.ralph/run-state.json` is published at 100 kB rather than cut into a key that names nothing. `number` beside it still carries the key's **derived** number (`FOO-123` → `123`), which is a handle a consumer may now ignore — [and should](#the-jira-source-today), since it is not unique across projects. Always **present**: a `github` or `folder` document publishes the key as `null` rather than dropping it, so `.tasks.current.task_key` resolves wherever `tasks.current` does. |
 | `pace.basis`, `eta.basis` | `last3-in-run`, `all-time`, or `unknown` — which sample set the pace came from. One value from one read, published on both sections: the ETA is the number a reader distrusts, and being told it came from the last three tasks is what makes it checkable. |
 | `pace.per_task_min` | The pace as whole minutes per task — the `~84 min/task` the human line prints. |
 | `pace.fastest_min`, `pace.slowest_min` | The observed extremes of the **same** samples, published here beside the mean they were measured with, because they are a fact about tasks rather than about the finish. |
