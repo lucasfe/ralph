@@ -201,6 +201,82 @@ frame's own constant would be satisfied by any mistake the two halves agreed on,
 which is the single failure mode a seam has and the only one those files are for.
 The duplication is the instrument; do not "DRY" it away.
 
+### Label names live in one module (#139)
+
+`lib/labels.js` is the **only JavaScript in this repository that spells a Ralph
+GitHub label**, and the place the issue-eligibility query is *composed* rather
+than typed. It exports the four names — `IN_PROGRESS_LABEL`, `FAILED_LABEL`,
+`PENDING_MERGE_LABEL`, and `SKIP_LABEL`, the `do-not-ralph` marker a **human**
+applies and the only one of the four Ralph never creates — plus `RALPH_LABELS`
+(all four, in the order the exclusion uses them), `MANAGED_LABELS` (the three
+Ralph *does* create, each with the colour and the user-visible description
+`gh label create` publishes), `LEGACY_LABELS` (names Ralph has retired; empty
+today), `LABEL_EXCLUSION` (the `-label:` clauses alone) and
+`ISSUE_SEARCH_QUERY` (the whole `state:open …` query). It is pure and
+**edgeless** — no clock, no environment, no filesystem, and no imports at all,
+like `git-remote-slug.js` and `jira-jql.js` beside it — and everything it hands
+out is frozen *down to the spec objects*, because a module-level array every
+command imports is shared mutable state and one `.push` in a consumer would
+change the vocabulary for the whole process.
+
+**Import a name; never retype one.** Every label is one half of a mechanism
+whose other half is somewhere else: the loop **stamps** a label and the query
+**excludes** it, `ralph start` **creates** it and `lib/issue-event.js` **reads it
+back** to decide an issue's outcome, and `lib/orphan-cleanup.js` **hunts**
+exactly the issues the query hides. If any two of those spellings disagree the
+queue stops draining — Ralph is handed the same issue on every pass, forever, at
+a paid agent invocation each time, having already done the work. Before #139 the
+in-progress name was a literal in four modules under `lib/`, and the exclusion
+query was hand-typed in *three* commands (`ralph start`, `ralph cycle`,
+`ralph status`) with nothing checking that the three copies agreed. The clause
+**order** in `RALPH_LABELS` is part of the contract while you are at it: `gh
+issue list --search` does not care, but the pre-existing command specs use the
+assembled query as whole exec-mock command lines, so a reordering is a behaviour
+change as far as the suite is concerned (`lib/labels.js`'s header carries the
+measured count).
+
+Four specs hold that up, and they fail in different directions on purpose:
+
+- `lib/labels.test.js` — the module's own contract, plus a sweep of every
+  non-test `.js` under `lib/` for a leftover literal of the three GitHub-only
+  names. The sweep reads source with `codeWithoutComments`, so **a comment may
+  still name a label** — several explain the mechanism and should.
+- `lib/labels.seam.qa.test.js` — substitutes the module with an obviously fake
+  vocabulary (`qa-…`), drives the consumers for real, and reads back the argv
+  they hand `gh`. Absence of a literal is a static argument; this is the
+  behavioural one, and it is what a rename actually depends on.
+- `lib/labels.parity.test.js` — the copies that **cannot** import:
+  `templates/ralph.sh` composes its own `SEARCH_QUERY` because it runs
+  standalone in tmux, and a prompt template is text an agent reads. A per-file
+  table pins which names each template and prose doc carries, in **both**
+  directions — a listed name must be present, and an unlisted one must be
+  absent.
+- `lib/labels.vocabulary.qa.test.js` — the direction a hardcoded table cannot
+  look: it globs `templates/` from the filesystem, so a **new** label-bearing
+  template goes red the day it lands, and it proves the legacy check has teeth
+  against a synthetic retired name while `LEGACY_LABELS` is still empty.
+
+**One exemption, and it is allowlisted rather than tolerated.**
+`lib/jira-jql.js` still spells `do-not-ralph` itself, because its purity spec
+pins that module at **zero imports** — the property that keeps `ralph doctor`
+able to reach Jira knowledge without dragging anything onto its import graph is
+worth more than deduplicating one string, and the Jira lane names it beside the
+exclusion it feeds either way. So the `lib/` sweep guards three names, not four,
+and the fourth is guarded as an allowlist of exactly one file: a *second*
+`do-not-ralph` literal has to be argued for.
+
+**Editing a doc can turn the suite red.** `README.md` and `CONTRIBUTING.md` are
+rows in the parity table, because a rename that skipped them would leave the
+documented remediation instructions describing a query that no longer runs.
+README is asserted to carry all four names **and exactly one verbatim copy** of
+`ISSUE_SEARCH_QUERY` — counted, not merely contained, so a second copy is a
+deliberate table edit rather than an accident. `CONTRIBUTING.md` is listed with
+the human's `do-not-ralph` **only**, and the negative half of the table means
+introducing one of the other three here fails the suite: that is why this
+section names them by their export identifiers. `CHANGELOG.md` is out of the
+table on purpose — its label mentions sit inside shipped release entries, which
+describe what a past version did, and a rename must not falsify them.
+
 ## Pull requests
 
 - Branch off `main` and open a PR against `main`.
@@ -287,6 +363,13 @@ that section, so a `prompt-team.md` edit to a step all four share can still leav
 the commit-direct pair behind: keep that one in sync by hand. The forked
 orchestrator prose is not asserted either, so you are free to word each agent's
 delegation instructions differently — just keep the shared structure in lockstep.
+
+The **label names** these templates spell have a guard of their own, because a
+template cannot import the module that owns them: see
+[Label names live in one module](#label-names-live-in-one-module-139). A per-file
+table pins which of Ralph's four labels each template carries — and a sweep that
+starts from the filesystem rather than from that table catches a *new*
+label-bearing template the day it lands.
 
 ### Codex maturity, sandbox, and network — do not "tighten" these
 
