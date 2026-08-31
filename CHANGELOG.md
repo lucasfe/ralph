@@ -5,6 +5,34 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.24.0](https://github.com/lucasfe/ralph/compare/v0.23.0...v0.24.0) (2026-08-31)
+
+
+### Features
+
+* `ralph cycle` aborts when acli is not authed ([#134](https://github.com/lucasfe/ralph/issues/134)) ([#162](https://github.com/lucasfe/ralph/issues/162)) ([55056d5](https://github.com/lucasfe/ralph/commit/55056d525c85b7877965b454cf806615b62d9e6d))
+* `ralph init` asks for the task source and the Jira knobs ([#133](https://github.com/lucasfe/ralph/issues/133)) ([#160](https://github.com/lucasfe/ralph/issues/160)) ([f16181d](https://github.com/lucasfe/ralph/commit/f16181d85ae0be5feb19f10bc5f1f58a88b7065c))
+* `ralph start` warns when retired labels are still present ([#141](https://github.com/lucasfe/ralph/issues/141)) ([#172](https://github.com/lucasfe/ralph/issues/172)) ([d18d620](https://github.com/lucasfe/ralph/commit/d18d62082f30d40b023f9b3ce339c7d5b1602313))
+* `ralph status` shows the Jira key and ticket summary ([#132](https://github.com/lucasfe/ralph/issues/132)) ([#159](https://github.com/lucasfe/ralph/issues/159)) ([ef26678](https://github.com/lucasfe/ralph/commit/ef26678a28bc11f50f221abe6f07b1c2b2c19f13))
+* banner reports agent, model, context window, task source and repo ([#69](https://github.com/lucasfe/ralph/issues/69)) ([#115](https://github.com/lucasfe/ralph/issues/115)) ([8710eb2](https://github.com/lucasfe/ralph/commit/8710eb2e5e261004163bc81ef75f3e24ef0a1840))
+* compose the Jira JQL and count the Jira queue ([#126](https://github.com/lucasfe/ralph/issues/126)) ([#152](https://github.com/lucasfe/ralph/issues/152)) ([557fc99](https://github.com/lucasfe/ralph/commit/557fc998e8ec30dd26c4a8a1c06fdca138dd4bc3))
+* Jira completion — transition, done label, and a comment carrying the SHA ([#129](https://github.com/lucasfe/ralph/issues/129)) ([#156](https://github.com/lucasfe/ralph/issues/156)) ([4030c2d](https://github.com/lucasfe/ralph/commit/4030c2d575ddd764718679d04e0720da2d99ae36))
+* Jira drain guarantee — sweep an unfinished ticket to `failed` ([#130](https://github.com/lucasfe/ralph/issues/130)) ([#157](https://github.com/lucasfe/ralph/issues/157)) ([16549e4](https://github.com/lucasfe/ralph/commit/16549e4e2d885fbbe2c9cd31ca68fdb52366cd7a))
+* per-task table and progress against a live denominator in `ralph status` ([#56](https://github.com/lucasfe/ralph/issues/56)) ([#113](https://github.com/lucasfe/ralph/issues/113)) ([9aa49fc](https://github.com/lucasfe/ralph/commit/9aa49fce85f4b8269071ee550b89312c29552fd8))
+* per-ticket telemetry carries the Jira key ([#131](https://github.com/lucasfe/ralph/issues/131)) ([#158](https://github.com/lucasfe/ralph/issues/158)) ([c505323](https://github.com/lucasfe/ralph/commit/c505323e594cda29248948e84266b3146c2f0788))
+* register `jira` as a task source that `ralph doctor` validates ([#125](https://github.com/lucasfe/ralph/issues/125)) ([#151](https://github.com/lucasfe/ralph/issues/151)) ([1a6454d](https://github.com/lucasfe/ralph/commit/1a6454d15b1f08c9aa21940da211670ef602594b))
+* rename `claude-working`/`claude-failed` to `in-progress`/`failed` ([#140](https://github.com/lucasfe/ralph/issues/140)) ([#165](https://github.com/lucasfe/ralph/issues/165)) ([d2069d4](https://github.com/lucasfe/ralph/commit/d2069d4c6314797c3fa93d8b467aef8ae9917e03))
+* select a Jira ticket and claim it with `in-progress` ([#127](https://github.com/lucasfe/ralph/issues/127)) ([#153](https://github.com/lucasfe/ralph/issues/153)) ([e19c29a](https://github.com/lucasfe/ralph/commit/e19c29a647a24fb68d35a0626eaa71d6f3e1dda9))
+* the Jira orchestrator prompt drives one ticket to a local commit ([#128](https://github.com/lucasfe/ralph/issues/128)) ([#155](https://github.com/lucasfe/ralph/issues/155)) ([aebae63](https://github.com/lucasfe/ralph/commit/aebae63b541ca88ce292f38d9051244c74c744cf))
+
+
+### Bug Fixes
+
+* read GH_REPO config-first, like every neighbouring knob ([#120](https://github.com/lucasfe/ralph/issues/120)) ([#146](https://github.com/lucasfe/ralph/issues/146)) ([53b2c91](https://github.com/lucasfe/ralph/commit/53b2c91f8d3c705da4049a481b8aa8036a66efa2))
+* replace the warning-consumer source sweep with behavioural assertions ([#119](https://github.com/lucasfe/ralph/issues/119)) ([#145](https://github.com/lucasfe/ralph/issues/145)) ([1428ce3](https://github.com/lucasfe/ralph/commit/1428ce3617a110c8a9597671c9330b29f5d0c8fd))
+* the assignment grammar refuses two spellings bash does not assign ([#147](https://github.com/lucasfe/ralph/issues/147)) ([#175](https://github.com/lucasfe/ralph/issues/175)) ([77b0cd9](https://github.com/lucasfe/ralph/commit/77b0cd96b12fce2ca6c42eb196d902ad37086314))
+* warn on a typo'd RALPH_AGENT at launch, on stderr ([#118](https://github.com/lucasfe/ralph/issues/118)) ([#144](https://github.com/lucasfe/ralph/issues/144)) ([e36c4a3](https://github.com/lucasfe/ralph/commit/e36c4a38be56d20f7df88015d0348abcb1434b39))
+
 ## [0.23.0](https://github.com/lucasfe/ralph/compare/v0.22.0...v0.23.0) (2026-08-28)
 
 
