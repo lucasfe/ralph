@@ -6,6 +6,9 @@ import { templatePath } from '../../lib/paths.js'
 import { sessionNameFor } from '../../lib/lock.js'
 import { globalConfigPath } from '../../lib/utils/global-config.js'
 import { readVersionCache, versionCachePath } from '../../lib/version-cache.js'
+// #141: the retired spellings, as data. See the migration-warning describe below for why this
+// file composes them instead of typing them.
+import { LEGACY_LABELS } from '../../lib/labels.js'
 
 const RALPH_TEMPLATE = templatePath('ralph.sh')
 
@@ -282,6 +285,139 @@ describe('startCommand', () => {
     expect(deps.stdout.output()).toContain('Keeping labels')
     expect(deps.stdout.output()).toContain('gh issue edit <n> --remove-label in-progress')
     expect(deps.exec.calls.some((c) => c.includes('--remove-label'))).toBe(false)
+  })
+
+  // #141: the retired-label migration warning, beside the orphan notice above and in the same
+  // class — something from a previous state of the world needs a human.
+  //
+  // #140 renamed the two labels the loop stamps without touching anybody's board, on purpose:
+  // Ralph has never run `gh label edit` for a user. So a repository upgraded past #140 with the
+  // retired in-progress spelling still on live issues loses those issues twice over — the
+  // exclusion query spells `in-progress`, so the loop hands one out as fresh work, and the orphan
+  // sweep above lists `--label in-progress`, so it cannot see them to report them either.
+  //
+  // THE RETIRED NAMES ARE COMPOSED HERE, NEVER TYPED, and that is not a style preference: this
+  // file is tracked, and lib/labels.parity.test.js sweeps every tracked file outside
+  // test/helpers/legacy-label-sweep.js's three-file exemption list for a retired spelling. Typing
+  // either retired name below is a red test in that spec, correctly — it is the spelling #140
+  // exists to have removed, and writing it back into a tracked file un-lands the rename by one
+  // file. (Measured the hard way: the first draft of this very comment spelled one out in prose
+  // and the sweep reported it.) Off LEGACY_LABELS' keys instead, which is also how the sweep
+  // itself builds its needles.
+  describe('legacy label migration warning (#141)', () => {
+    const [LEGACY_IN_PROGRESS, LEGACY_FAILED] = Object.keys(LEGACY_LABELS)
+    const LABEL_LIST_KEY = 'gh label list --limit 100 --json name'
+
+    // `gh label list --json name` answers with objects, not bare names.
+    const labelListing = (...names) => JSON.stringify(names.map((name) => ({ name })))
+
+    // A full github-source preflight that reaches the tmux launch, so every case below can
+    // assert the run was not aborted as well as what it printed.
+    const legacyPreflight = (listStdout) =>
+      makeExec(
+        preflight({
+          [QUEUE_KEY]: { exitCode: 0, stdout: '1', stderr: '' },
+          [LABEL_LIST_KEY]: { exitCode: 0, stdout: listStdout, stderr: '' },
+        }),
+      )
+
+    // The whole command a user is meant to paste, spelled out rather than assembled from the
+    // module: this file's job is to disagree with start.js, not to follow it.
+    const MIGRATE_IN_PROGRESS =
+      `gh label edit ${LEGACY_IN_PROGRESS} --name in-progress` +
+      " --description 'Ralph loop in progress'"
+    const MIGRATE_FAILED =
+      `gh label edit ${LEGACY_FAILED} --name failed` +
+      " --description 'Ralph loop tried and gave up'"
+
+    it('names the retired label, the exact command, and what it costs until it is run', async () => {
+      const deps = updateDeps()
+      deps.exec = legacyPreflight(labelListing('in-progress', LEGACY_IN_PROGRESS, 'bug'))
+      const result = await startCommand(deps)
+      const out = deps.stdout.output()
+      expect(out).toContain(`⚠️  Retired label '${LEGACY_IN_PROGRESS}' still exists on this board`)
+      expect(out).toContain(MIGRATE_IN_PROGRESS)
+      // The consequence, in the warning itself, in BOTH of its halves. "Rename this label"
+      // without them reads like tidying, and the first draft's single line read worse than
+      // that — it said the issues were invisible to Ralph, which is the inverse of what this
+      // very run does. The queue below excludes the CURRENT names, so an issue whose only Ralph
+      // label is the retired one is selected by it, as fresh work, at an invocation a pass. The
+      // thing that cannot see those issues is the orphan sweep, which lists `in-progress`.
+      expect(out).toContain('no longer excluded from the queue')
+      expect(out).toContain('picks them up again as fresh work')
+      expect(out).toContain('The orphan sweep can no longer see them either')
+      // The false claim, pinned as absent so it cannot come back as a reword.
+      expect(out).not.toContain('invisible to Ralph')
+      // ...and the run is not over: a nuisance is not a broken setup.
+      expect(result.started).toBe(true)
+      expect(result.exitCode).toBe(0)
+      expect(deps.exec.calls).toContain(LAUNCH_KEY)
+    })
+
+    it('says nothing when the board carries only the current names', async () => {
+      const deps = updateDeps()
+      deps.exec = legacyPreflight(
+        labelListing('in-progress', 'failed', 'pending-merge', 'do-not-ralph'),
+      )
+      const result = await startCommand(deps)
+      expect(deps.stdout.output()).not.toContain('Retired label')
+      expect(deps.stdout.output()).not.toContain('gh label edit')
+      expect(result.started).toBe(true)
+    })
+
+    it('reports both retired labels, each with its own command', async () => {
+      const deps = updateDeps()
+      deps.exec = legacyPreflight(labelListing(LEGACY_FAILED, LEGACY_IN_PROGRESS))
+      const result = await startCommand(deps)
+      const out = deps.stdout.output()
+      expect(out).toContain(`⚠️  Retired label '${LEGACY_IN_PROGRESS}' still exists on this board`)
+      expect(out).toContain(`⚠️  Retired label '${LEGACY_FAILED}' still exists on this board`)
+      expect(out).toContain(MIGRATE_IN_PROGRESS)
+      expect(out).toContain(MIGRATE_FAILED)
+      // Two commands and not one generic instruction: the names differ and so do the
+      // descriptions, so a single line could not be pasted for either.
+      expect(out.split('gh label edit')).toHaveLength(3)
+      expect(result.started).toBe(true)
+    })
+
+    it('stays silent, and still launches, when the label list fails', async () => {
+      const deps = updateDeps()
+      deps.exec = makeExec(
+        preflight({
+          [QUEUE_KEY]: { exitCode: 0, stdout: '1', stderr: '' },
+          [LABEL_LIST_KEY]: { exitCode: 1, stdout: '', stderr: 'gh: HTTP 403' },
+        }),
+      )
+      const result = await startCommand(deps)
+      expect(deps.stdout.output()).not.toContain('Retired label')
+      expect(deps.stderr.output()).not.toContain('Retired label')
+      expect(result.started).toBe(true)
+      expect(result.exitCode).toBe(0)
+    })
+
+    it('never renames anything itself — the command is printed, never spent', async () => {
+      const deps = updateDeps()
+      deps.exec = legacyPreflight(labelListing(LEGACY_IN_PROGRESS, LEGACY_FAILED))
+      await startCommand(deps)
+      expect(deps.stdout.output()).toContain(MIGRATE_IN_PROGRESS)
+      expect(deps.exec.calls.some((c) => c.startsWith('gh label edit'))).toBe(false)
+    })
+
+    it('attempts no label list at all under TASK_SOURCE=folder', async () => {
+      // Folder mode has no board: it tracks progress through the .ralph/tasks status
+      // directories, so there is no label to be retired and nothing to warn about. Asserted as
+      // the ABSENCE OF THE CALL and not just the absence of the line — a folder run that asked
+      // gh anyway would be a network round trip on the one source that never needs gh, and it
+      // would be silent, so nothing else in the suite could see it.
+      const deps = updateDeps()
+      deps.processEnv = { TASK_SOURCE: 'folder' }
+      deps.folderQueueCount = async () => 1
+      deps.exec = legacyPreflight(labelListing(LEGACY_IN_PROGRESS, LEGACY_FAILED))
+      const result = await startCommand(deps)
+      expect(deps.exec.calls.some((c) => c.startsWith('gh label list'))).toBe(false)
+      expect(deps.stdout.output()).not.toContain('Retired label')
+      expect(result.started).toBe(true)
+    })
   })
 
   // #24: the weekly, cache-backed update notice. It replaced the old step-8.5

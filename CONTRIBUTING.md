@@ -214,9 +214,11 @@ Ralph *does* create, each with the colour and the user-visible description
 mapped to the name that replaced it — #140 filled it with the two labels that
 used to carry a `claude-` prefix), `LABEL_EXCLUSION` (the `-label:` clauses
 alone) and
-`ISSUE_SEARCH_QUERY` (the whole `state:open …` query). It is pure and
-**edgeless** — no clock, no environment, no filesystem, and no imports at all,
-like `git-remote-slug.js` and `jira-jql.js` beside it — and everything it hands
+`ISSUE_SEARCH_QUERY` (the whole `state:open …` query), plus the one function in
+the module — `findLegacyLabels({ exec })`, #141's read of `LEGACY_LABELS` in the
+other direction, described at the bottom of this section. It has **no ambient
+I/O** — no clock, no environment, no filesystem, and no imports at all, like
+`git-remote-slug.js` and `jira-jql.js` beside it — and everything it hands
 out is frozen *down to the spec objects*, because a module-level array every
 command imports is shared mutable state and one `.push` in a consumer would
 change the vocabulary for the whole process.
@@ -319,6 +321,48 @@ of the table on purpose: every mention of a label there sits inside a shipped
 release entry describing what a past version did, so it keeps the **retired**
 spelling and the repo-wide sweep exempts it by name. Leave it alone — a rename
 that "completed" itself through the changelog would be falsifying history.
+
+**#141 reads the mapping the other way, and it is the only thing in this module
+that shells out.** `findLegacyLabels({ exec })` runs one
+`gh label list --limit 100 --json name` and answers *which names #140 retired are
+still on this board*, pairing each hit with the `gh label edit … --name …
+--description …` line that migrates it. The command is composed **here**, off
+`MANAGED_LABELS`, for the reason the whole module exists: a caller that assembled
+its own remediation would be a second place the vocabulary is known.
+`lib/commands/start.js` calls it exactly once, inside the same
+`source !== 'folder'` block as label creation and the orphan sweep — so a `jira`
+run asks too, and a `folder` run makes no `gh label` call of any verb — and
+prints **four lines per retired name still present**, beside the orphan notice
+and after the creates. It **never aborts**: #140's clean break was deliberate,
+Ralph has never run `gh label edit` on a user's behalf, and this does not change
+that — the run goes on to the queue check and the launch.
+
+Two properties of that function are load-bearing, and both are pinned:
+
+- **The `exec` is a parameter with no default.** That is the only reason a
+  function which spawns can live in a module whose own spec pins it at zero
+  imports (`lib/labels.test.js`, "reads no clock, no environment and no
+  filesystem — and imports nothing"). Do not "tidy" it into a module-scope
+  `import { execa }` — every command that wanted four words would gain execa on
+  its import graph. `ralph start` already defaults its own `exec = execa` and
+  hands that one down, the same way round as the Jira modules below.
+- **Empty on every failure, and never a synchronous throw.** A non-zero exit,
+  unparseable output, no `gh` on `PATH`, an `exec` that rejects or is not a
+  function at all, no argument at all: every one of them answers exactly as a
+  clean board does. The conflation is deliberate — this is a diagnostic in a
+  preflight, and a diagnostic that cannot run must never be the thing that stops
+  a loop from starting.
+
+Substituting the module in a test now means substituting that function too:
+`lib/labels.seam.qa.test.js` stubs it as `async () => []` beside its empty
+`LEGACY_LABELS`, because without the stub `ralph start` reaches for an export the
+fake vocabulary does not have and the seam's assertions die on a `TypeError`
+instead of measuring anything. The function's own contract lives in
+`lib/labels.test.js`, with the adversarial half in
+`lib/labels.legacy-check.qa.test.js` — the listing shapes it accepts, the seam
+under abuse, the single round trip, and the order and shell-safety of the command
+it composes — and the printed warning's in
+`lib/commands/start.legacy-warning.qa.test.js`.
 
 ## Pull requests
 
