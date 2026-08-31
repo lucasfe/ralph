@@ -2019,7 +2019,22 @@ is a real assignment, because the blanks are inside the quotes, and Ralph trims 
 to `2h`. Two neighbouring spellings are **not** affected, because bash really does
 assign on them, and both assign **empty**: a blank with nothing behind it
 (`RALPH_DIGEST_INTERVAL= `) and a `#` that begins its own word, which is an ordinary
-comment (`RALPH_DIGEST_INTERVAL= # off`). An `export` prefix is out of the rule as
+comment (`RALPH_DIGEST_INTERVAL= # off`). A third spelling is outside the rule for a
+different reason: a **backslash** at the very end of a line is bash's line
+*continuation* rather than a word, so the line runs on into the next one and — when
+nothing follows on it — the assignment is real: `TASK_SOURCE=folder \` on its own leaves
+the shell holding `folder`. Ralph's readers call that an assignment too, but they stop at
+the newline where bash does not, so the value they read keeps the trailing ` \` — and, if
+you quoted the value, the **quote pair** with it, because a tail outside the pair defeats
+the rule that would otherwise unwrap it: `TASK_SOURCE="folder" \` reads as `"folder" \`
+where bash holds `folder`. Either way a string bash never held is a string no knob
+recognizes, so that line has `ralph start` naming `github` (its fallback for an
+unrecognized source) over a loop working `folder`. And put a real command on the
+continuation line and even the *presence* verdict parts company with the shell:
+`TASK_SOURCE=github \` followed by `echo hi` assigns nothing at all — the binding is
+scoped to that `echo` and dies with it — while Ralph reads the line as an assignment and
+resolves `github`. Write each assignment on one line; nothing in this file needs a
+continuation. An `export` prefix is out of the rule as
 well, and is no way round it either: `export RALPH_DIGEST_INTERVAL= 2h` has the
 builtin apply the `RALPH_DIGEST_INTERVAL=` and reject the rest
 (``export: `2h': not a valid identifier``), so bash is left holding an empty value while

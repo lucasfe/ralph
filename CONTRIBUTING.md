@@ -1055,10 +1055,38 @@ first of them fed by a generator that is not published at all:
   it. Both halves are measured in `lib/parse-config-var.qa.test.js` — see *reads
   NOTHING off a line whose assignment bash throws away, and says so on both readers* —
   and the family is swept row by row against a real shell in
-  `lib/commands/start.sourced-value.qa.test.js`. Three things stay outside the
-  refusal, all of them because bash really does assign there: an `export` prefix (the
-  builtin applies the `NAME=` itself), an operator tail such as `;` or `&&`, and a
-  blank with nothing behind it (`NAME= `, a real assignment to empty). The price was
+  `lib/commands/start.sourced-value.qa.test.js`. Four things stay outside the
+  refusal. Three because bash really does assign there: an `export` prefix (the
+  builtin applies the `NAME=` itself), a blank with nothing behind it (`NAME= `, a real
+  assignment to empty), and a **line continuation that reaches the scan before any word
+  does** — a backslash at the very end of a line is bash's continuation rather than a
+  word, so on `NAME=v \` the line runs on and nothing is left to be a command word: bash
+  assigns `v`, and the #149 review caught the refusal reaching that tail, which is #149's
+  own defect one spelling over.
+  That third rule is **narrower than "a tail ending in a backslash"**, and reading it that
+  wide is licence to drop the half of the guard that does the work: `endOfWord` declines
+  only where the word it is scanning is **still empty** (`i === start`). Where a word
+  already has characters in it, a continuation can only add to a word that exists, and
+  bash runs that word — `NAME=v a\` reports `a: command not found`, and `NAME=v \\`
+  reports `\: command not found` (two backslashes are an *escaped* one, which is a word).
+  The inherited value stands on both, and the refusal correctly fires on both; they are
+  in the `refused` list in `lib/commands/start.sourced-value.qa.test.js`, so widening the
+  rule to the whole tail turns those rows red. The other half of the same narrowness is a
+  cost rather than a saving: where the **continuation line** is what carries the command
+  word, bash assigns nothing and this reader still reads the line — `NAME=v \` over an
+  `echo hi` leaves the shell holding what it inherited while the readers say `v \`. That
+  is not a #149 regression (`main` reads the same two lines identically) and closing it
+  needs the next line, which is a different scanner; it is argued at `endOfWord`'s guard.
+  (The *value* on a real continuation is a separate, older divergence: bash joins the next
+  line and drops the backslash, these readers stop at the newline and keep it, so
+  `NAME=v \` reads as `v \` — and a *quoted* value keeps its quote pair too, because a
+  tail outside the pair defeats the rule that would have unwrapped it, so `NAME="v" \`
+  reads as `"v" \` where bash holds `v`. Write each assignment on one line.) The
+  fourth is the **operator** tail, and it is a bail-out rather than a verdict: `;` and
+  `&&` really do assign (`NAME=v ; true` leaves `v` standing), while `| cat` and `&`
+  assign in a **subshell**, so the sourcing shell keeps what it held and this reader
+  still reads the line — pinned rather than fixed, because no
+  refusal reaches it without also refusing the tails that assign. The price was
   one spelling: `RALPH_DIGEST_INTERVAL=  2h  ` now opens no digest window, which is
   what bash makes of it, and no configuration this repo ships is written that way.
   `lib/commands/start.precedence.qa.test.js` drives a blanked file through the whole
