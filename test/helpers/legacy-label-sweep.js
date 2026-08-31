@@ -14,6 +14,33 @@
 // Same problem test/helpers/source-control-bytes.js solves, same fix: one definition, imported by
 // both, so drift is impossible by construction.
 //
+// THE LIST BECAME ONE DEFINITION; ITS SIZE DID NOT. #142 added an entry below and had to go
+// hunting for the prose counts of this list, because a number in a comment is not a thing a
+// shared definition can keep honest — consolidating the array did nothing for them. Measured
+// afterwards, with the matcher in lib/labels.rename.qa.test.js run over the tree as it stood
+// BEFORE #142: FOUR comments stated the size, and #142's FIRST pass — done by hand, before that
+// matcher existed — rewrote three of them and walked straight past the fourth, which went on
+// describing this list by a length it no longer had. DO NOT GO LOOKING FOR IT HERE: the same
+// issue that noticed the miss fixed it, so all four read correctly in the landed tree. The stale
+// claim survives in exactly one place — quoted verbatim as the regression fixture that matcher is
+// demonstrated on — which is deliberate, because an argument about a defect nobody can still read
+// is one a later reader is entitled to disbelieve. And the miss IS the argument rather than an
+// embarrassment to note in passing: "remember to update the counts" is precisely what that first
+// pass was, carried out attentively, and it still left the tree making a false claim about its
+// own drift.
+//
+// So it is a RULE now instead of a recount. A comment may name this LIST and may not state its
+// LENGTH, which is enforceable in a way that remembering is not. That same spec sweeps for it over
+// every tracked `.js` and `.md` — prose is the only place a count of this kind has ever lived —
+// skipping itself, since it has to quote the claim #142 left behind in order to demonstrate the
+// matcher on it. The one enumeration left standing is that file's own, which lists the
+// entries by the ROLE each earns its exemption for — kept because its argument is about which
+// exemption is the dangerous one, and NOT because anything would catch it going stale: no
+// assertion compares that paragraph to this array, so a fifth entry leaves it quietly incomplete.
+// It is a claim a reader editing this array is standing next to, which is the whole of its
+// protection. So adding an entry here is an edit to this array and to that one paragraph, and to
+// no count anywhere.
+//
 // THE NEEDLES ARE COMPOSED, NEVER TYPED. Every spelling this module hunts for is derived from
 // the keys of LEGACY_LABELS, which is what makes the sweep track the mapping instead of agreeing
 // with it by coincidence: a future rename that records its old name in the mapping gets both
@@ -73,6 +100,17 @@ export const LEGACY_EXEMPT = Object.freeze([
   // past version really did. That version did stamp the old word, so rewriting the line would
   // falsify history rather than finish a rename; the one file #140 must leave byte-identical.
   'CHANGELOG.md',
+  // The upgrade note in the troubleshooting section (#142), which is the OTHER END of #140's
+  // clean break: Ralph has never run `gh label edit` on a user's board, so the two commands that
+  // finish the rename are the user's to paste, and a command cannot avoid naming what it renames
+  // — the same argument lib/labels.js makes for its own exemption, one level out from the code.
+  // The difference is where a stale copy lands. lib/labels.js's literal is READ BY THE PROGRAM,
+  // so a wrong one misbehaves; the README's is PASTED BY A HUMAN, so a wrong one fails in their
+  // terminal with nothing on the page explaining why — which is why the exemption is paid for
+  // rather than merely granted: lib/labels.parity.test.js drives the real findLegacyLabels and
+  // requires each line here to equal, verbatim and once, the line `ralph start` prints. The
+  // retired-spelling sweep can no longer defend this file, so that equality is what does.
+  'README.md',
 ])
 
 const repoRelative = (path) => relative(RALPH_HOME, path).split(sep).join('/')
