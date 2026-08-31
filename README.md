@@ -2325,6 +2325,43 @@ with nothing to say still adds nothing.
 next `ralph start` detects orphans and asks whether to clear them and
 reprocess. Answer `y` to re-queue the issues.
 
+**`ralph start` warns that a retired label still exists on this board.** —
+Ralph renamed the two labels it stamps on an issue: `claude-working` became
+`in-progress`, and `claude-failed` became `failed`. Those words describe what
+the *loop* is doing rather than who is driving it, and Ralph has driven Codex
+as well as Claude for a while now, so the old prefix named the wrong thing on
+half its runs. The rename is a **clean break**: Ralph has never run
+`gh label edit` on your board and this warning does not change that, so a
+repository set up by an older Ralph keeps the retired labels — and every issue
+carrying one — until you rename them yourself. Paste both lines (or just the
+one the warning named):
+
+```bash
+gh label edit claude-working --name in-progress --description 'Ralph loop in progress'
+gh label edit claude-failed --name failed --description 'Ralph loop tried and gave up'
+```
+
+That is the whole migration, and there is no per-issue relabelling to do
+afterwards. GitHub identifies a label by an **ID** of its own rather than by
+its text, so `--name` renames the label *itself* and the new name carries over
+to every issue already holding it, however many there are — which is what makes
+one command per label enough on a board with a hundred labelled issues.
+`--description` rides along because the two kinds of staleness arrived
+together: a board first set up by Ralph's original shell script has these
+labels with **Portuguese** descriptions, and `gh label create` fails outright
+on a label that already exists rather than updating one, so every Ralph since
+has left those descriptions exactly as it found them. One paste replaces both
+the name and the description.
+
+Skipping the rename is not a tidiness problem. Issues still carrying a retired
+name fall into a gap where nothing can see them: the queue filter excludes the
+**current** names, so those issues are no longer excluded from the queue and
+Ralph hands one out again as fresh work it has already done — at one paid agent
+invocation per pass — while the orphan sweep lists the current name too, so it
+cannot report them either. Visible to the query that costs money, invisible to
+the query that would have warned you. The warning itself never stops a run:
+`ralph start` prints it, hands over the command, and launches the loop.
+
 **Reset the agent's understanding of the config.** — Delete
 `.ralph/state.json` (or the whole `.ralph/` directory) and run
 `ralph start` again. Lazy validation re-runs and rewrites the state

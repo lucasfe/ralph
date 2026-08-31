@@ -322,6 +322,27 @@ release entry describing what a past version did, so it keeps the **retired**
 spelling and the repo-wide sweep exempts it by name. Leave it alone — a rename
 that "completed" itself through the changelog would be falsifying history.
 
+`README.md` earns an exemption of the same shape for the opposite reason, and it
+is the one likelier to catch you, because README is a file you have every reason
+to edit. Its troubleshooting section carries the **upgrade note** for #140's
+rename, and an instruction telling a reader how to rename a label cannot avoid
+naming the label being renamed — so the repo-wide sweep and the table's
+**retired-name** half both skip README by name. Only those: every *current* name
+is still pinned in the table exactly as above, so this is an exemption from one
+question, not from the row. What it gives up is the whole **file** rather than
+the paragraph that argued for it, so the rest of that quarter-megabyte is held by
+`lib/labels.rename.qa.test.js` instead — a retired spelling may appear in README
+**only inside the one troubleshooting entry that carries the migration
+commands**, and a failure names the lead line of whichever entry reintroduced it
+rather than just the file. The two `gh label edit` lines inside that entry are
+pinned **byte-for-byte** to what `findLegacyLabels` composes at runtime: each
+verbatim, each exactly once in the file, and together the only lines in a single
+fenced `bash` block. Treat them as code that happens to sit in a doc. Reflowing
+one across a line break, tucking a `gh auth login` in beside them, or letting an
+editor turn the ASCII `'` around a description into a typographic quote each turn
+the suite red — and the last of those also breaks the paste the note exists to
+be, silently, in the one paragraph a stuck upgrader is reading.
+
 **#141 reads the mapping the other way, and it is the only thing in this module
 that shells out.** `findLegacyLabels({ exec })` runs one
 `gh label list --limit 100 --json name` and answers *which names #140 retired are

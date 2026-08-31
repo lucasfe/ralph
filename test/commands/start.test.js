@@ -298,7 +298,7 @@ describe('startCommand', () => {
   //
   // THE RETIRED NAMES ARE COMPOSED HERE, NEVER TYPED, and that is not a style preference: this
   // file is tracked, and lib/labels.parity.test.js sweeps every tracked file outside
-  // test/helpers/legacy-label-sweep.js's three-file exemption list for a retired spelling. Typing
+  // test/helpers/legacy-label-sweep.js's exemption list for a retired spelling. Typing
   // either retired name below is a red test in that spec, correctly — it is the spelling #140
   // exists to have removed, and writing it back into a tracked file un-lands the rename by one
   // file. (Measured the hard way: the first draft of this very comment spelled one out in prose
