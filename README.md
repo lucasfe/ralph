@@ -1948,6 +1948,21 @@ future template-management refactor cannot silently break the invariant.
 `ralph init` writes `ralph.config.sh` at the repo root. It is meant to
 be committed. Re-running `ralph init` never overwrites it.
 
+**Write every line as `KEY=value`, with nothing between the name and the `=`.**
+The file is read two ways — the loop *sources* it with `set -a`, and the `ralph`
+commands text-parse individual assignments out of it without ever running it —
+and a shell assignment ends the name at the `=`. So `TASK_SOURCE = folder` is not
+a setting at all: bash reads it as a *command* named `TASK_SOURCE` with two
+arguments (`TASK_SOURCE: command not found`, and the variable left holding
+whatever it already held), and Ralph's own reader now agrees with the shell about
+that rather than honoring a line no run would ever have used — see
+[Troubleshooting](#troubleshooting) for the symptom and the fix.
+Indenting an assignment is fine, with **a space or a tab** and nothing else: a
+no-break space or a byte-order mark in front of the name — what a config snippet
+pasted out of a rendered web page arrives with — is an ordinary word character to
+the shell, which makes the line a command again. Quotes around a value are
+optional and an `export` prefix is accepted; both readers take either.
+
 | Variable              | Default                              | Purpose                                                                 |
 | --------------------- | ------------------------------------ | ----------------------------------------------------------------------- |
 | `RALPH_AGENT`         | `claude`                             | Coding agent Ralph drives: `claude` (default, Claude Code) or `codex` (OpenAI Codex CLI, **experimental**). Unset or unrecognized falls back to `claude` (with a warning). Set by `ralph init --agent <name>` / the interactive picker. The `agent` row of the identity box [`ralph start`](#quick-start) opens with names the **resolved** agent, so a mistyped value shows you the agent that will actually run rather than what you typed — that box reports the run, and the typo itself is named **on stderr**, beside it rather than inside it: `ralph start` writes one line above the splash and starts the loop anyway (never a byte on stdout, so `ralph start \| tee` is unaffected), the loop writes the same line again inside its tmux window, and `ralph init` and [`ralph doctor`](#quick-start) write it too. A recognized value — or none at all — prints nothing on either stream. This file is read **first** and the environment only where this file does not assign the name at all: the loop *sources* it with `set -a`, so a value here beats one exported in your shell, and a blank `RALPH_AGENT=""` is a value rather than silence — it means `claude`, not "whatever was inherited". |
@@ -2361,6 +2376,37 @@ invocation per pass — while the orphan sweep lists the current name too, so it
 cannot report them either. Visible to the query that costs money, invisible to
 the query that would have warned you. The warning itself never stops a run:
 `ralph start` prints it, hands over the command, and launches the loop.
+
+**A line in `ralph.config.sh` does nothing at all.** — Look for a space in front
+of the `=`. `RALPH_DIGEST_INTERVAL = 30m` reads like a setting and is not one: a
+shell assignment ends the name at the `=`, so bash — which is what actually reads
+that file, sourced with `set -a` — takes the line as a *command* named
+`RALPH_DIGEST_INTERVAL` (`command not found` in the loop's window) and leaves the
+variable holding whatever it already held. The `ralph` commands read it the same
+way round, so a spaced line is a line no part of Ralph honors: a spaced
+`RALPH_DIGEST_INTERVAL` opens no digest window and warns about none either (there
+is no interval to complain about, which is what makes this quieter than the
+`Digest: … NOT running` case near the top of this section), a spaced
+`TASK_SOURCE` falls back to `github`, and a spaced `RALPH_AGENT`, `GH_REPO` or
+`RALPH_BANNER` defers to your environment or to its default. Delete the spaces —
+`RALPH_DIGEST_INTERVAL=30m` — and the next run picks the value up. An
+**indent** is fine and always was, as long as it is a space or a tab; a no-break
+space or a byte-order mark in front of the name, which is how a snippet pasted out
+of a rendered web page arrives, is a word character to the shell and makes the
+line a command just as surely.
+
+**Worth checking after an upgrade, not only on a new file.** Up to and including
+0.23.0 the `ralph` commands honored a spaced line the loop had always ignored, so
+a repo could hold a setting that was live in the box and dead in the run:
+`TASK_SOURCE = folder` had `ralph start` announcing `folder` over a loop working
+GitHub issues, and `RALPH_DIGEST_INTERVAL = 30m` had `ralph start` opening a
+digest window for an interval the loop itself had never been given. Newer Ralphs
+answer the way the shell does, which is the fix — and the visible cost of it, on
+those files only: the box stops naming a source the loop is not about to work, and
+the digest window that line used to open stops opening. Nothing on disk changes
+when you upgrade, and nothing warns you; if a repo's digest went quiet or its
+banner started naming a different source, that spelling is the first thing to
+check.
 
 **Reset the agent's understanding of the config.** — Delete
 `.ralph/state.json` (or the whole `.ralph/` directory) and run
