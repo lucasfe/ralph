@@ -977,7 +977,10 @@ first of them fed by a generator that is not published at all:
   somebody committed it, and `set -a` then makes it decide for every `gh` command the
   loop runs, so a row whose stated guarantee is that it names what the loop will read
   has to read it the same way round. That read sits inside `bannerRepoSlug`, which is
-  the only reason that helper takes `configText`, so three of those four are parsed at
+  the only reason that helper is handed a config reader at all — since #149 it takes the
+  `sourcedValue` **closure** rather than `configText`, so the read still happens *inside*
+  its `try` and a hostile `GH_REPO` accessor costs the row instead of the launch. So
+  three of those four are read at
   the box's own call site; `RALPH_AGENT` is not, since #118 moved its `resolveAgent`
   call up beside the banner's warning. The command now has
   to *warn* about a mistyped value as well as name the resolved one, and the box spends
@@ -986,53 +989,113 @@ first of them fed by a generator that is not published at all:
   another fallback is exactly the confusion #69 was filed about. All of those take the
   **file over the environment**, matching the loop, which sources `ralph.config.sh` with
   `set -a`; `RALPH_BANNER` is the one exception in
-  the other direction and the paragraph above is why. For **two** of them —
-  `RALPH_AGENT` (#118) and `GH_REPO` (#120) — that precedence is a **presence** test
-  rather than a truthiness one — `configAssignsVar(text, name)
-  ? parseConfigVar(…) : null`, then `??` onto the environment — because
-  `parseConfigVar` answers `''` both for a file that never mentions the knob and for
-  one that blanks it, while bash treats those two as opposites: `set -a` exports a
-  blank assignment *over* an inherited value. Do not "simplify" either back to a
-  `||`. On `RALPH_AGENT` that reads the environment for a `RALPH_AGENT=""` the loop
-  will mask, which warns about a value no run will read and puts an agent in the box
-  the loop is not about to launch. On `GH_REPO` it names a whole **repository** no
-  call in the run will touch: a blank assignment masks the environment, so the loop's
-  `gh` reads an empty variable, treats it as unset and resolves its base repository
-  from `origin` — and `resolveBannerRepo` treats a blank `ghRepo` the same way, which
-  is why handing the blank straight through is what puts `origin`'s slug on the row
-  while a `||` would reach past it into the environment. The other two —
-  `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — are still `||`, and since #122
-  they say so **once**: a `configOverEnv(name)` closure declared at the top of the
-  box's fact resolution and called at both sites. The name buys no length; what it
-  buys is that a knob which **departs** from the shape is visible **by not calling
-  it** — `RALPH_BANNER` (inverted), `RALPH_AGENT` and `GH_REPO`
-  (present-or-absent), and `TASK_SOURCE`, which is `||` too but keeps a line of
-  its own because what differs there is the **reader**: `parseConfigSource` knows
-  the file's own spellings of that knob, which is not a `parseConfigVar` question.
-  Read the closure as that shape and no more — **`||` is not `set -a`** — and do
-  not read it as an inventory of the command's config reads either.
-  `RALPH_DIGEST_INTERVAL` and the digest window's `RALPH_AGENT` and
-  `RALPH_DIGEST_MODEL` sit outside it, the last two **config-only** with no
-  environment fallback at all, which is a third precedence again. Which is where
-  "matching the loop", above, needs its one caveat: it holds for a config value
-  that is present and **non-empty**, and #122 measured the blank case against a
-  real bash. Of the six ways a file can blank a knob — `=""`, `=''`, a bare `=`,
+  the other direction and the paragraph above is why. Since #149 that precedence is
+  **one rule** rather than a rule plus a recorded divergence, and it is a **presence**
+  test rather than a truthiness one — `configAssignsVar(configText, name)
+  ? parseConfigVar(configText, name) : processEnv[name]`, one ternary, declared once at
+  the top of `startCommand` as a single-argument `sourcedValue(name)` closure and called at **every**
+  knob of the box: `RALPH_AGENT`, `GH_REPO`, `RALPH_CODEX_MODEL`,
+  `RALPH_CONTEXT_WINDOW` and `TASK_SOURCE`. The reason is that `parseConfigVar`
+  answers `''` both for a file that never mentions the knob and for one that blanks
+  it, while bash treats those two as opposites: `set -a` exports a blank assignment
+  *over* an inherited value. Do not "simplify" any of them back to a `||`, and do not
+  add a knob that skips the closure. On `RALPH_AGENT` a `||` reads the environment for
+  a `RALPH_AGENT=""` the loop will mask, which warns about a value no run will read
+  and puts an agent in the box the loop is not about to launch. On `GH_REPO` it names
+  a whole **repository** no call in the run will touch: a blank assignment masks the
+  environment, so the loop's `gh` reads an empty variable, treats it as unset and
+  resolves its base repository from `origin` — and `resolveBannerRepo` treats a blank
+  `ghRepo` the same way, which is why handing the blank straight through is what puts
+  `origin`'s slug on the row while a `||` would reach past it into the environment.
+  On `RALPH_CODEX_MODEL` and `RALPH_CONTEXT_WINDOW` — the two knobs #149 was filed
+  about, `||` until then — it was cosmetic but wrong in the box's own terms: a repo
+  that blanks `RALPH_CODEX_MODEL` while the invoking shell exports one got a row
+  naming a model `buildAgentInvocation` would never be handed (it now reads *model
+  resolves at first run*, with no `context` row at all, which is what a run passing
+  no `--model` actually does), and a blanked `RALPH_CONTEXT_WINDOW` got the shell's
+  number over the window `capture-issue-event.js` records for the run's very first
+  event. On `TASK_SOURCE` it was never cosmetic: the box's `source` row and the
+  **preflight** read one binding, so a blanked knob made the command count a folder
+  queue and skip `gh auth status` for a loop about to read GitHub issues. That knob is
+  an ordinary caller of the closure like every other: the review looked for a reader
+  of its own to preserve and found none, since `lib/read-config-source.js` defines
+  `parseConfigSource` as `parseConfigVar(text, 'TASK_SOURCE')` verbatim. Two tripwires
+  keep that honest, one per half. `lib/commands/start.sourced-value.qa.test.js` asserts
+  the two **readers** agree on every config shape, so a `parseConfigSource` that grew
+  spellings of its own would part `ralph start` from the `cycle`/`status`/`doctor` trio
+  that still call it. `lib/parse-config-var.test.js` asserts the shared reader never
+  calls a line **absent** while the value reader reads a value out of it, which is what
+  keeps one knob's **value** and its **presence** on one grammar.
+  What a *name* still buys, now that the rule is the default, is that a knob which
+  **departs** is visible **by not calling it**, and exactly one does: `RALPH_BANNER`,
+  inverted. Do not read the closure as an inventory of the command's config reads
+  either. `RALPH_DIGEST_INTERVAL` and the digest window's `RALPH_AGENT` and
+  `RALPH_DIGEST_MODEL` sit outside it, **all three** of them **config-only** with no
+  environment fallback at all — `digestInterval` in `lib/digest-file.js` reads only the
+  text it is handed, exactly like the two `parseConfigVar` calls at the window's launch —
+  which is a *third* precedence, after this rule and after `RALPH_BANNER`'s inversion. Which is where
+  "matching the loop", above, needs its one caveat, and #122 measured it against a
+  real bash: of the six ways a file can blank a knob — `=""`, `=''`, a bare `=`,
   unquoted trailing spaces, an `export` of any of those, and quoted whitespace —
-  **five leave the loop holding the empty string**, and `||` reaches past every
-  one of them into the environment; only quoted whitespace is a value bash keeps,
-  and on that one spelling the box and the loop agree. So a repo that blanks
-  `RALPH_CODEX_MODEL` while the invoking shell exports one gets a box naming a
-  model `buildAgentInvocation` will never be handed, and a blanked
-  `RALPH_CONTEXT_WINDOW` gets the shell's number over the window the run is
-  actually given. That answer is **pinned, not endorsed**:
-  `lib/commands/start.precedence.qa.test.js` drives a blanked file through the
-  whole command and asserts *today's* answer, each case stating in its own comment
-  what its expectation becomes on the day it is fixed. The fix is the
-  `configAssignsVar` + `??` shape described just above, and it is **#149's, not
-  #122's** — moving a knob onto a different precedence is a behaviour change and
-  earns its own review rather than riding along inside a refactor. So the "do not
-  simplify either back to a `||`" above has a converse queued behind it: do not
-  add a **third** `||` knob while the fix is outstanding. Since #75 and #76
+  **five leave the loop holding the empty string**, which the presence test now
+  matches on all five; only quoted whitespace is a value bash keeps, and on that one
+  spelling nothing changed, because a kept value is a value. A **seventh** spelling
+  only looks like one of those six: `NAME= ""`, with a space after the `=`, is bash's
+  environment-prefix syntax, so bash assigns nothing and the loop keeps whatever it
+  inherited. The #149 review found `parseConfigVar` reading that line as
+  present-and-blank — masking a value bash leaves standing, and clearing a live
+  earlier line in the same file — and `envPrefixedNothing` in
+  `lib/parse-config-var.js` now refuses it on both readers. Two review rounds then
+  found the same defect one spelling over — `NAME= ""`, then `NAME=# off`, where the
+  `#` opens no comment because a comment only opens at a `#` that *begins* a word — so
+  the refusal is no longer drawn around spellings at all: it models bash's own **word
+  rule** (an assignment followed by a command word is an environment prefix and dies
+  with that command), which sweeps in the *inventing* half of the same family
+  (`NAME= folder`, read as `folder` by a parser bash assigns nothing for) along with
+  it. Both halves are measured in `lib/parse-config-var.qa.test.js` — see *reads
+  NOTHING off a line whose assignment bash throws away, and says so on both readers* —
+  and the family is swept row by row against a real shell in
+  `lib/commands/start.sourced-value.qa.test.js`. Four things stay outside the
+  refusal. Three because bash really does assign there: an `export` prefix (the
+  builtin applies the `NAME=` itself), a blank with nothing behind it (`NAME= `, a real
+  assignment to empty), and a **line continuation that reaches the scan before any word
+  does** — a backslash at the very end of a line is bash's continuation rather than a
+  word, so on `NAME=v \` the line runs on and nothing is left to be a command word: bash
+  assigns `v`, and the #149 review caught the refusal reaching that tail, which is #149's
+  own defect one spelling over.
+  That third rule is **narrower than "a tail ending in a backslash"**, and reading it that
+  wide is licence to drop the half of the guard that does the work: `endOfWord` declines
+  only where the word it is scanning is **still empty** (`i === start`). Where a word
+  already has characters in it, a continuation can only add to a word that exists, and
+  bash runs that word — `NAME=v a\` reports `a: command not found`, and `NAME=v \\`
+  reports `\: command not found` (two backslashes are an *escaped* one, which is a word).
+  The inherited value stands on both, and the refusal correctly fires on both; they are
+  in the `refused` list in `lib/commands/start.sourced-value.qa.test.js`, so widening the
+  rule to the whole tail turns those rows red. The other half of the same narrowness is a
+  cost rather than a saving: where the **continuation line** is what carries the command
+  word, bash assigns nothing and this reader still reads the line — `NAME=v \` over an
+  `echo hi` leaves the shell holding what it inherited while the readers say `v \`. That
+  is not a #149 regression (`main` reads the same two lines identically) and closing it
+  needs the next line, which is a different scanner; it is argued at `endOfWord`'s guard.
+  (The *value* on a real continuation is a separate, older divergence: bash joins the next
+  line and drops the backslash, these readers stop at the newline and keep it, so
+  `NAME=v \` reads as `v \` — and a *quoted* value keeps its quote pair too, because a
+  tail outside the pair defeats the rule that would have unwrapped it, so `NAME="v" \`
+  reads as `"v" \` where bash holds `v`. Write each assignment on one line.) The
+  fourth is the **operator** tail, and it is a bail-out rather than a verdict: `;` and
+  `&&` really do assign (`NAME=v ; true` leaves `v` standing), while `| cat` and `&`
+  assign in a **subshell**, so the sourcing shell keeps what it held and this reader
+  still reads the line — pinned rather than fixed, because no
+  refusal reaches it without also refusing the tails that assign. The price was
+  one spelling: `RALPH_DIGEST_INTERVAL=  2h  ` now opens no digest window, which is
+  what bash makes of it, and no configuration this repo ships is written that way.
+  `lib/commands/start.precedence.qa.test.js` drives a blanked file through the whole
+  command and asserts that from outside, at every knob — including the preflight the
+  `source` row is spent on. **`||` is not `set -a`**, and three commands still spell
+  it: `lib/commands/cycle.js`, `lib/commands/status.js` and `lib/commands/doctor.js`
+  read `TASK_SOURCE` as `parseConfigSource(configText) || env`, so a blanked knob
+  makes them disagree with `ralph start` about which queue a run reads. That is the
+  named follow-up, argued at `doctor.js`'s own site. Since #75 and #76
   this resolver has **three** callers, reading different parts of one answer:
   `lib/commands/doctor.js` does the same text-parsed read of the same file with the
   same precedence — which is what makes `RALPH_BANNER` one knob rather than two that
