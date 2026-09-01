@@ -5,6 +5,21 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.0](https://github.com/lucasfe/ralph/compare/v0.24.0...v0.25.0) (2026-09-01)
+
+
+### Features
+
+* `ralph live` attaches to this repo's running loop, on a shared session module ([#167](https://github.com/lucasfe/ralph/issues/167)) ([#182](https://github.com/lucasfe/ralph/issues/182)) ([d222020](https://github.com/lucasfe/ralph/commit/d222020f57f9855e4eca42476381bd1139a594c4))
+* the launch box, `start`'s session-exists abort and `ralph status` advertise `ralph live` ([#169](https://github.com/lucasfe/ralph/issues/169)) ([#184](https://github.com/lucasfe/ralph/issues/184)) ([1068e0b](https://github.com/lucasfe/ralph/commit/1068e0b7882b3acc1833dc1956abde14026188f9))
+
+
+### Bug Fixes
+
+* `ralph stop` resolves its session through the shared module and works from a subdirectory ([#168](https://github.com/lucasfe/ralph/issues/168)) ([#183](https://github.com/lucasfe/ralph/issues/183)) ([50dee86](https://github.com/lucasfe/ralph/commit/50dee8644f0ea21110759f955b1306c1d128c3db))
+* a blanked config assignment makes the identity box name values the loop will not use ([#149](https://github.com/lucasfe/ralph/issues/149)) ([#179](https://github.com/lucasfe/ralph/issues/179)) ([2155ef2](https://github.com/lucasfe/ralph/commit/2155ef237d6389563232dc4108fd591015d40fb2))
+* the identity box prints beside the sprite instead of under it ([#161](https://github.com/lucasfe/ralph/issues/161)) ([#181](https://github.com/lucasfe/ralph/issues/181)) ([74898c2](https://github.com/lucasfe/ralph/commit/74898c257cd5317b6c5f12e505acdbf9ce01d521))
+
 ## [0.24.0](https://github.com/lucasfe/ralph/compare/v0.23.0...v0.24.0) (2026-08-31)
 
 
