@@ -395,6 +395,43 @@ under abuse, the single round trip, and the order and shell-safety of the comman
 it composes — and the printed warning's in
 `lib/commands/start.legacy-warning.qa.test.js`.
 
+### A README transcript is compared against real output (#169)
+
+Two blocks in `README.md` are no longer prose about a command — they are the
+command's output, lifted out of the file and compared against what the code prints
+today. `ralph start`'s launch box is compared **whole**, every line of it, in
+`lib/commands/start.live-hint.qa.test.js`; `ralph status`'s two transcripts are
+compared on the rows #169 was about — the running view's `attach` / `kill` pair, and
+the `scheduled` branch's own last two rows, which that issue deliberately left alone
+— against the renderer itself, in `lib/commands/status.live-hint.qa.test.js`. Both
+files also sweep the **whole** README for the pre-#169 spelling of the row they own,
+because a screenshot caption or a second worked example is exactly where a corrected
+transcript leaves its old self behind. So **changing a line either surface prints
+makes the README hunk part of that change** rather than a follow-up: the suite goes
+red on the doc, naming the block, before anybody reads the wording.
+
+**Extract fenced blocks with `fenced` from `test/helpers/doc-guard.js`, never with a
+private copy** — the same shape of rule as `functionBody` above, and #169 is why it
+lives there: the walk was written twice, byte-identically, once per surface, which is
+the first move of the drift a shared helper makes impossible. Two guards that
+disagree about what counts as a transcript are two guards that are each right about a
+different document. It returns contents only, with the delimiters and any info string
+dropped, and an unbalanced fence **drops** the block it opened rather than running it
+to EOF — a guard that invented a last block would be asserting about prose.
+
+Three things follow for anyone editing one of those blocks. Each guard asserts there
+is **exactly one** block of its shape in the file, so a second worked example of the
+same surface is a deliberate edit rather than an accident. The transcripts spell the
+session `ralph-ralph-b36ff7b1` — substituted for the fixture's own name in the launch
+box's guard, since a hash of a path is the one thing a doc cannot reproduce, and used
+as the record's session outright in `status`'s — and the launch box's numbers are that
+fixture's worked example, so a hand-tuned figure or a different session name is a red
+suite, and the fixture is what to edit when the example itself should change. And
+every `ralph <word>` either surface prints is checked against the `.command('…')`
+registrations in `bin/ralph.js`: a hint may only name a command that exists, and
+nothing else in the suite can catch a typo there, because no test ever runs the string
+a hint hands a reader.
+
 ## Pull requests
 
 - Branch off `main` and open a PR against `main`.
@@ -1307,9 +1344,10 @@ to catch path/template bugs that unit tests can't surface.
      `ralph start`, and the thing a contributor is most likely to "fix" by
      accident.
 5. **Pick a real open issue** in the project and run `ralph start`.
-   Watch via the `tmux attach` command `ralph start` prints (the session is
-   per-project: `ralph-<repo>-<hash>`), or with `ralph live`, which needs no name
-   typed — run this one **at the repo root** so `live` and `start` agree on the
+   Watch with `ralph live` — since #169 the box's `Watch live:` row names it first,
+   and it needs no name typed — or via the `tmux attach` command the row keeps on
+   the line under it (the session is per-project: `ralph-<repo>-<hash>`). Run
+   `ralph start` itself **at the repo root** so `live` and `start` agree on the
    session (see the `ralph live` item below). Verify that:
    - The **sprite** is drawn as the very first thing on the terminal, above the
      preflight lines, with the **identity box** beside it on any window of 72

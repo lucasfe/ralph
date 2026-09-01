@@ -1,6 +1,7 @@
 // #53 docs-guard support — the shared primitives the `ralph cycle` update-docs
-// guards are built from: markdown section slicing, whitespace normalization, the
-// repo-wide markdown enumeration, and the stale-claim pattern list.
+// guards are built from: markdown section slicing, fenced-block extraction,
+// whitespace normalization, the repo-wide markdown enumeration, and the
+// stale-claim pattern list.
 //
 // WHY THIS IS A MODULE AND NOT TWO COPIES
 // lib/commands/cycle.update-docs.test.js (the contract) and
@@ -12,6 +13,9 @@
 // same fix: one definition, imported by both, so QA's crafted-input tests
 // (depth arithmetic, the EOF branch, the memfs walk) exercise the REAL helper the
 // contract suite runs on, and drift is impossible by construction.
+//
+// `fenced` reached here the same way in #169: two QA files landed byte-identical
+// copies of it, one per surface, which is the first move of the same drift.
 //
 // Every function here is pure and fs-injectable where it touches the disk, so the
 // walk can be driven against memfs instead of the real repo.
@@ -43,6 +47,38 @@ export function section(md, heading) {
   const rest = md.slice(start + heading.length)
   const next = rest.search(new RegExp(`^#{1,${depth}} `, 'm'))
   return heading + (next === -1 ? rest : rest.slice(0, next))
+}
+
+/**
+ * Every fenced code block in a markdown document, contents only: one array of lines
+ * per block, with the ``` delimiters (and any info string on them) dropped.
+ *
+ * What this buys a docs guard over a `toContain`: the transcripts in README.md ARE the
+ * output of a command, so a test can lift the block out and compare it against what
+ * the code prints today — lib/commands/start.live-hint.qa.test.js and
+ * status.live-hint.qa.test.js do exactly that for #169's launch box and attach row. A
+ * substring assertion on the whole file passes on a block that has drifted in every
+ * other line.
+ *
+ * An unbalanced fence closes at EOF by DROPPING the block it opened, rather than
+ * running it to the end of the file: a document with an odd number of fences has no
+ * honest last block, and a guard that invented one would be asserting about prose.
+ */
+export function fenced(text) {
+  const blocks = []
+  let open = null
+  for (const line of text.split('\n')) {
+    if (line.startsWith('```')) {
+      if (open === null) open = []
+      else {
+        blocks.push(open)
+        open = null
+      }
+      continue
+    }
+    if (open !== null) open.push(line)
+  }
+  return blocks
 }
 
 /**

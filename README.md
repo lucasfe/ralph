@@ -173,8 +173,9 @@ most once a week, offers to install it — see
 a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are printed by
-`ralph start`, and `ralph live` attaches from any directory in the repo so the
-name never has to be copied. `ralph live` and `ralph stop` both derive the name
+`ralph start`, with `ralph live` named on the row above the attach command,
+and `ralph live` attaches from any directory in the repo so the name never has
+to be copied. `ralph live` and `ralph stop` both derive the name
 from the repo's git toplevel, so either works from any subdirectory and both mean
 the same session — which is the session `ralph start` opened **if you ran it at
 the repo root**. `start` still hashes the directory it is run in, so a loop
@@ -2351,10 +2352,14 @@ the loop.
 already launched the loop for *this* project (the session name is
 per-project: `ralph-<repo>-<hash>`). Either attach and let it finish, or
 stop it (`ralph stop`) before starting again — `ralph status` names the run and
-the issue it is on, and `ralph start` prints the exact attach / kill commands
-for your session. When that loop was launched at the repo root,
-[`ralph live`](#quick-start) attaches and `ralph stop` kills without the copy,
-from any directory in the repo.
+the issue it is on. The abort itself prints the way in and the way out: a
+`Watch:` row naming [`ralph live`](#quick-start), the `tmux attach` command for
+your session on the line under it, and the matching `tmux kill-session` below
+that. Take the shortcut when the loop was launched at the repo root —
+`ralph live` attaches and `ralph stop` kills without the copy, from any directory
+in the repo — and the raw command when it was not, since a loop started in a
+subdirectory runs under a name derived from that subdirectory and neither
+shortcut can reach it.
 
 **The startup box says `Digest: … NOT running`.** — `ralph start` took
 `RALPH_DIGEST_INTERVAL` as set (non-empty, non-zero) and then could not open the
@@ -2922,7 +2927,7 @@ session to attach to:
   Nothing looks wrong — the pace has not moved off 84 minutes a
   task and no error is repeating in the tail.
 
-  attach     tmux attach -t ralph-ralph-b36ff7b1
+  attach     ralph live  (tmux attach -t ralph-ralph-b36ff7b1)
   kill       ralph stop
 ```
 
@@ -3458,7 +3463,8 @@ above the tmux lines:
    Projection:     ~84 min/task · ~$31/task
                    → ~12h36m, ~$280, done ≈ 04:40
    Progress:       ralph status
-   Watch live:     tmux attach -t ralph-ralph-b36ff7b1
+   Watch live:     ralph live
+                   tmux attach -t ralph-ralph-b36ff7b1
    Detach:         inside the session, Ctrl+B then D
    List:           tmux ls
    Kill:           tmux kill-session -t ralph-ralph-b36ff7b1
@@ -3468,9 +3474,17 @@ above the tmux lines:
 Two rates on the first line — minutes and dollars per task — and on the
 continuation line what they come to over the whole accepted queue: a total
 duration, a total cost, and a local wall-clock finish time (past midnight simply
-reads as tomorrow's clock, exactly as in `ralph status`). Everything from
-`Watch live:` down is unchanged; the projection and the `ralph status` hint are
-purely additive.
+reads as tomorrow's clock, exactly as in `ralph status`). The projection and the
+`ralph status` hint are purely additive — they were inserted above the tmux block,
+which they left alone.
+
+The `Watch live:` row names [`ralph live`](#quick-start) and keeps the
+`tmux attach` command on the line under it. The shortcut is the one to reach for;
+the raw command is the escape hatch for a loop `ralph live` cannot resolve — one
+launched from a subdirectory, since `ralph start` names the session after the
+directory it was run in while `ralph live` derives it from the git toplevel. It is
+also the half of the row that carries that session name, the same one the `Kill:`
+line uses, and the thing that tells several concurrent loops apart.
 
 The queue on that first line is GitHub's, and under
 [`TASK_SOURCE="jira"`](#the-jira-source-today) that is now the **wrong** board: the

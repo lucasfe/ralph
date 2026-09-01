@@ -367,7 +367,7 @@ exit 0
     expect(lines).toContain('  progress   0/3 done · #002 in flight (40min)  [────────] 0%')
     expect(lines).toContain('  #002  🔄 live     –         ~40min')
     expect(lines).toContain('  queue      2 waiting')
-    expect(lines).toContain('  attach     tmux attach -t ralph-test')
+    expect(lines).toContain('  attach     ralph live  (tmux attach -t ralph-test)')
     expect(lines.join('\n')).not.toContain('#?')
     // Scoped to the lines the RECORD drives — the heading, the progress line and the table
     // — because #57's pace/eta/spend block reads `unknown` here on purpose: this renders
