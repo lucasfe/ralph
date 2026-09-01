@@ -1,0 +1,18 @@
+# #107 — HOW A BINARY ASSET LEAVES THE CONTROL-BYTE SWEEP.
+#
+# test/source-control-bytes.test.js reads every file git tracks and fails on a raw U+0000,
+# because that byte hides a source file from grep, rg and git grep while Node reads it fine.
+# A PNG is very largely raw NULs, so the day one is committed the guard goes permanently red.
+#
+# The sweep's scope is THIS FILE, and deliberately not a content sniff. git's own binary
+# heuristic reads the first 8000 bytes for a NUL — which is exactly the byte under guard, so
+# sniffing would let a .js file with a NUL near the top classify itself out of the sweep and
+# vanish, the precise blind spot #107 exists to prevent. A line here cannot do that quietly:
+# it is reviewable, it names the kind out loud, and test/source-control-bytes.qa.test.js
+# fails if a source extension ever appears below, or if a tracked file git considers binary
+# is NOT declared here.
+#
+# So: adding an asset kind is a decision someone makes on the record, which is what the
+# retired extension-scoped sweep was groping for.
+
+*.png binary

@@ -10,7 +10,7 @@ import {
   OTHER_CONTROL_CODES,
   TEXT_CONTROL_CODES,
   offenders,
-  trackedFiles,
+  textFiles,
 } from './helpers/source-control-bytes.js'
 
 // #107 — no raw control byte may be committed into this repo's source.
@@ -33,7 +33,19 @@ import {
 // The `file -b` half of the contract needs no separate assertion: `file` says `data` BECAUSE
 // of the control byte, so control-byte-freedom IS that verdict.
 
-const FILES = trackedFiles()
+// THE SCOPE IS TRACKED-MINUS-DECLARED-BINARY, and the second half of that is younger than the
+// first. The sweep was unscoped — every file git tracks, full stop — and stayed that way
+// deliberately, because the extension list it replaced made a file kind outside the list
+// invisible to the guard. Then a bug-report screenshot was committed, a PNG is very largely
+// raw NULs, and the guard went red on a byte nobody authored.
+//
+// A CONTENT SNIFF WAS THE WRONG WAY OUT, which is the part worth reading twice. git decides
+// binary by looking for a NUL in the first 8000 bytes — the byte under guard — so letting
+// content vote would let a .js that acquired a NUL near the top reclassify itself as an asset,
+// leave the sweep, and carry its own offence out with it. `.gitattributes` cannot do that
+// quietly: it names the kind on the record, and the QA guard fails if a source extension ever
+// appears there or if a tracked binary is left undeclared. See `textFiles()` for the argument.
+const FILES = textFiles()
 const rel = (file) => relative(RALPH_HOME, file)
 const JS_FILES = FILES.filter((file) => file.endsWith('.js'))
 
