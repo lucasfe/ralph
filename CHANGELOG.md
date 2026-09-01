@@ -5,6 +5,13 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.1](https://github.com/lucasfe/ralph/compare/v0.25.0...v0.25.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* unblock the npm publish — two red guards that only fire at release time ([#187](https://github.com/lucasfe/ralph/issues/187)) ([1388080](https://github.com/lucasfe/ralph/commit/138808042330d1bffedb4fc85b54da61b42940ac))
+
 ## [0.25.0](https://github.com/lucasfe/ralph/compare/v0.24.0...v0.25.0) (2026-09-01)
 
 
