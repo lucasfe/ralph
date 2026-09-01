@@ -83,6 +83,7 @@ In a git repo on the branch you want Ralph to work from:
 ralph init      # one-time: detect stack, write config, slash command, gitignore
 ralph doctor    # verify required deps are on PATH, under an identity box you can paste
 ralph start     # under the sprite and identity box: launch the loop in a detached tmux session
+ralph live      # attach this terminal to the repo-root session, from any directory in the repo
 ralph status    # under an identity box: run, progress, task table, queue, pace, ETA, spend, digest
 ralph digest    # narrate in prose what the loop is doing, and log it to .ralph/digest.log
 ralph stop      # kill this project's tmux session when you want Ralph to halt
@@ -172,8 +173,31 @@ most once a week, offers to install it — see
 a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are printed by
-`ralph start`; detach with `Ctrl+B` then `D`, or tail per-issue logs in
-`logs/ralph-issue-*.log`. When
+`ralph start`, and `ralph live` attaches from any directory in the repo so the
+name never has to be copied. `ralph live` derives the name from the repo's git
+toplevel, which is the session `ralph start` opened **if you ran it at the repo
+root** — `start` and `stop` still hash the directory they are run in, so a loop
+launched from a subdirectory carries a different name and `ralph live` reports
+no session for it. That is why the no-session line points at `ralph status`
+first and `ralph start` (in the repo root) second: `ralph status` reads the run
+record the loop writes at the git toplevel, so it can see a loop launched from a
+subdirectory, while `ralph start` cannot and would launch a second one. Run from
+inside tmux it refuses to nest: with the session live it prints the
+`tmux switch-client` line instead, and with no session running it prints the
+same no-session notice it would print outside tmux. It needs a real terminal on
+**both** stdin and stdout — `ralph live` down a pipe, in a hook or in a CI step
+is refused before the attach rather than failing inside tmux — and on a machine
+with no `tmux` on `PATH` it names the missing dependency and points at
+`ralph doctor`. Every refusal goes to stderr, hints included, and exits
+non-zero; the no-session notice is stdout and exits **0**, since nothing to
+attach to is not a failure. Detach with `Ctrl+B` then `D`, or tail per-issue
+logs in `logs/ralph-issue-*.log`. A `ralph live` attach leaves one closing line
+behind when you detach: either that the loop is still
+running, with `ralph status` and `ralph stop` under it, or that the session
+ended while you were attached, with `ralph status` alone — there is nothing left
+to kill. Which of the two you get is settled by asking tmux again after the
+attach rather than by reading its exit code, because a session killed under an
+attached client exits `0` exactly as a deliberate detach does. When
 [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set in
 `ralph.config.sh`, the same session also gets a **second window named
 `digest`** that narrates the run on a timer beside the loop — see
@@ -2325,7 +2349,8 @@ already launched the loop for *this* project (the session name is
 per-project: `ralph-<repo>-<hash>`). Either attach and let it finish, or
 stop it (`ralph stop`) before starting again — `ralph status` names the run and
 the issue it is on, and `ralph start` prints the exact attach / kill commands
-for your session.
+for your session. [`ralph live`](#quick-start) attaches without the copy when
+that loop was launched at the repo root.
 
 **The startup box says `Digest: … NOT running`.** — `ralph start` took
 `RALPH_DIGEST_INTERVAL` as set (non-empty, non-zero) and then could not open the
@@ -2346,8 +2371,10 @@ with no interval configured still shows a digest you asked for by hand (see
 30-minute fallback, since there is no configured interval to measure it against.
 
 **You detached and cannot tell whether Ralph is still working.** — Run
-`ralph status`. It reads the run-state record the loop writes
-(`.ralph/run-state.json`), reconciles it against whether that run is still
+`ralph status`. A detach from a [`ralph live`](#quick-start) attach also answers
+it on the way out, in one line naming either the loop still running or the
+session that ended under your client. `ralph status` reads the record the loop
+writes (`.ralph/run-state.json`), reconciles it against whether that run is still
 alive, and names the run, how far through the queue it is — tasks done over a live
 denominator, and the issue in flight and for how long — a table of the tasks it has
 worked through, the live queue depth, the pace, ETA, and spend the run is holding,

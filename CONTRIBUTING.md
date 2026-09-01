@@ -31,12 +31,22 @@ file inherits that with no opt-in.
 The name set is **derived from the sources**, not hand-maintained: `RALPH_*` by
 prefix, every key passed to `resolveCred()` in `lib/`, and every variable declared
 by `templates/ralph.config.sh` / `templates/env.local.example`, plus a short list
-of names no file declares (`XDG_CONFIG_HOME`, `PROJECT_ROOT`, `NO_COLOR`, …). Add a
-new credential or config knob and it is neutralized automatically. `NO_COLOR` earns
-its place on that undeclared list for a reason worth stating: it is a cross-tool
+of names no file declares (`XDG_CONFIG_HOME`, `PROJECT_ROOT`, `NO_COLOR`, `TMUX`, …).
+Add a new credential or config knob and it is neutralized automatically. `NO_COLOR`
+earns its place on that undeclared list for a reason worth stating: it is a cross-tool
 convention nobody declares in a template, and a contributor who happens to export it
 would otherwise flip every colour-gated assertion in the suite at once (see
 [the sprite banner](#the-sprite-banner-generated-asset-placeholder-art)).
+`TMUX` (#167) is the same class with a sharper edge, and it names the gap to watch
+for: the derivation finds `resolveCred()` keys and template assignments, so a
+variable a module reads off its **injected env bag** — `processEnv.TMUX` in
+`lib/commands/live.js` — is invisible to it and needs a hand entry. Miss it and the
+suite answers differently on one machine than on CI, because *tmux itself* exports
+that name in every shell inside a session: a contributor running `npm test` in the
+window `ralph start` opened has it set, so a spec that lets `liveCommand`'s
+`processEnv` default — against a live session, which is what its own default deps
+build — would take the inside-tmux branch there and nowhere else. Add a
+`processEnv.X` read for an ambient, tool-exported name and add the name here with it.
 `pool: 'forks'` is pinned in the same config for a reason documented there: the `HOME` sandbox
 travels through `process.env`, which only reaches `os.homedir()` when each worker
 is its own process.
@@ -1298,7 +1308,9 @@ to catch path/template bugs that unit tests can't surface.
      accident.
 5. **Pick a real open issue** in the project and run `ralph start`.
    Watch via the `tmux attach` command `ralph start` prints (the session is
-   per-project: `ralph-<repo>-<hash>`). Verify that:
+   per-project: `ralph-<repo>-<hash>`), or with `ralph live`, which needs no name
+   typed — run this one **at the repo root** so `live` and `start` agree on the
+   session (see the `ralph live` item below). Verify that:
    - The **sprite** is drawn as the very first thing on the terminal, above the
      preflight lines, with the **identity box** beside it on any window of 72
      columns or more and immediately under it on a narrower one (#161) — and since #73 it
@@ -1493,6 +1505,33 @@ to catch path/template bugs that unit tests can't surface.
      set the interval to something the grammar refuses (`0.5h`) and start once
      more: the launch must still succeed, with `⚠️  Digest window not opened`
      on stderr and `NOT running` on the box's digest line.
+   - **`ralph live`** (#167), which is only exercised for real here: the hermetic
+     suite injects the streams, stubs `tmux` and never attaches, so a terminal on
+     **both** ends, a `$TMUX` that tmux itself set, and a session that dies under an
+     attached client are all things only this step can produce. Run it from the
+     project root and from a subdirectory — both must land in the **same** session,
+     since it anchors on the git toplevel rather than the directory you typed it in.
+     Then the deliberate asymmetry to confirm rather than file, until #168 moves the
+     siblings onto `lib/repo-session.js`: `ralph start` and `ralph stop` still hash
+     their own cwd, so a loop launched by a `ralph start` typed *in a subdirectory*
+     runs under a name derived from that subdirectory and `ralph live` reports **no
+     session** for it — while `ralph status`, which reads the record the loop writes
+     at the toplevel, still finds that run. Do not "fix" that by starting a second
+     loop: nothing in `templates/ralph.sh` takes a lock, and two agent loops in one
+     working tree is the failure mode, which is why the no-session line names
+     `ralph status` before `ralph start`. Inside the loop's own window `ralph live`
+     must **refuse rather than nest**, printing
+     `tmux switch-client -t ralph-<repo>-<hash>` with the `Ctrl+B then D` detach
+     hint — the one place `$TMUX` is genuinely set. `ralph live | cat` must refuse
+     with the terminal message instead of reaching tmux's own `open terminal
+     failed`. Finally the two closing notices, which are the pair the exit code
+     cannot tell apart: a `Ctrl+B` `D` detach must print
+     `the loop is still running` with `ralph status` and
+     `ralph stop` under it, while **staying attached until the last issue in the
+     queue finishes** — `templates/ralph.sh` kills its own session from an `EXIT`
+     trap — must instead print `Session '…' is gone` with `ralph status` alone and
+     no `ralph stop`. After step 6 the same command must print the no-session line
+     and exit `0` (`echo $?`).
    - WhatsApp delivery works when `.env.local` is configured (else
      skipped silently).
    - The custom hook fires when `ralph-notify.sh` is present and
