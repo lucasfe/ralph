@@ -115,6 +115,93 @@ export function trackedFiles({ cwd = RALPH_HOME } = {}) {
 }
 
 /**
+ * The tracked files git has been TOLD are binary, as a Set of absolute paths.
+ *
+ * WHY A DECLARATION AND NOT A SNIFF. git will happily answer this from content — `ls-files
+ * --eol` prints `w/-text`, `grep -I` skips the file — and that answer is reached by looking
+ * for a NUL in the first 8000 bytes. Which is the byte this module exists to forbid. Sniffing
+ * would therefore hand every file a vote on its own membership: a .js that acquired a NUL near
+ * the top would be reclassified as binary, drop out of the sweep, and take its own offence with
+ * it. That is not a hypothetical trade-off, it is exactly the silent blind spot #107 was filed
+ * about, arrived at from the other side.
+ *
+ * `.gitattributes` cannot do that quietly. A kind leaves the sweep only when someone writes a
+ * line naming it, in a file a reviewer reads, and the QA guard fails if that line ever covers a
+ * source extension — so the escape hatch stays an asset hatch.
+ *
+ * FAIL CLOSED, on the same reasoning as `trackedFiles()`: a check-attr that errors must not be
+ * read as "nothing is binary", because that direction is the safe-looking one (it puts MORE
+ * files in the sweep) right up until the inverse filter is what a caller wanted.
+ *
+ * @param {object} [options]
+ * @param {string} [options.cwd] the repository, default RALPH_HOME.
+ * @param {string[]} [options.files] absolute paths to ask about, default every tracked file.
+ * @returns {Set<string>} absolute paths whose `binary` attribute is `set`.
+ */
+export function declaredBinaryFiles({ cwd = RALPH_HOME, files } = {}) {
+  const subjects = files ?? trackedFiles({ cwd })
+  if (subjects.length === 0) return new Set()
+  // Same NUL-as-separator trick as `trackedFiles`, and for the same reason: without `-z` git
+  // quotes any path with a special character and the quoting has to be undone by hand. Built
+  // from its code point, under this module's own rule.
+  const SEPARATOR = String.fromCharCode(NUL_CODE)
+  let stdout
+  try {
+    stdout = execFileSync('git', ['check-attr', '-z', '--stdin', 'binary'], {
+      cwd,
+      input: subjects.map((file) => relative(cwd, file)).join(SEPARATOR) + SEPARATOR,
+      encoding: 'utf8',
+      maxBuffer: 1 << 26,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+  } catch (error) {
+    throw new Error(
+      `Could not read the \`binary\` attribute in ${cwd}: ${error.code ?? `exit ${error.status}`}. ` +
+        `${String(error.stderr ?? '').trim()}\n` +
+        'This helper cannot fall back to "nothing is declared binary": the control-byte sweep ' +
+        'would then read every asset as source and go red on bytes nobody authored, and an ' +
+        'inverse caller would silently see no assets at all.',
+      { cause: error },
+    )
+  }
+  // `-z` prints flat NUL-terminated triples: path, attribute name, value. `set` is the only
+  // value that means the declaration applies — `unspecified` and `unset` both leave the file
+  // in the sweep, which is the direction that fails safe.
+  const fields = stdout.split(SEPARATOR)
+  const declared = new Set()
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    if (fields[index + 2] === 'set') declared.add(join(cwd, fields[index]))
+  }
+  return declared
+}
+
+/**
+ * Every file git tracks EXCEPT the ones `.gitattributes` declares binary.
+ *
+ * The scope of the control-byte guards. `trackedFiles()` stays the broader primitive and keeps
+ * its ten-odd other callers — a label sweep reading a PNG finds nothing and costs nothing — so
+ * only the byte guards, for which an asset is a false positive rather than a waste, narrow.
+ *
+ * FAIL CLOSED once more: if the filter empties the list, something is wrong with the
+ * declaration rather than with the repo, and a guard sweeping nothing passes vacuously.
+ *
+ * @param {{cwd?: string}} [options] `cwd` — the tree to enumerate, default RALPH_HOME.
+ * @returns {string[]} absolute paths, one per tracked text file.
+ */
+export function textFiles({ cwd = RALPH_HOME } = {}) {
+  const tracked = trackedFiles({ cwd })
+  const binary = declaredBinaryFiles({ cwd, files: tracked })
+  const text = tracked.filter((file) => !binary.has(file))
+  if (text.length === 0) {
+    throw new Error(
+      `Every one of the ${tracked.length} files git tracks in ${cwd} is declared binary in ` +
+        '.gitattributes. Refusing to report a clean sweep over an empty list.',
+    )
+  }
+  return text
+}
+
+/**
  * Every occurrence of one of `codes` in `files`, as `path:line: Nx U+XXXX`.
  *
  * The path and line are the whole value of this over a bare count: the byte is invisible in

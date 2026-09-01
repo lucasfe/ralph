@@ -21,7 +21,9 @@ import {
   ESC_CODE,
   NUL_CODE,
   OTHER_CONTROL_CODES,
+  declaredBinaryFiles,
   offenders,
+  textFiles,
   trackedFiles,
 } from './helpers/source-control-bytes.js'
 
@@ -62,12 +64,17 @@ const GUARD_REL = 'test/source-control-bytes.test.js'
 const HELPER_REL = 'test/helpers/source-control-bytes.js'
 const source = (rel) => readFileSync(join(RALPH_HOME, rel), 'utf8')
 
-// The tracked-file list, read once. `trackedFiles()` shells out to `git ls-files`, and three
-// of the sections below want the same answer from it; the guard computes its own the same way
-// at its own module top level. Eager rather than lazy on purpose, for the same reason the
-// helper throws instead of returning nothing: if git cannot answer, this file must die loudly
-// at collection time rather than quietly assert things about a shorter list.
-const TRACKED = trackedFiles()
+// The swept-file list, read once. `textFiles()` shells out to `git ls-files` and then to `git
+// check-attr`, and three of the sections below want the same answer from it; the guard computes
+// its own the same way at its own module top level. Eager rather than lazy on purpose, for the
+// same reason the helper throws instead of returning nothing: if git cannot answer, this file
+// must die loudly at collection time rather than quietly assert things about a shorter list.
+//
+// `textFiles()` AND NOT `trackedFiles()`, because this file must mirror the guard's scope or it
+// stops driving the code that actually runs. `trackedFiles` is still imported: the fail-closed
+// and scope-depth sections below assert on the broader primitive directly, which is the level
+// their claims are about.
+const TRACKED = textFiles()
 const TRACKED_JS = TRACKED.filter((file) => file.endsWith('.js'))
 
 // ---------------------------------------------------------------------------
@@ -683,46 +690,60 @@ describe('QA #107 — the guard’s scope over the real repo, and whether it can
     }
   })
 
-  it('has every tracked file inside the NUL sweep, so a BINARY asset is what now has to be decided', () => {
-    // THIS TEST'S PREMISE WAS RETIRED BY THE DESIGN, and it is worth saying which one. The
-    // NUL sweep used to be extension-scoped — a TEXT_FILE_RE plus a list of extensionless
-    // names — so a file kind outside the list was invisible to it (a LICENSE, an .mjs, a
-    // .cjs, a .ts, an .editorconfig), and this test froze the fact that no such kind existed
-    // yet. The sweep is now unscoped: it reads every file git tracks, full stop. "No file kind
-    // is silently outside the sweep" is therefore TRIVIALLY true, and asserting it would
-    // assert nothing at all.
+  it('sweeps every tracked file except the ones .gitattributes DECLARES binary', () => {
+    // THIS TEST HAS NOW BEEN RETARGETED TWICE, and the history is the argument. It began as
+    // "no file kind is silently outside the sweep", when the sweep was extension-scoped — a
+    // TEXT_FILE_RE plus a list of extensionless names — and froze the fact that no unlisted
+    // kind existed yet. The sweep then went unscoped, reading every file git tracks, which
+    // made that claim trivially true; so it was re-pointed at the cost of unscoping, namely
+    // that the guard goes permanently red the day a genuine binary asset lands.
     //
-    // The obligation did not disappear, it INVERTED — and the inverse is what is pinned here.
-    // Extension scoping existed for a reason the dev wrote down: an unscoped sweep goes
-    // permanently red the day a genuine binary asset is committed, because a PNG is very
-    // largely raw NULs. That day is now the decision point the old assertion was protecting
-    // — someone has to say out loud whether the asset belongs in the repo or the sweep needs a
-    // scope again — so it is pinned in the same shape, from the other side.
+    // THAT DAY CAME: three bug-report screenshots under .snap/bug-reports/. So the decision the
+    // previous version demanded be made out loud has been made, and this is now the record of
+    // WHICH way. The sweep is scoped again, but by DECLARATION rather than by extension or by
+    // content, and the three assertions below are the three things that makes true.
+    const kind = (file) => extname(file) || `(no extension: ${basename(file)})`
 
-    // First, that the triviality is real rather than assumed. A sweep narrowed back to a
-    // `FILES.filter(...)` would still produce an empty offender list over a clean repo, so
-    // nothing in the dev's file would notice it; the two lines it turns on are read instead.
-    expect(source(GUARD_REL)).toContain('const FILES = trackedFiles()')
+    // FIRST: the guard really reads the narrowed list, rather than being narrowed somewhere a
+    // reader would not look. Pinned as source text because a sweep re-narrowed to a
+    // `FILES.filter(...)` would still produce an empty offender list over a clean repo — no
+    // assertion in the dev's file would notice, so the two lines it turns on are read instead.
+    expect(source(GUARD_REL)).toContain('const FILES = textFiles()')
     expect(source(GUARD_REL)).toContain('offenders(FILES, [NUL_CODE])')
 
-    // Second, the breadth that makes the above worth having: the sweep spans every kind the
-    // repo actually contains, which is a good deal more than JavaScript.
-    const kind = (file) => extname(file) || `(no extension: ${basename(file)})`
-    const kinds = [...new Set(TRACKED.map(kind))].sort()
-    expect(kinds).toContain('.js')
-    expect(kinds).toContain('.md')
-    expect(kinds).toContain('.json')
-    expect(kinds).toContain('.sh')
-    expect(kinds.length).toBeGreaterThanOrEqual(6)
+    // SECOND: the scope is a declaration, and NOT a content sniff. This is the load-bearing
+    // one. git decides binary by looking for a NUL in the first 8000 bytes — precisely the byte
+    // under guard — so a sniffing scope would let a .js file that acquired a NUL near the top
+    // classify itself out of the sweep and carry its own offence away with it, which is #107's
+    // own blind spot reached from the other side. Proven, not asserted about: a throwaway repo
+    // gets a .js whose second byte is a NUL and no .gitattributes at all. git calls it binary;
+    // `textFiles()` must still sweep it.
+    const sniffRoot = mkdtempSync(join(TMP_ROOT, 'sniff-'))
+    execFileSync('git', ['init', '-q'], { cwd: sniffRoot })
+    const decoy = 'looks-like-source.js'
+    writeFileSync(join(sniffRoot, decoy), `a${byte(NUL_CODE)}b = 1\n`)
+    execFileSync('git', ['add', '-A'], { cwd: sniffRoot })
+    const eol = execFileSync('git', ['ls-files', '--eol'], { cwd: sniffRoot, encoding: 'utf8' })
+    expect(eol, 'the decoy is not a valid probe unless git itself calls it binary').toMatch(
+      /w\/-text/,
+    )
+    expect(
+      textFiles({ cwd: sniffRoot }).map((file) => relative(sniffRoot, file)),
+      'a .js file with an early NUL classified ITSELF out of the sweep — the scope is sniffing ' +
+        'content, and the offence it carries away is the exact byte #107 is about.',
+    ).toEqual([decoy])
+    expect(declaredBinaryFiles({ cwd: sniffRoot }).size).toBe(0)
 
-    // Third, the new obligation. git's own binary verdict is the oracle: `ls-files --eol`
-    // prints `-text` for a file it considers binary. A different implementation in a different
-    // language, and deliberately NOT the same test — git inspects only the first 8000 bytes,
-    // this sweep reads the whole file — which is what makes it a cross-check rather than a
-    // copy of the detector. Only the `w/` (working tree) column is read: `i/` reports the
-    // STAGED blob, which for a file with unstaged edits is the pre-edit content and so answers
-    // a question about history rather than about what the sweep will read.
-    const binary = execFileSync('git', ['ls-files', '--eol'], {
+    // THIRD: nothing leaves the sweep unnoticed, in either direction.
+    //
+    // (a) every file git considers binary is declared — so committing the next screenshot
+    // without a .gitattributes line still fails, which is how "decide out loud" survives the
+    // rescope. `ls-files --eol` is the oracle and a deliberately different implementation from
+    // the check-attr the helper uses: git reads content, .gitattributes states intent, and the
+    // two disagreeing is exactly the undeclared asset this catches. Only the `w/` (working
+    // tree) column is read; `i/` reports the STAGED blob, which for a file with unstaged edits
+    // answers a question about history rather than about what the sweep will read.
+    const sniffedBinary = execFileSync('git', ['ls-files', '--eol'], {
       cwd: RALPH_HOME,
       encoding: 'utf8',
       maxBuffer: 1 << 26,
@@ -731,19 +752,41 @@ describe('QA #107 — the guard’s scope over the real repo, and whether it can
       .filter((line) => line !== '')
       .map((line) => line.split('\t'))
       .filter(([columns]) => /(?:^|\s)w\/-text(?:\s|$)/.test(columns))
-      .map(([, path]) => path)
+      .map(([, path]) => join(RALPH_HOME, path))
+    const declared = declaredBinaryFiles()
     expect(
-      binary,
-      'A binary asset is now tracked, and the #107 NUL sweep is UNSCOPED — it reads every ' +
-        'tracked file — so this will have made the guard permanently red. Decide out loud: ' +
-        'either the asset does not belong in the repo, or the sweep needs a scope again (and ' +
-        'then a file kind outside that scope becomes invisible to it, which is the trade the ' +
-        `tracked-files design bought its way out of).\n${binary.join('\n')}`,
+      sniffedBinary.filter((file) => !declared.has(file)).map((file) => relative(RALPH_HOME, file)),
+      'A tracked file git considers BINARY is not declared `binary` in .gitattributes, so the ' +
+        '#107 control-byte sweep is reading it as source and has gone red on bytes nobody ' +
+        'authored. Decide out loud, as a reviewable line: either the asset does not belong in ' +
+        'the repo, or its kind belongs in .gitattributes.',
     ).toEqual([])
 
+    // (b) and the declaration may only ever cover assets. A `*.js binary` line would empty the
+    // guard in one stroke while every assertion in it stayed green, so the escape hatch is
+    // pinned shut against the kinds this repo's source actually uses.
+    const SOURCE_KINDS = ['.js', '.md', '.json', '.sh', '.yml', '.yaml', '.example', '.txt']
+    const escaped = [...declared].filter((file) => SOURCE_KINDS.includes(extname(file)))
+    expect(
+      escaped.map((file) => relative(RALPH_HOME, file)),
+      '.gitattributes declares a SOURCE file binary, which removes it from the #107 sweep ' +
+        'silently — every assertion in the guard stays green over the shorter list. An asset ' +
+        'kind may leave the sweep; a source kind may not.',
+    ).toEqual([])
+
+    // FOURTH, unchanged from every earlier version: the breadth that makes the above worth
+    // having. The sweep still spans every text kind the repo contains, not just JavaScript.
+    const kinds = [...new Set(TRACKED.map(kind))].sort()
+    expect(kinds).toContain('.js')
+    expect(kinds).toContain('.md')
+    expect(kinds).toContain('.json')
+    expect(kinds).toContain('.sh')
+    expect(kinds.length).toBeGreaterThanOrEqual(6)
+    expect(kinds, 'a declared-binary kind is still reaching the sweep').not.toContain('.png')
+
     // And the .js sweeps are a subset of the NUL sweep, so no .js file is checked for ESC but
-    // not for NUL. Trivial while the NUL sweep is the whole tracked list — and it is the
-    // assertion that would catch the two lists drifting apart if either ever gained a filter.
+    // not for NUL. This is the assertion that catches the two lists drifting apart — and it is
+    // no longer trivial, now that the NUL sweep is a filtered list rather than the whole one.
     const swept = new Set(TRACKED)
     expect(TRACKED_JS.filter((file) => !swept.has(file))).toEqual([])
   })
