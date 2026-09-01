@@ -86,7 +86,7 @@ ralph start     # under the sprite and identity box: launch the loop in a detach
 ralph live      # attach this terminal to the repo-root session, from any directory in the repo
 ralph status    # under an identity box: run, progress, task table, queue, pace, ETA, spend, digest
 ralph digest    # narrate in prose what the loop is doing, and log it to .ralph/digest.log
-ralph stop      # kill this project's tmux session when you want Ralph to halt
+ralph stop      # halt Ralph: kill this project's tmux session, from any directory in the repo
 ralph update    # update Ralph itself to the latest published version (any directory)
 ralph changelog # what changed in recent Ralph releases (any directory, no network)
 ```
@@ -174,15 +174,18 @@ a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
 colliding). The exact attach / kill commands for your session are printed by
 `ralph start`, and `ralph live` attaches from any directory in the repo so the
-name never has to be copied. `ralph live` derives the name from the repo's git
-toplevel, which is the session `ralph start` opened **if you ran it at the repo
-root** — `start` and `stop` still hash the directory they are run in, so a loop
-launched from a subdirectory carries a different name and `ralph live` reports
-no session for it. That is why the no-session line points at `ralph status`
-first and `ralph start` (in the repo root) second: `ralph status` reads the run
-record the loop writes at the git toplevel, so it can see a loop launched from a
-subdirectory, while `ralph start` cannot and would launch a second one. Run from
-inside tmux it refuses to nest: with the session live it prints the
+name never has to be copied. `ralph live` and `ralph stop` both derive the name
+from the repo's git toplevel, so either works from any subdirectory and both mean
+the same session — which is the session `ralph start` opened **if you ran it at
+the repo root**. `start` still hashes the directory it is run in, so a loop
+launched from a subdirectory carries a different name and neither command can
+reach it: `ralph live` reports no session to attach to, `ralph stop` reports
+none to kill, and that loop keeps running. That is why `ralph live`'s
+no-session line points at `ralph status` first and `ralph start` (in the repo
+root) second: `ralph status` reads the run record the loop writes at the git
+toplevel, so it can see a loop launched from a subdirectory, while `ralph start`
+cannot and would launch a second one.
+Run from inside tmux it refuses to nest: with the session live it prints the
 `tmux switch-client` line instead, and with no session running it prints the
 same no-session notice it would print outside tmux. It needs a real terminal on
 **both** stdin and stdout — `ralph live` down a pipe, in a hook or in a CI step
@@ -2349,8 +2352,9 @@ already launched the loop for *this* project (the session name is
 per-project: `ralph-<repo>-<hash>`). Either attach and let it finish, or
 stop it (`ralph stop`) before starting again — `ralph status` names the run and
 the issue it is on, and `ralph start` prints the exact attach / kill commands
-for your session. [`ralph live`](#quick-start) attaches without the copy when
-that loop was launched at the repo root.
+for your session. When that loop was launched at the repo root,
+[`ralph live`](#quick-start) attaches and `ralph stop` kills without the copy,
+from any directory in the repo.
 
 **The startup box says `Digest: … NOT running`.** — `ralph start` took
 `RALPH_DIGEST_INTERVAL` as set (non-empty, non-zero) and then could not open the

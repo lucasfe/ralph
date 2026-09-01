@@ -1511,10 +1511,12 @@ to catch path/template bugs that unit tests can't surface.
      attached client are all things only this step can produce. Run it from the
      project root and from a subdirectory — both must land in the **same** session,
      since it anchors on the git toplevel rather than the directory you typed it in.
-     Then the deliberate asymmetry to confirm rather than file, until #168 moves the
-     siblings onto `lib/repo-session.js`: `ralph start` and `ralph stop` still hash
-     their own cwd, so a loop launched by a `ralph start` typed *in a subdirectory*
-     runs under a name derived from that subdirectory and `ralph live` reports **no
+     Then the deliberate asymmetry to confirm rather than file, until `ralph start`
+     moves onto `lib/repo-session.js` too (#168 moved `ralph stop` onto it — its own
+     subdirectory check belongs to step 6, since running `stop` here would take the
+     session down mid-bullet): `ralph start` still hashes its own cwd, so a loop
+     launched by a `ralph start` typed *in a subdirectory* runs under a name derived
+     from that subdirectory, and `ralph live` and `ralph stop` both report **no
      session** for it — while `ralph status`, which reads the record the loop writes
      at the toplevel, still finds that run. Do not "fix" that by starting a second
      loop: nothing in `templates/ralph.sh` takes a lock, and two agent loops in one
@@ -1536,7 +1538,9 @@ to catch path/template bugs that unit tests can't surface.
      skipped silently).
    - The custom hook fires when `ralph-notify.sh` is present and
      executable (else skipped).
-6. **Run `ralph stop`** and confirm the tmux session is gone:
+6. **Run `ralph stop`, and type it in a subdirectory** — #168 anchors it on the git
+   toplevel, so `ralph stop` in `lib/` must kill the repo's session exactly as one
+   typed at the root would — then confirm the tmux session is gone:
    ```bash
    tmux ls   # must not list the project's ralph-<repo>-<hash> session
    ```
