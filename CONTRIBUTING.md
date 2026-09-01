@@ -629,14 +629,16 @@ you need to see the real thing, do it by hand against a throwaway project.
 ## The sprite banner: generated asset, placeholder art
 
 `ralph start` plays a one-second pixel-sprite splash as its first output on a
-colour terminal, settles it on a still frame, and prints an identity box under it
-on every run — or as much of that as `RALPH_BANNER` asked for (see
+colour terminal, settles it on a still frame, and prints an identity box on every
+run — **beside** the sprite from 72 columns up (#161) and under it on every
+narrower window — or as much of that as `RALPH_BANNER` asked for (see
 [the README](./README.md#quick-start)). Since #75 `ralph doctor` heads its report
 with that same box, and since #76 `ralph status` heads its human view with it
 too — out of the same composer and the same setting, and with none of the pixels
-in either: three commands share this half, one shares both. Eleven published
-modules under `lib/` back the two halves and the setting that governs them, the
-first of them fed by a generator that is not published at all:
+in either: three commands share this half, one shares both. Twelve published
+modules under `lib/` back the two halves, the join between them and the setting
+that governs them, the first of them fed by a generator that is not published at
+all:
 
 - `lib/sprite-data.js` — **GENERATED. Do not edit by hand.** It is the committed
   asset: a palette plus one row-per-pixel grid per frame. Regenerate it, never
@@ -680,13 +682,19 @@ first of them fed by a generator that is not published at all:
   through arrives as an argument — the stream, the `sleep`, the signal source, the
   re-raise — so a one-second animation is a sequence a test compares byte for byte
   in microseconds, with no timer and no listener on the real process. Two rules
-  worth keeping. **The bound is structural:** `splashSequence` builds a fixed array
+  worth keeping — and the second is why #161 grew the frames without touching this
+  file. **The bound is structural:** `splashSequence` builds a fixed array
   before the first byte goes out and the loop is a `for...of` over it, so a splash
   can never hang a `ralph start`; there is no `while`, no clock comparison and no
   interval, and a static read in the spec asserts that absence. **It knows no
-  height:** every cursor-up is derived from the frame just written, so regenerating
+  height:** every cursor-up is counted off the **newlines in the chunk just
+  written**, so regenerating
   the art at another size cannot desync the animation from it — a hardcoded `17`
-  here is the bug that walks the cursor up through the previous run's output. It
+  here is the bug that walks the cursor up through the previous run's output. That
+  is also the whole reason #161 could hand this module frames with an identity box
+  glued into their right-hand margin and change nothing here: a wider or taller
+  frame redraws exactly as correctly as a bare one, because the count came from the
+  chunk rather than from the sprite. It
   holds no gate either: `renderSplashFrames` answers with an empty list on a pipe,
   under `NO_COLOR` and below 26 columns, and an empty list plays *nothing* — not a
   sleep, not a cursor toggle, not one byte. `cycles: 1` is byte-for-byte the
@@ -762,9 +770,24 @@ first of them fed by a generator that is not published at all:
   "rows, not parameters" was supposed to buy. The `width`
   argument is the one that came home to roost: `bannerLayout(width)` is the whole
   degradation ladder in one pure, total function — box from `BOX_MIN_WIDTH` (44)
-  up, sprite from `SPRITE_MIN_WIDTH` (26) up, and any width that cannot be used at
-  all falling back to the 60-column `BANNER_WIDTH` rather than throwing or
-  degrading. It is the *only* place either rung is read, which is what makes every
+  up, sprite from `SPRITE_MIN_WIDTH` (26) up, box *beside* the sprite from 72 up,
+  and any width that cannot be used at all falling back to the 60-column
+  `BANNER_WIDTH` rather than throwing or degrading. That third rung is #161's and
+  it is **derived, never spelled**: `beside` is `width - SPRITE_MIN_WIDTH -
+  BESIDE_GAP >= BOX_MIN_WIDTH`, so 72 is the three published numbers added up
+  rather than a fourth constant to keep in step with them, and it is true only
+  where the leftover can hold a *framed* box — a bare box is always a stacked one.
+  `besideWidth` is that same leftover capped at `BANNER_WIDTH`, which is 44 at the
+  rung and 60 from 88 columns up, and it is what `start.js` composes the box at
+  when it is going to glue it on; the field is floored at zero rather than left
+  negative because it reaches a `repeat` in `banner-beside.js`, and it is
+  meaningless — not absent — wherever `beside` is false. `BESIDE_GAP` (2) lives
+  here rather than next to the join for the reason `LABEL_WIDTH` does: a gutter is
+  a number of *columns*, so the half that knows how wide the terminal is owns it,
+  and exporting it is what keeps the subtraction and the spaces from disagreeing.
+  It is the *only* place any rung is read — `start.js` asks it where to put the box
+  exactly as `sprite-banner.js` asks it whether it may draw, and neither holds a
+  number of its own — which is what makes every
   one of them testable without a terminal, and the two line forms it selects
   between (`BOXED` / `BARE`) are data rather than a conditional inside each builder
   — so a box whose top is framed and whose rows are not is unreachable. `26` is
@@ -940,6 +963,40 @@ first of them fed by a generator that is not published at all:
   there is no round trip in front of the first paint — and what makes
   `ralph changelog` answerable offline, from any directory. Keep it that way if
   you touch either file.
+- `lib/banner-beside.js` — the **join** (#161), and the only module in this list
+  that touches both halves: `joinBeside({ spriteLines, boxLines, spriteWidth, gap })`
+  takes two blocks of *finished* lines and returns one, with the box glued into the
+  sprite's right-hand margin, top-aligned (box line 0 on sprite line 0) behind
+  `BESIDE_GAP` columns of air. It is one degree purer than the rest of the banner
+  and that is the rule to keep: **not one escape byte of its own**. The painting is
+  over before the join begins, so what it puts between the blocks is spaces — a
+  module that wrote an escape here would be a second place a line could be
+  corrupted, downstream of the clip in `banner-compose.js` that made the first one
+  safe. **The sprite's width is stated, never measured**, which is the whole reason
+  this is a module and not two lines at the call site: `sprite-render.js` writes a
+  reset, a foreground and a half-block per cell, so a 26-cell row is well over two
+  hundred code points and no honest count of the string is where the box's first
+  column goes. `start.js` passes `spriteWidth` from `sprite-data.js`; do not
+  replace it with `line.length`, and do not teach this file to strip an escape.
+  Two shapes are deliberate in the output: a row the box does not reach is the
+  sprite's own string **byte for byte, with no trailing padding** (the sprite has
+  no right border to reach, and ninety trailing spaces per row is noise in every
+  transcript), and a row the sprite does not reach is the box indented into the
+  same column, so a box taller than the picture keeps all four of its sides — which
+  no shipped caller produces, since `ralph start`'s box is at most 12 rows against
+  the sprite's 17, but the join is total either way — it runs before the first
+  preflight line, so a nonsensical width or a list that is not a list has to cost a
+  worse-looking banner and never the run. `BESIDE_MAX_COLUMNS` (1000) is the half of
+  that worth naming: the padding is built with `String.prototype.repeat`, so a
+  `Number.MAX_SAFE_INTEGER` that satisfied every shape guard could still only ever
+  throw a `RangeError` from inside a picture. Same defect `SPLASH_MAX_FRAMES` closes
+  in `sprite-player.js`, stated in the same words — a safe integer is a shape, not a
+  size — and it is a **ceiling, not a clamp**: over the line falls back to no
+  columns for a width and `BESIDE_GAP` for a gap, because clamping a billion to a
+  thousand would draw the box a thousand columns off the left edge of an
+  eighty-column terminal. Nothing in the CLI can reach it. The one import is
+  `BESIDE_GAP` from `banner-compose.js` and the edge runs one way: that file knows
+  nothing about this one.
 - `lib/banner-mode.js` — the *policy* (#74), and the one module here that sits above
   both halves: how much of all of the above the user actually asked for. One pure
   function — `resolveBannerMode({ configured, override, isTTY, color, width })` —
@@ -1243,19 +1300,27 @@ to catch path/template bugs that unit tests can't surface.
    Watch via the `tmux attach` command `ralph start` prints (the session is
    per-project: `ralph-<repo>-<hash>`). Verify that:
    - The **sprite** is drawn as the very first thing on the terminal, above the
-     preflight lines, with the **identity box** immediately under it — and since #73 it
+     preflight lines, with the **identity box** beside it on any window of 72
+     columns or more and immediately under it on a narrower one (#161) — and since #73 it
      *animates* for about a second before it settles, so watch this one rather than
      glancing at it. This is the one place a real TTY is exercised — the hermetic suite
      injects `stdoutIsTTY` and `columns`, and `sleep` and `signals` besides, and never
-     touches a terminal — so the splash is only ever *seen* here. Four things to look
+     touches a terminal — so the splash is only ever *seen* here. Five things to look
      for that no spec can show you: the frames must redraw **in place**, so when the run
      is over the scrollback holds one sprite and not five, and nothing above the sprite
-     has been walked over; the box's `╭─` must land clean under the settled frame, with
-     no stray escape in front of the corner; the **cursor must be visible again** for the
+     has been walked over; the box's `╭─` must land clean, with no stray escape in front
+     of the corner — on the sprite's **top** row and two columns clear of its right edge
+     on a window of 72 or more, under the settled frame on a narrower one; on the wide
+     window the box must ride **every** frame rather than arrive after the last one, so
+     no frame flashes without it and no box is drawn twice (#161 — the bug this change
+     would most easily introduce is one box in each place, so count them); the **cursor
+     must be visible again** for the
      rest of the run (if it has vanished, the restore did not happen — `reset` your shell
      and treat that as a bug, not a quirk); and a `Ctrl-C` *through the middle of
      the animation* must leave the cursor visible and exit **130** (`echo $?`), the same
-     as a `Ctrl-C` anywhere else in the run. Then check both suppressions here as
+     as a `Ctrl-C` anywhere else in the run — and, on a wide window, must leave the
+     scrollback holding a whole box rather than one with three sides, since the box is
+     now inside the frame the abort lands in. Then check both suppressions here as
      well. Piped: `ralph start 2>/dev/null | cat -v` must show no sprite and no
      truecolor escape (`^[[38;2;`, `^[[48;2;`) — and none of the splash's control
      sequences either (`^[[?25l`, `^[[?25h`, `^[[17A`), because a suppressed sprite is
@@ -1268,8 +1333,10 @@ to catch path/template bugs that unit tests can't surface.
      box must survive it too, losing only the yellow on its `update` row.
    - **The three `RALPH_BANNER` modes** (#74), which are the other thing only a real
      terminal can show you. `RALPH_BANNER=static ralph start` must land the settled
-     frame **once**, with no visible redraw and no flicker, and the box under it — the
-     same picture `full` ends on, arrived at without the second of animation.
+     frame **once**, with no visible redraw and no flicker, and the box in the same
+     place `full` would have put it — beside the frame on a wide window, under it on a
+     narrow one — since `static` keeps the arrangement and drops only the animation. It
+     is the same picture `full` ends on, arrived at without the second of animation.
      `RALPH_BANNER=off ralph start` must print **nothing** above its first preflight
      line: no sprite, no box, not one blank line, and the rest of the run unchanged.
      `RALPH_BANNER=loud ralph start` must draw the **full** banner anyway and put one
@@ -1285,7 +1352,12 @@ to catch path/template bugs that unit tests can't surface.
      update-check cache already holds something newer than the tarball you just
      installed, so on a machine where nothing has ever checked there is nothing to see
      and that is not a failure. Resize the window
-     too, and walk the whole ladder: under 60 columns the box must narrow and clip
+     too, and walk the whole ladder from wide to narrow: from 88 columns up the box
+     sits **beside** the sprite at its full 60; from 87 down to 72 it stays beside and
+     narrows a column at a time to 44; at **71** it drops **under** the sprite and
+     *widens* back to 60, which is the one step of this ladder that gets bigger on the
+     way down and therefore the one to eyeball rather than trust (#161); under 60
+     columns the box must narrow and clip
      its values with `…`, never wrapping a line or running its right border ragged;
      under 44 it must drop the border entirely and print bare `label   value` rows;
      and under 26 the sprite must go as well — whole, not clipped — leaving those
