@@ -8,6 +8,7 @@ import { Command } from 'commander'
 // below for why the seam is wired in from the entry point.
 import { execa } from 'execa'
 import { startCommand, StartAbort } from '../lib/commands/start.js'
+import { liveCommand, LiveAbort } from '../lib/commands/live.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
 import { statusCommand, StatusAbort } from '../lib/commands/status.js'
 import { digestCommand, DigestAbort } from '../lib/commands/digest.js'
@@ -70,6 +71,36 @@ program
       await startCommand({ currentVersion: pkg.version })
     } catch (e) {
       if (e instanceof StartAbort) {
+        process.exit(e.exitCode ?? 1)
+      }
+      throw e
+    }
+  })
+
+program
+  .command('live')
+  // Sits between `start` and `stop` because that is the order a session is lived
+  // through: launch it, watch it, kill it. The summary names the fact that no name has to
+  // be typed, since #167 exists precisely because the alternative — `tmux attach -t
+  // ralph-<name>-<hash>` — is a line a user copies out of the launch box.
+  //
+  // "opened at the repo root" is the precondition, not decoration: `ralph live` derives the
+  // session from the git toplevel while `ralph start` hashes the directory it was run in
+  // (start.js:679), so the two agree exactly when start was run at the root. Claiming it
+  // attaches to whatever session `ralph start` opened would be a promise this command does
+  // not keep from a subdirectory — #168 is where the siblings move onto the shared module.
+  .description(
+    'Attach this terminal to the Ralph loop running in this repo (the tmux session `ralph start` opened at the repo root, no session name to copy)',
+  )
+  .action(async () => {
+    try {
+      // #167: the exit code IS tmux's, so the result is spent the way `status`, `cycle`
+      // and `digest` spend theirs rather than dropped like `stop`'s — a detach exits 0,
+      // and a tmux that could not attach hands its own code back to the shell.
+      const result = await liveCommand()
+      process.exit(result.exitCode ?? 0)
+    } catch (e) {
+      if (e instanceof LiveAbort) {
         process.exit(e.exitCode ?? 1)
       }
       throw e

@@ -94,6 +94,17 @@ const UNDECLARED_AMBIENT_NAMES = [
   // every colour-gated assertion in the suite, which is precisely the class of
   // shell-dependence #41 exists to kill.
   'NO_COLOR',
+  // #167: read by lib/commands/live.js (through the env bag, `processEnv.TMUX`) to
+  // refuse to nest one tmux session inside another. Undeclared here for the same
+  // reason as NO_COLOR — the derivation below finds only resolveCred() keys and
+  // assignments in a scanned template, never a `processEnv.X` reference — but with a
+  // sharper edge: tmux EXPORTS this name in every shell inside a session, so a
+  // developer running the suite from the tmux window `ralph start` opened has it set,
+  // and any test that lets `liveCommand`'s `processEnv` default would take the
+  // inside-tmux branch on that machine and not on CI. Verified against the same
+  // scanner the QA specs use: test/helpers/env-surface.js reports TMUX with source
+  // lib/commands/live.js.
+  'TMUX',
 ]
 
 // The derivation FAILS CLOSED: an unreadable source would silently shrink the name
