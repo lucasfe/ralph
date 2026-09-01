@@ -172,36 +172,13 @@ most once a week, offers to install it — see
 [Updating Ralph](#updating-ralph)), and launches the bash loop inside
 a per-project tmux session named `ralph-<repo>-<hash>` (derived from the
 project path, so multiple repos can run Ralph concurrently without
-colliding). The exact attach / kill commands for your session are printed by
-`ralph start`, with `ralph live` named on the row above the attach command,
-and `ralph live` attaches from any directory in the repo so the name never has
-to be copied. `ralph live` and `ralph stop` both derive the name
-from the repo's git toplevel, so either works from any subdirectory and both mean
-the same session — which is the session `ralph start` opened **if you ran it at
-the repo root**. `start` still hashes the directory it is run in, so a loop
-launched from a subdirectory carries a different name and neither command can
-reach it: `ralph live` reports no session to attach to, `ralph stop` reports
-none to kill, and that loop keeps running. That is why `ralph live`'s
-no-session line points at `ralph status` first and `ralph start` (in the repo
-root) second: `ralph status` reads the run record the loop writes at the git
-toplevel, so it can see a loop launched from a subdirectory, while `ralph start`
-cannot and would launch a second one.
-Run from inside tmux it refuses to nest: with the session live it prints the
-`tmux switch-client` line instead, and with no session running it prints the
-same no-session notice it would print outside tmux. It needs a real terminal on
-**both** stdin and stdout — `ralph live` down a pipe, in a hook or in a CI step
-is refused before the attach rather than failing inside tmux — and on a machine
-with no `tmux` on `PATH` it names the missing dependency and points at
-`ralph doctor`. Every refusal goes to stderr, hints included, and exits
-non-zero; the no-session notice is stdout and exits **0**, since nothing to
-attach to is not a failure. Detach with `Ctrl+B` then `D`, or tail per-issue
-logs in `logs/ralph-issue-*.log`. A `ralph live` attach leaves one closing line
-behind when you detach: either that the loop is still
-running, with `ralph status` and `ralph stop` under it, or that the session
-ended while you were attached, with `ralph status` alone — there is nothing left
-to kill. Which of the two you get is settled by asking tmux again after the
-attach rather than by reading its exit code, because a session killed under an
-attached client exits `0` exactly as a deliberate detach does. When
+colliding). The exact attach / kill commands for your session are printed in the
+**startup box** that follows a successful launch — and again by the abort that
+fires when this project already has a session, under a `Watch:` row rather than a
+`Watch live:` one — with `ralph live` named on the row above the attach command
+either way, and `ralph live` — its own entry below, once this
+command's banner is out of the way — attaches from any directory in the repo so
+the name never has to be copied. When
 [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set in
 `ralph.config.sh`, the same session also gets a **second window named
 `digest`** that narrates the run on a timer beside the loop — see
@@ -555,6 +532,41 @@ the file under `--all`. It reads the same shipped changelog this box does, from
 the install rather than from your project, so it costs no network call and needs
 no Ralph project to answer.
 
+**`ralph live`** attaches this terminal to the loop's session, and it takes **no
+arguments and no options of its own** — the two words are the whole command line,
+because the repo decides which session and a repo has only one. `ralph live` and
+`ralph stop` both derive the name from the repo's git toplevel, so either works
+from any subdirectory and both mean the same session — which is the session
+`ralph start` opened **if you ran it at the repo root**. `start` still hashes the
+directory it is run in, so a loop launched from a subdirectory carries a
+different name and neither command can reach it: `ralph live` reports no session
+to attach to, `ralph stop` reports none to kill, and that loop keeps running.
+That is why `ralph live`'s no-session line points at `ralph status` first and
+`ralph start` (in the repo root) second: `ralph status` reads the run record the
+loop writes at the git toplevel, so it can see a loop launched from a
+subdirectory, while `ralph start` cannot and would launch a second one.
+
+**Four of its answers are not an attach at all**, and each names a different
+thing to do about it; the no-session line above is one of them. Run from inside
+tmux it refuses to nest: with the session live it prints the `tmux switch-client`
+line instead, and with no session running it prints the same no-session notice it
+would print outside tmux. It needs a real terminal on **both** stdin and stdout —
+`ralph live` down a pipe, in a hook or in a CI step is refused before the attach
+rather than failing inside tmux — and on a machine with no `tmux` on `PATH` it
+names the missing dependency and points at `ralph doctor`. Those three refusals
+go to stderr, hints included, and exit `1`; the no-session notice is stdout and
+exits **0**, since nothing to attach to is not a failure, and an attach that did
+happen exits with tmux's own code — or `1` when tmux hands back no code at all,
+since a spawn nobody can grade is not a success. Detach with `Ctrl+B` then `D` — the loop runs
+on without you, which is what `ralph stop` is for — or read the per-issue logs in
+`logs/ralph-issue-*.log` and never attach at all. A `ralph live` attach leaves one
+closing line behind when you detach: either that the loop is still
+running, with `ralph status` and `ralph stop` under it, or that the session
+ended while you were attached, with `ralph status` alone — there is nothing left
+to kill. Which of the two you get is settled by asking tmux again after the
+attach rather than by reading its exit code, because a session killed under an
+attached client exits `0` exactly as a deliberate detach does.
+
 `ralph status` answers "what is Ralph on right now?" without attaching to
 anything. Its human view opens with the same **identity box** `ralph start` and
 `ralph doctor` head their output with — the one described above — holding two
@@ -656,7 +668,10 @@ session ralph-<repo>-<hash>
   window 1  digest    ralph digest --loop --interval 30m
 ```
 
-`tmux attach` still lands on the loop's window; `Ctrl+B` then `W` lists both, so
+`ralph live` — or the raw `tmux attach` command the startup box prints under its
+`Watch live:` row, for a session `ralph live` cannot resolve — still lands on the
+loop's window, because the digest window is opened *detached* and so never takes
+the session's attention off window 0; `Ctrl+B` then `W` lists both, so
 the stream and the narration sit side by side. Each digest is appended to
 `.ralph/digest.log` exactly as a hand-run one is, so the night's story reads back
 without attaching to anything. The window narrates with the agent and model *this
@@ -2209,7 +2224,8 @@ described in the re-validation list above.
 
 Ralph posts a one-line summary at the end of every run, and a startup
 ping when `ralph start` successfully launches the tmux session. Stdout
-(visible via the `tmux attach` command printed by `ralph start`) is
+(visible with [`ralph live`](#quick-start), or via the raw `tmux attach`
+command `ralph start` prints under its `Watch live:` row) is
 always populated; the other channels are opt-in.
 
 ### WhatsApp via CallMeBot (built-in)
