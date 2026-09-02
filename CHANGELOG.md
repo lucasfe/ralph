@@ -5,6 +5,13 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.3](https://github.com/lucasfe/ralph/compare/v0.25.2...v0.25.3) (2026-09-02)
+
+
+### Bug Fixes
+
+* make the npm 403 diagnosable — surface the OIDC token exchange ([#191](https://github.com/lucasfe/ralph/issues/191)) ([7322baa](https://github.com/lucasfe/ralph/commit/7322baa9b66f56bc828390785826ffaea65136aa))
+
 ## [0.25.2](https://github.com/lucasfe/ralph/compare/v0.25.1...v0.25.2) (2026-09-02)
 
 
