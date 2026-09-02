@@ -54,7 +54,32 @@ jobs:
         with:
           # Node 24 ships with npm >= 11, required for trusted publishing (OIDC).
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # NO `registry-url:` HERE, AND THAT OMISSION IS THE WHOLE FIX.
+          #
+          # Given `registry-url`, setup-node writes an .npmrc (at
+          # NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/.npmrc) whose auth line is
+          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` — and this
+          # workflow has no npm token to put there, because trusted publishing
+          # is the point. setup-node then supplies its own placeholder, so the
+          # run exports the literal `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX`
+          # (measured in the job log; a real secret would be masked `***`).
+          # npm reads a configured credential, sends that placeholder as a
+          # bearer token, and never attempts the OIDC exchange. The registry
+          # answers `403 Forbidden - PUT https://registry.npmjs.org/@lucasfe%2fralph`
+          # with no further detail, which reads exactly like a misconfigured
+          # Trusted Publisher and sent this hunt to the npm settings page twice.
+          #
+          # The give-away in the log is that provenance SUCCEEDS immediately
+          # before the 403: signing is client-side against sigstore using the
+          # GitHub OIDC token, and needs no npm auth at all. So a signed
+          # provenance statement says the `id-token: write` permission works,
+          # and says nothing whatever about being authorised to publish.
+          #
+          # Dropping the key costs nothing: registry.npmjs.org is npm's default
+          # registry, so `npm publish` still goes to the same place — it just
+          # arrives with no credential of its own and lets npm >= 11 mint a
+          # short-lived one from the OIDC token, which is the mechanism the
+          # Trusted Publisher on npmjs.com is configured to accept.
           cache: 'npm'
 
       - name: Check whether current package.json version is already on npm
@@ -81,6 +106,16 @@ jobs:
       - name: Publish to npm via OIDC (Trusted Publisher)
         if: steps.check.outputs.already_published == 'false'
         run: |
+          # Prove which credential npm is about to use, BEFORE it is used. The
+          # failure this replaces was a bare 403 with no detail, and the one
+          # fact needed to diagnose it — that a placeholder token was configured
+          # and OIDC therefore never ran — was invisible at default loglevel.
+          # `npm config get` prints a configured token as a redacted marker
+          # rather than its value, so this reveals presence, not the secret.
+          echo "userconfig:  ${NPM_CONFIG_USERCONFIG:-<unset>}"
+          echo "authToken:   $(npm config get //registry.npmjs.org/:_authToken)"
+          echo "registry:    $(npm config get registry)"
+
           VERSION='${{ steps.check.outputs.version }}'
           if [[ "$VERSION" == *-* ]]; then
             # Prereleases (0.16.0-rc.1, …) go to the `rc` dist-tag so `latest`
