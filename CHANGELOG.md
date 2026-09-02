@@ -5,6 +5,13 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.25.4](https://github.com/lucasfe/ralph/compare/v0.25.3...v0.25.4) (2026-09-02)
+
+
+### Bug Fixes
+
+* drop `--access public` from the publish — it is a restricted management action ([#193](https://github.com/lucasfe/ralph/issues/193)) ([1696bef](https://github.com/lucasfe/ralph/commit/1696bef573b1ba35397dcf76e0a97a707f04159d))
+
 ## [0.25.3](https://github.com/lucasfe/ralph/compare/v0.25.2...v0.25.3) (2026-09-02)
 
 
