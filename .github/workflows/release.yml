@@ -54,32 +54,32 @@ jobs:
         with:
           # Node 24 ships with npm >= 11, required for trusted publishing (OIDC).
           node-version: '24'
-          # NO `registry-url:` HERE, AND THAT OMISSION IS THE WHOLE FIX.
+          # NO `registry-url:`, AND IT IS NOT THE FIX — THAT THEORY WAS TESTED
+          # AND FAILED, which is worth more here than a tidy explanation.
           #
-          # Given `registry-url`, setup-node writes an .npmrc (at
-          # NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/.npmrc) whose auth line is
-          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}` — and this
-          # workflow has no npm token to put there, because trusted publishing
-          # is the point. setup-node then supplies its own placeholder, so the
-          # run exports the literal `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX`
-          # (measured in the job log; a real secret would be masked `***`).
-          # npm reads a configured credential, sends that placeholder as a
-          # bearer token, and never attempts the OIDC exchange. The registry
-          # answers `403 Forbidden - PUT https://registry.npmjs.org/@lucasfe%2fralph`
-          # with no further detail, which reads exactly like a misconfigured
-          # Trusted Publisher and sent this hunt to the npm settings page twice.
+          # The theory: given `registry-url`, setup-node writes an .npmrc at
+          # NPM_CONFIG_USERCONFIG whose auth line is
+          # `//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}`, and this
+          # workflow has no token to fill it with — trusted publishing is the
+          # point — so setup-node substitutes a placeholder and the job exports
+          # the literal `NODE_AUTH_TOKEN=XXXXX-XXXXX-XXXXX-XXXXX`. All of that is
+          # true and measurable in the job log. The inference drawn from it — that
+          # npm was sending the placeholder as a bearer token and skipping the
+          # OIDC exchange — was wrong. Dropping the key made `userconfig` unset
+          # and left no credential configured, and the publish returned the same
+          # `403 Forbidden - PUT https://registry.npmjs.org/@lucasfe%2fralph`.
           #
-          # The give-away in the log is that provenance SUCCEEDS immediately
-          # before the 403: signing is client-side against sigstore using the
-          # GitHub OIDC token, and needs no npm auth at all. So a signed
-          # provenance statement says the `id-token: write` permission works,
-          # and says nothing whatever about being authorised to publish.
+          # The key stays off regardless, because it is unnecessary under trusted
+          # publishing (registry.npmjs.org is npm's default, so publish reaches
+          # the same place) and because a placeholder credential in the
+          # environment is one more thing to rule out next time. See the publish
+          # step for where the investigation actually stands.
           #
-          # Dropping the key costs nothing: registry.npmjs.org is npm's default
-          # registry, so `npm publish` still goes to the same place — it just
-          # arrives with no credential of its own and lets npm >= 11 mint a
-          # short-lived one from the OIDC token, which is the mechanism the
-          # Trusted Publisher on npmjs.com is configured to accept.
+          # One trap documented so nobody re-enters it: provenance SUCCEEDS on
+          # the line immediately before the 403. Signing is client-side against
+          # sigstore using the GitHub OIDC token and needs no npm auth, so a
+          # signed provenance statement proves `id-token: write` works and says
+          # nothing whatever about being authorised to publish.
           cache: 'npm'
 
       - name: Check whether current package.json version is already on npm
@@ -106,21 +106,55 @@ jobs:
       - name: Publish to npm via OIDC (Trusted Publisher)
         if: steps.check.outputs.already_published == 'false'
         run: |
-          # Prove which credential npm is about to use, BEFORE it is used. The
-          # failure this replaces was a bare 403 with no detail, and the one
-          # fact needed to diagnose it — that a placeholder token was configured
-          # and OIDC therefore never ran — was invisible at default loglevel.
-          # `npm config get` prints a configured token as a redacted marker
-          # rather than its value, so this reveals presence, not the secret.
+          # WHY THIS STEP IS INSTRUMENTED. The publish has been failing on a bare
+          #     npm error code E403
+          #     npm error 403 403 Forbidden - PUT https://registry.npmjs.org/@lucasfe%2fralph
+          # and that generic sentence about "your security policy" is npm's
+          # FALLBACK text, printed when the registry's response carries no error
+          # field npm can surface. So the job log has been saying nothing about
+          # the actual cause for four days.
+          #
+          # Two things already ruled out by measurement, recorded so they are not
+          # re-investigated: there is no credential configured (`userconfig` is
+          # unset and no .npmrc is committed — an earlier theory that
+          # setup-node's `registry-url` was injecting a placeholder token was
+          # WRONG, removing it changed nothing), and the version is genuinely
+          # absent from the registry, so this is not a publish-over-existing.
+          #
+          # WHAT IS LEFT is the OIDC token exchange. npm asks the registry to
+          # trade the GitHub OIDC JWT for a short-lived publish token; if that
+          # exchange is rejected, npm carries on ANONYMOUSLY, and an anonymous
+          # PUT to an existing package is exactly a 403. Note that a 403 rather
+          # than ENEEDAUTH is itself the clue — npm only skips the login check
+          # when it believes it has, or can get, a credential.
           echo "userconfig:  ${NPM_CONFIG_USERCONFIG:-<unset>}"
-          echo "authToken:   $(npm config get //registry.npmjs.org/:_authToken)"
           echo "registry:    $(npm config get registry)"
+          echo "npm:         $(npm --version)"
+          echo "workflow ref: ${GITHUB_WORKFLOW_REF:-<unset>}"
 
           VERSION='${{ steps.check.outputs.version }}'
-          if [[ "$VERSION" == *-* ]]; then
-            # Prereleases (0.16.0-rc.1, …) go to the `rc` dist-tag so `latest`
-            # keeps pointing at the most recent stable.
-            npm publish --access public --provenance --tag rc
-          else
-            npm publish --access public --provenance
+          ARGS=(--access public --provenance)
+          # Prereleases (0.16.0-rc.1, …) go to the `rc` dist-tag so `latest`
+          # keeps pointing at the most recent stable.
+          [[ "$VERSION" == *-* ]] && ARGS+=(--tag rc)
+
+          # `--loglevel verbose` is what surfaces the `npm http fetch` line for
+          # the exchange request and its status. Kept unconditionally rather than
+          # behind a debug flag: this failure only ever reproduces during a real
+          # release, which is the worst moment to discover the log is too quiet.
+          # `if !` rather than `cmd && exit 0` so the step does not lean on how
+          # errexit treats a failing non-final element of an AND-OR list. An `if`
+          # condition is unambiguously exempt; the AND-OR form happens to behave
+          # the same way in bash, which is exactly the kind of subtlety that
+          # should not be load-bearing in the job that publishes.
+          if ! npm publish "${ARGS[@]}" --loglevel verbose; then
+            # Surface the registry's side of the conversation. GREPPED rather
+            # than dumped: the debug log is silly-level and can carry request
+            # detail, so only the lines about the exchange and the refusal are
+            # echoed, never the whole file.
+            echo '::group::npm debug log — OIDC exchange and 403 detail'
+            grep -hiE 'oidc|exchange|trusted|403|PUT https|Forbidden' \
+              "$HOME"/.npm/_logs/*-debug-0.log 2>/dev/null | tail -60 || true
+            echo '::endgroup::'
+            exit 1
           fi
