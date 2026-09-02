@@ -132,31 +132,45 @@ jobs:
           # npm authenticates fine and is handed a real publish token. The write
           # is then refused in 33ms, which is a policy decision, not an auth one.
           #
-          # THE CAUSE IS `--access public`, and the notice npm prints two lines
-          # above the 403 is what names it:
+          # NOR IS IT `--access public`, WHICH WAS THE THIRD WRONG THEORY. The
+          # reasoning was good and the conclusion was false, so both are kept:
+          # the notice npm prints two lines above the 403 reads
           #     npm notice npm tokens that bypass 2FA are being restricted for
           #     account changes and direct publishing.
           #     https://gh.io/npm-gat-bypass2fa-deprecation
-          # That deprecation is already in force for MANAGEMENT actions, and the
-          # list of blocked ones includes "changing package access, maintainers,
-          # or trusted publishing configuration". `--access public` is a package
-          # access change, so every publish here was asking for a restricted
-          # action alongside the upload, and the whole PUT was refused.
+          # and that deprecation IS already in force for management actions, with
+          # "changing package access, maintainers, or trusted publishing
+          # configuration" on the blocked list. `--access public` is a package
+          # access change, so it looked like the publish was smuggling a
+          # restricted action into the upload. Removing it (and
+          # `publishConfig.access`, since npm sends the field if either is set)
+          # changed the log to `Publishing ... with tag latest and default
+          # access` and left the 403 intact at 38ms.
           #
-          # It is also redundant: the package has been public since 0.1.0 and
-          # access is sticky registry-side, so nothing needs to set it again.
-          # `publishConfig.access` came out of package.json in the same commit —
-          # npm sends the access field if EITHER is set, so dropping one alone
-          # would have changed nothing.
+          # The flags stay off regardless: the package has been public since
+          # 0.1.0 and access is sticky registry-side, so setting it every release
+          # was asking for a restricted action for no benefit.
           #
-          # WHY IT WORKED ON 2026-08-28 AND NOT ON 2026-09-01 with a byte-identical
-          # workflow: the enforcement wave landed in between. Same runner image,
+          # WHAT THE 403 STILL IS, stated as the open question rather than a
+          # fourth guess. The request is now maximally plain — valid OIDC token,
+          # default access, `latest` tag, provenance — and the registry refuses
+          # it in under 40ms after answering GET on both the package document and
+          # its visibility endpoint. The remaining suspect is the OTHER half of
+          # that same deprecation: direct publishing by anything npm classifies
+          # as a 2FA-bypass credential. The changelog targets January 2027 for
+          # it, but this package's Publishing access is set to "require 2FA OR a
+          # granular access token with bypass 2fa enabled" — the mode that admits
+          # such tokens — and enforcement waves have already outrun the published
+          # timeline once here, which is exactly how 2026-08-28 worked and
+          # 2026-09-01 did not on a byte-identical workflow. Same runner image,
           # Node 24.19.0, npm 11.17.0, same permission blocks in both runs.
           #
-          # Separately and NOT yet a problem: direct publish by 2FA-bypass tokens
-          # goes away too, targeted for January 2027. Trusted publishing (this
-          # workflow) is the documented replacement, so that change should be a
-          # no-op here — but if a future 403 appears around then, this is why.
+          # NEXT MOVES, both requiring a decision on npmjs.com rather than here:
+          # switch Publishing access to "require 2FA and disallow bypass 2fa
+          # tokens" (npm documents trusted publishers as continuing to work
+          # regardless, so this should cost nothing and removes the bypass-token
+          # classification), or adopt staged publishing — `npm stage publish`
+          # here plus a maintainer approving each release with 2FA.
           echo "userconfig:  ${NPM_CONFIG_USERCONFIG:-<unset>}"
           echo "registry:    $(npm config get registry)"
           echo "npm:         $(npm --version)"
@@ -166,8 +180,9 @@ jobs:
           # No `--access`: see above. Provenance is actually automatic for an OIDC
           # publish of a public package from a public repo, so this flag is belt
           # and braces rather than load-bearing — kept because it makes the
-          # attestation explicit at the call site, and it is not a management
-          # action, so it does not attract the same restriction.
+          # attestation explicit at the call site, and because it demonstrably is
+          # not what the registry objects to: it signed successfully on every one
+          # of the failing runs.
           ARGS=(--provenance)
           # Prereleases (0.16.0-rc.1, …) go to the `rc` dist-tag so `latest`
           # keeps pointing at the most recent stable.
