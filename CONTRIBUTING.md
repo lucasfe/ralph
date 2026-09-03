@@ -1619,3 +1619,138 @@ The maintainer flow is:
 No long-lived npm token is stored — publishing authenticates via OIDC,
 so the npm Trusted Publisher for `@lucasfe/ralph` must point at this repo
 (`lucasfe/ralph`) and the `release.yml` workflow.
+
+## The Homebrew formula: a generator, and no tap yet
+
+npm is the only channel that flow reaches, and releases have stopped arriving on it.
+Three measurements, all taken at the time of writing. `npm view @lucasfe/ralph
+dist-tags` answers `{ rc: '0.6.0-rc.1', latest: '0.23.0' }`, so a plain
+`npm install -g @lucasfe/ralph` still lands **0.23.0**. `git tag` here lists six tags
+above that — `v0.24.0` through `v0.25.4` — each with a `CHANGELOG.md` entry. And the
+newest of them serves a real artifact: `curl -sL
+https://github.com/lucasfe/ralph/archive/refs/tags/v0.25.4.tar.gz` returns a gzip
+tarball of `ralph-0.25.4/`. Six releases tagged and changelogged, none of them
+installable. Why the publish is refused is #196's subject, not this section's.
+
+#196's answer is a **second, independent channel**: Homebrew, built from the source
+tarball GitHub serves for the release tag release-please already creates. That is
+the whole point of choosing the tag over the registry — the tag exists the moment
+the Release PR merges, so a refused `npm publish` cannot stop a release from being
+installable.
+
+#197 is the first slice, and deliberately the *inside* half: two modules that turn a
+version and a digest into the text of `Formula/ralph.rb`, and nothing that publishes
+it anywhere. They split the way the sprite generator's modules do, purity on one
+side of the seam and I/O on the other, and for the same reason. Both sit under
+`scripts/`, so both are unpublished by construction — `package.json`'s `files` is an
+allow-list naming `bin`, `lib`, `templates` and two markdown files, and no entry on
+it matches `scripts/`.
+
+- `scripts/lib/render-homebrew-formula.js` — **pure: metadata in, formula text
+  out.** `renderFormula({ version, sha256, description, homepage, license })`
+  returns the complete source of `Formula/ralph.rb` as a string with one trailing
+  newline. It **imports nothing** — no fs, no clock, no `process` — so the same
+  arguments always produce the same bytes, and it is the only file of the pair that
+  spells any Ruby at all. It also **refuses** input rather than papering over it: a
+  version that is not semver (a leading `v` included, so it cannot end up doubled in
+  the tag URL), a digest that is not 64 hex characters, a `desc` over 80 characters
+  or holding a Unicode Other Symbol, and any value that would break out of a Ruby
+  double-quoted literal. The module header argues each of those at length; the one
+  worth repeating here is the one that is wrong in both directions, because the
+  interpolation check covers `#@`, `#@@` and `#$` as well as `#{`, while a **bare `#`
+  stays legal** — this package's own homepage is
+  `https://github.com/lucasfe/ralph#readme`, and a guard that refused every `#` would
+  refuse it. It normalizes rather than copies, too: `package.json`'s description is
+  `Ralph — autonomous GitHub issue resolution loop, packaged as a CLI.`, which breaks
+  two of the auditor's rules at once (a desc may not start with the formula's name,
+  and may not end with a full stop), and what gets rendered is
+  `desc "Autonomous GitHub issue resolution loop, packaged as a CLI"`.
+- `scripts/generate-homebrew-formula.js` — the CLI, and **argument plumbing only**:
+  `--sha256`, `--version`, `--out`, `--help`, hand-rolled the way
+  `scripts/generate-sprite.js` is hand-rolled, because `commander` is a *runtime*
+  dependency of the published CLI and a development-only script has no business
+  widening what the package ships. It reads `package.json` relative to its own
+  location rather than to `cwd`, so the version it defaults to is this repository's
+  wherever the script is invoked from. An unknown flag is **rejected**, not ignored.
+  `--help` goes to stdout and exits `0`; every other usage problem is stderr and
+  exit `1` (a bad digest, a missing digest and an unknown flag were each run — all
+  three exit `1`), so a mistyped flag cannot look like a successful render.
+
+Running it takes two commands, because the digest is an **argument** and not
+something the script computes: hashing a tarball it fetched itself would make the
+output depend on the network at the moment it ran. Measured at `v0.25.4` — and note
+the `.local` suffix on the output path, which `.gitignore`'s `*.local` line already
+covers, so a rendered formula cannot be committed by accident:
+
+```bash
+curl -sL https://github.com/lucasfe/ralph/archive/refs/tags/v0.25.4.tar.gz | shasum -a 256
+# 010d0b38ad1dab35f41ebcf3cd9ef62e3ff2acd36b024d0a133a2295ed9a94cc  -
+
+node scripts/generate-homebrew-formula.js \
+  --sha256 010d0b38ad1dab35f41ebcf3cd9ef62e3ff2acd36b024d0a133a2295ed9a94cc \
+  --out ralph-formula.local
+# wrote ralph-formula.local
+#   version     0.25.4
+#   sha256      010d0b38ad1dab35f41ebcf3cd9ef62e3ff2acd36b024d0a133a2295ed9a94cc
+```
+
+Checking what it wrote needs one detour worth writing down, because the obvious
+command is gone. **`brew audit [path ...]` is disabled** — on Homebrew
+6.0.21-34-ga8820d0, `brew audit --strict ./ralph.rb` answers
+``Error: Calling `brew audit [path ...]` is disabled! Use `brew audit [name ...]` instead.``
+So audit **by name**, out of a throwaway tap:
+
+```bash
+brew tap-new --no-git ralphdocs/audit
+cp ralph-formula.local "$(brew --repository ralphdocs/audit)/Formula/ralph.rb"
+brew audit --strict ralphdocs/audit/ralph   # exit 0, no output at all
+brew style ralphdocs/audit/ralph            # 1 file inspected, no offenses detected
+brew untap ralphdocs/audit
+brew developer off   # `brew audit` turns developer mode on for you; this puts it back
+```
+
+Both pass on the formula rendered above, unedited. Two edits that look harmless and
+are not, each run through that recipe rather than reasoned about:
+
+- **Do not reorder the fields.** They are emitted `desc`, `homepage`, `url`,
+  `sha256`, `license`, and swapping just `homepage` and `url` fails *both* commands:
+  `` * line 9, col 3: `homepage` (line 9) should be put before `url` (line 8) ``
+  from `brew audit --strict`, and the same sentence from `brew style` with the cop
+  named — `FormulaAudit/ComponentsOrder`, "1 offense detected, 1 offense
+  autocorrectable". The order in the renderer's `lines` array is a rule.
+- **Do not qualify `std_npm_args`.** The formula calls it bare, and
+  `*Language::Node.std_npm_args` — the qualified spelling that looks more correct —
+  is rejected outright: `` * line 16, col 46: Possible typo: `Language::Node` does
+  not respond to `std_npm_args`. Did you mean `std_npm_install_args`? `` The bare call
+  is the correct one because it is a `Formula` instance method —
+  `def std_npm_args(prefix: libexec, ignore_scripts: true)`, at
+  `/opt/homebrew/Library/Homebrew/formula.rb:2262`.
+
+The specs are `test/homebrew-formula.test.js` (61 tests) and
+`test/homebrew-formula.qa.test.js` (65 tests), and they live under `test/` rather
+than beside the code they exercise for the reason any spec here does:
+`vitest.config.js`'s `include` is
+`['test/**/*.test.js', 'src/**/*.test.js', 'lib/**/*.test.js']`, so a spec file
+under `scripts/` is collected by nothing and "passes" by never running. Two of their
+pins constrain how the pair may be edited, and both are **static reads of the
+source** rather than assertions about one call:
+
+- **The renderer's purity is asserted against its text.** The spec greps the file
+  for `import`, `require(`, `process`, `Date.`, `Math.random` and `fetch(`, because
+  a single-call comparison cannot see a lazily read file or a cached clock. Give
+  that module an import and the suite goes red even though every rendered byte is
+  unchanged — which is the intent, not a false positive.
+- **The CLI is pinned to hold no Ruby.** The same file greps it for eight spellings
+  (`class Ralph`, `< Formula`, `depends_on`, `Language::Node`, `install_symlink`,
+  `archive/refs/tags`, `assert_match`, `shell_output`) *and* compares its stdout
+  byte for byte against `renderFormula`'s output for `package.json`'s own fields.
+  Moving one line of formula text into the CLI "just for now" fails both halves.
+
+**What does not exist yet, and must not be written up as though it does.** There is
+no tap, no `brew tap`, and no `brew install ralph`. Nothing under `.github/` and
+nothing in `package.json`'s `scripts` mentions the formula — grepping either tree
+for `homebrew`, `formula` or `brew` finds nothing — so this generator is run by hand
+and its output is consumed by nobody. The tap and the release-workflow step that
+fills it are later slices of #196. Until they land, the install path a user has is
+still the npm one [the README](./README.md#install) describes, and that is the only
+place install instructions belong.
