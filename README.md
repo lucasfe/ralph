@@ -1769,15 +1769,39 @@ or the one you just moved to — actually changed.
 
 `ralph update` updates the Ralph CLI itself — it is the one command that needs
 neither a git repository nor an initialized Ralph project, so you can run it
-from any directory. It asks the npm registry for the latest published version,
-works out how this copy of Ralph was installed, and runs **that** package
-manager's own upgrade command — a global install for the npm-shaped managers,
-`brew upgrade` for Homebrew — reporting both the version it came from and the
-version it moved to. When you are already current it prints
+from any directory. It works out how this copy of Ralph was installed **first**,
+asks *that* channel for the latest version — the npm registry for the npm-shaped
+managers, the tapped `ralph` formula for a Homebrew install — and then runs that
+package manager's own upgrade command: a global install for the npm-shaped
+managers, `brew upgrade` for Homebrew, reporting both the version it came from
+and the version it moved to. When you are already current it prints
 `✅ Ralph is already up to date (<version>).` and installs nothing; pass
 `--force` to reinstall the latest anyway (handy for repairing a broken
-install). A failed registry query is reported and attempts no install (exit
-code 1) — it never installs a version it could not confirm exists.
+install). A query that fails is reported — naming the channel it could not read,
+which for a Homebrew install is the tap and not npm — and attempts no install
+(exit code 1): it never installs a version it could not confirm exists. The
+command it prints for you to run by hand alongside that failure is the detected
+manager's own — `brew upgrade ralph` on a Homebrew install,
+`pnpm add -g @lucasfe/ralph@latest` on a global pnpm one — because an
+`npm install -g` into a directory another manager owns would leave a second copy
+rather than update this one. Layouts with no upgrade command of their own still
+fall back to `npm install -g @lucasfe/ralph@latest`: the two refusals in the
+table below, and a layout Ralph could not place at all.
+
+Asking the channel rather than always asking npm is what keeps the answer honest
+when the two do not hold the same version: a Homebrew install compared against
+the registry would be told it was current whenever the registry sat behind the
+formula, and told to upgrade to something `brew` cannot fetch whenever it sat
+ahead. The Homebrew reading comes from the formula **already tapped on this
+machine**, and refreshes nothing: `brew info` is not one of the commands Homebrew
+auto-updates before (`install`, `upgrade`, `tap` and friends are), and Ralph runs
+no `brew update` of its own, because a network refresh that can hang has no
+business inside a version check that holds your terminal. So the answer is as old
+as the last auto-updating `brew` command you happened to run — a month, if that
+is when you last installed anything — and on a tap that stale it can report up to
+date while a newer formula exists upstream. It cannot err the other way, and
+`brew upgrade` refreshes the tap itself, so the next run picks the newer version
+up.
 
 It only ever runs a package manager's own install or upgrade command, so it
 touches the **installed package alone** and writes no file in your project — see
@@ -1922,6 +1946,20 @@ when what it knows about is newer than what you have. The notice itself is not
 throttled and keeps printing on every run that finds something newer (see
 [Troubleshooting](#troubleshooting)).
 
+It asks **npm** no matter which channel this copy came from — unlike
+[`ralph update`](#ralph-update), which asks the channel it detected. That is
+deliberate: `ralph start` never works out how Ralph was installed, and having
+this check work it out would add filesystem probing — and, for some layouts, a
+second subprocess — to a path whose whole point is to cost nothing before the
+loop. The consequence is that on a Homebrew install the notice tracks the
+registry, so it can name a version `ralph update` then declines to install,
+telling you the version you have is the newest the tap carries. Accepting the
+question below on such a run is harmless and says so: the update asks the tap,
+prints `✅ Ralph is already up to date (<version>).`, installs nothing, and the
+run carries on with the neutral "did not complete" line described below. Nothing
+is lost either way: `brew upgrade` refreshes the tap, so once the formula catches
+up, the next run that puts the question to you installs it.
+
 **`ralph cycle` runs the identical check, and on a terminal asks the identical
 question.** A scheduled cycle (see
 [Scheduling Ralph](#scheduling-ralph-macos-launchd)) runs the same check and
@@ -1956,8 +1994,9 @@ starting the loop**: the running process still holds pre-update code and the
 old install's copy of the loop script, so re-launching by hand is the only way
 to be sure the loop runs one version rather than a mixture of two. Declining
 costs nothing — the loop starts immediately, with no extra output. An update
-that does not complete is not fatal either: a failed install, or an `npx` run /
-linked dev checkout with nothing for Ralph to install, prints
+that does not complete is not fatal either: a failed install, an `npx` run /
+linked dev checkout with nothing for Ralph to install, or a channel that holds
+nothing newer than what you have (the Homebrew case above), prints
 `⚠️  Update did not complete — starting Ralph on <version>.` and the loop runs
 on the version you already have.
 
@@ -1974,9 +2013,10 @@ is printed, and the cycle **stops without draining the queue**, for the reason
 the loop script through the install that was just replaced, so stopping is what
 guarantees no issue is processed by a mixture of two versions. Nothing is lost:
 re-run `ralph cycle` yourself, or let the next scheduled tick pick the new
-version up on its own. Declining, a failed install, or an `npx` run / linked
-dev checkout with nothing to install all leave the cycle draining normally on
-the version you already have — the last two after one neutral line,
+version up on its own. Declining, a failed install, an `npx` run / linked
+dev checkout with nothing to install, or a channel that holds nothing newer all
+leave the cycle draining normally on the version you already have — the last
+three after one neutral line,
 `⚠️  Update did not complete — continuing this cycle on <version>.` A stopped
 cycle still appends one `RALPH_CYCLE_EVENT` (status `updated`, every count
 zero) to `logs/ralph-cycle.out.log`, so the
@@ -2634,7 +2674,11 @@ windows, the prompt-from-cache rule, and the headless path.
 
 Run `ralph update` to update — it picks the right command for a global npm,
 pnpm, yarn, or bun install, and `brew upgrade` for a Homebrew one (see
-[`ralph update`](#ralph-update)) — or `npm i -g @lucasfe/ralph` by hand. To
+[`ralph update`](#ralph-update)). The notice's own hint says
+`npm i -g @lucasfe/ralph` whichever channel this copy came from, so updating by
+hand means **your** manager's command instead: on a Homebrew install that is
+`brew upgrade ralph`, and an `npm i -g` there would leave a second copy rather
+than replace the one you have. To
 silence the check, the notice, and the question together instead, set
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables). Deleting `.ralph/state.json`
 silences nothing: the windows live in the global cache, and the
@@ -2649,8 +2693,9 @@ install: that file is written only by the weekly check — which runs in
 deliberately makes no registry query of its own. Run `ralph start` once, or
 let the next scheduled cycle run, and the row fills in on the next
 `doctor`; to learn the latest version right now,
-`ralph update` asks the registry directly (and installs nothing when you
-are already current). The row also reads `unknown` when the cache file
+`ralph update` asks directly — the registry for an npm-shaped install, the
+tapped formula for a Homebrew one (and it installs nothing when you are
+already current). The row also reads `unknown` when the cache file
 is unreadable or hand-mangled into something that is not a version, and
 it stays `unknown` for as long as
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables) is set, because the
