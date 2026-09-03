@@ -1771,15 +1771,16 @@ or the one you just moved to — actually changed.
 neither a git repository nor an initialized Ralph project, so you can run it
 from any directory. It asks the npm registry for the latest published version,
 works out how this copy of Ralph was installed, and runs **that** package
-manager's own global-install command, reporting both the version it came from
-and the version it moved to. When you are already current it prints
+manager's own upgrade command — a global install for the npm-shaped managers,
+`brew upgrade` for Homebrew — reporting both the version it came from and the
+version it moved to. When you are already current it prints
 `✅ Ralph is already up to date (<version>).` and installs nothing; pass
 `--force` to reinstall the latest anyway (handy for repairing a broken
 install). A failed registry query is reported and attempts no install (exit
 code 1) — it never installs a version it could not confirm exists.
 
-It only ever runs a package manager's global-install command, so it touches
-the **installed package alone** and writes no file in your project — see
+It only ever runs a package manager's own install or upgrade command, so it
+touches the **installed package alone** and writes no file in your project — see
 [What survives an update](#what-survives-an-update).
 
 The layout is worked out from where this copy of Ralph lives:
@@ -1790,8 +1791,9 @@ The layout is worked out from where this copy of Ralph lives:
 | Global pnpm | `pnpm add -g @lucasfe/ralph@latest` | 0 |
 | Global yarn | `yarn global add @lucasfe/ralph@latest` | 0 |
 | Global bun | `bun add -g @lucasfe/ralph@latest` | 0 |
+| Homebrew — under `<prefix>/Cellar/ralph/<version>` | `brew upgrade ralph` | 0 |
 | `npx` — running out of the npx cache | Nothing to do: npx always fetches the latest published version. | 0 |
-| Linked — the package root is a symlink, or holds a `.git` entry | Nothing: Ralph will not write a published tarball over a linked install or a working tree. A `.git` entry means a dev checkout, so it points you at `git pull`; a bare symlink gets the linking manager's own global-add command instead (or, when that is unclear, "update it with whichever package manager created it"). | 0 |
+| Linked — the package root is a symlink, or holds a `.git` entry | Nothing: Ralph will not write a published tarball over a linked install or a working tree. A `.git` entry means a dev checkout, so it points you at `git pull`; a bare symlink gets the linking manager's own update command instead (or, when that is unclear, "update it with whichever package manager created it"). | 0 |
 | Unrecognized, or ambiguous — the path matches two managers at once | Refuses to guess, explains what it found, and prints `npm install -g @lucasfe/ralph@latest` to run by hand. | 1 |
 
 The two refusals — `npx` and linked — print `ℹ️  Nothing for Ralph to update
@@ -1820,13 +1822,17 @@ The hint fires on `EACCES`, `EPERM`, `errno -13`, `permission denied` or
 `operation not permitted` appearing anywhere the failure carries text — both
 streams, the error message, the error code — and it is matched **before** the
 tail is clipped, so it still appears when the code itself was clipped away. It
-names the two fixes that work, for the manager that actually ran: point the
+names the fixes that work, for the manager that actually ran: point the
 global install directory somewhere you own (`npm config set prefix
 ~/.npm-global`, `pnpm setup`, `yarn config set prefix ~/.yarn`, `BUN_INSTALL=…`,
 or, for a manager Ralph has no knob for, that manager's own global-prefix
-setting), or re-run that one install with elevated privileges. The hint is
-additive: the raw output above it is what tells a root-owned prefix apart from,
-say, a manager binary that is not executable.
+setting), or re-run that one install with elevated privileges. Homebrew is the
+exception to both halves of that — its prefix is fixed per platform, and `brew`
+aborts when run as root — so a brew failure is pointed at `brew doctor`, which
+identifies the directories that are not writable and prints the `chown` for
+exactly those, and is offered no elevated re-run. The hint is additive: the raw
+output above it is what tells a root-owned prefix apart from, say, a manager
+binary that is not executable.
 
 When both streams are empty — which is what a command that could not be spawned
 at all looks like — the failure's own message is reported instead, bounded the
@@ -2040,8 +2046,8 @@ run does not open the file either.
 `ralph init` all treat user-authored config files as read-only. Updating will
 never silently overwrite credentials, secrets, or your project notes.
 `ralph update` is the strongest case of the three: it runs a package manager's
-global-install command and nothing else, so it writes **no project file at
-all** — the table below is about what a re-run of `ralph init` leaves alone.
+own install or upgrade command and nothing else, so it writes **no project file
+at all** — the table below is about what a re-run of `ralph init` leaves alone.
 
 | File | Status on re-run | How to overwrite |
 | --- | --- | --- |
@@ -2626,10 +2632,10 @@ reaches you at most once a week however many times `ralph start` and
 until that window rolls over. See [Updating Ralph](#updating-ralph) for the full behavior — both
 windows, the prompt-from-cache rule, and the headless path.
 
-Run `ralph update` to update — it picks the right command for a global
-npm, pnpm, yarn, or bun install (see [`ralph update`](#ralph-update)) — or
-`npm i -g @lucasfe/ralph` by hand. To silence the check, the notice, and the
-question together instead, set
+Run `ralph update` to update — it picks the right command for a global npm,
+pnpm, yarn, or bun install, and `brew upgrade` for a Homebrew one (see
+[`ralph update`](#ralph-update)) — or `npm i -g @lucasfe/ralph` by hand. To
+silence the check, the notice, and the question together instead, set
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables). Deleting `.ralph/state.json`
 silences nothing: the windows live in the global cache, and the
 `last_seen_release` field still present in that state file no longer drives
