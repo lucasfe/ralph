@@ -119,6 +119,7 @@ diagnostic is asked for, in one block to paste into a bug report:
 │ os      mac                                              │
 │ agent   claude                                           │
 │ cached  0.23.0 available — run `ralph update`            │
+│ channel npm or other (not probed)                        │
 │ cwd     /Users/you/repos/your-project                    │
 ╰──────────────────────────────────────────────────────────╯
 ```
@@ -138,6 +139,29 @@ queries the registry, never writes that file, and applies neither of the two
 old, and running it neither refreshes the check nor spends the week's update
 question. That keeps it usable offline and on a half-broken install, which is
 when you reach for it.
+
+The `channel` row directly under it says **which channel this copy was installed
+from**, and it is there because the answer is what makes the row above it
+readable: npm and the Homebrew tap hold different versions on purpose (see
+[Updating Ralph](#updating-ralph)), so "0.23.0 available" means one thing on a
+`brew` install and another on an npm one. It answers
+``Homebrew (`Cellar/ralph`)`` for a formula install, `pnpm (global store)`,
+`yarn (global store)` or `bun (global store)` for those managers' global
+directories, ``npx (`_npx` cache)`` for a one-off `npx` run, and
+`linked (dev checkout)` or `linked (symlinked install)` for a working tree or a
+`npm link`. Every one of those is read off the **install directory's own path**,
+plus one `exists` and one `lstat` to spot a link — no subprocess, no network,
+nothing that can hang on a broken machine.
+
+Which is also why the row **hedges** on a plain `npm install -g` rather than
+claiming it: nothing in that layout's path identifies it, and the one thing that
+would — `npm root -g` — is a subprocess `doctor` deliberately cannot run. So an
+unrecognized path reads `npm or other (not probed)`, and `not probed` is doing
+real work in that sentence: it marks the row as a **default rather than a
+finding**, so nobody debugs a version mismatch on the strength of a channel
+nothing actually observed. (`ralph update`, which is allowed to spawn, does probe
+it — see [Updating Ralph](#updating-ralph).) A path that matches two managers at
+once says so by name instead of picking one.
 
 The box is **additive output only** — `doctor`'s exit code still answers for the
 deps alone, so a wrapper or CI step gating on `ralph doctor` does not start
@@ -303,16 +327,17 @@ guessed at.
 `ralph doctor` and `ralph status` head their own reports with this same box —
 same composer, same width ladder, same `RALPH_BANNER` setting — each carrying the
 rows it has facts for: `doctor` the ones a diagnostic needs (`os`, `agent`,
-`cached`), `status` the `cwd` under the version in the title and nothing else,
-where `ralph start` carries `agent`, `context`, `source`, `repo`, `update` and the
-what's-new bullets. Which rows a box holds is a question of which facts the
-command resolved, so no command grows another's; see the `ralph doctor` paragraph
-above for that box and its `cached` row, and the `ralph status` paragraph below
-for why that one is the shortest of the three. The one row the two boxes spell
-differently is `agent`: `doctor` prints the agent's **name alone** (`agent
-codex`), because that report is a diagnostic about an installation and not a
-report about a run — it never looks at a run, so it has no model to name and no
-`context` row either — while `ralph start`'s row is the sentence described below.
+`cached`, `channel`), `status` the `cwd` under the version in the title and
+nothing else, where `ralph start` carries `agent`, `context`, `source`, `repo`,
+`update` and the what's-new bullets. Which rows a box holds is a question of
+which facts the command resolved, so no command grows another's; see the `ralph
+doctor` paragraph above for that box and its `cached` and `channel` rows, and the
+`ralph status` paragraph below for why that one is the shortest of the three. The
+one row the two boxes spell differently is `agent`: `doctor` prints the agent's
+**name alone** (`agent codex`), because that report is a diagnostic about an
+installation and not a report about a run — it never looks at a run, so it has no
+model to name and no `context` row either — while `ralph start`'s row is the
+sentence described below.
 
 How much of that banner you get is the one thing about it that is yours to
 choose. [`RALPH_BANNER`](#configuration-reference) in `ralph.config.sh` takes
@@ -1830,6 +1855,19 @@ instead of picking a manager at random. One gap worth knowing: a pnpm global
 directory with no `pnpm` path segment (pnpm 6's `~/.pnpm-global`, a hand-set
 `global-dir`, or `PNPM_HOME=/opt/pnpm-home`) is not recognized and lands in
 that last row too.
+
+[`ralph doctor`](#quick-start)'s `channel` row reads this same table, so you can
+see which row you are in **without running an update**. Two differences. The
+second is because `doctor` may not spawn; the first is a wording choice. The
+linked row splits in two there (`linked (dev checkout)` for a `.git` entry,
+`linked (symlinked install)` for a bare symlink) — `ralph update` tells those
+apart too, it just answers with advice rather than a name — and the global-npm
+row is **indistinguishable** from the last one: a plain `npm install -g`, the
+`~/.pnpm-global` gap just described and a layout Ralph places nowhere at all
+each read `npm or other (not probed)`, because `npm root -g` is the only thing
+that separates them and `ralph update` is the only command allowed to run it. An
+ambiguous path is the one case `doctor` still names outright, as `ambiguous
+(matches pnpm, yarn)`.
 
 #### When the install command fails
 

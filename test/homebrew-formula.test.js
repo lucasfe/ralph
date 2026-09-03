@@ -385,8 +385,9 @@ describe('scripts/generate-homebrew-formula.js — argument plumbing only', () =
 // --- #198 ---------------------------------------------------------------------
 describe('the formula name, spelled in two files that cannot import each other (#198)', () => {
   // `ralph update` on a Homebrew install runs `brew upgrade <formula>`, and the
-  // formula it names is a literal in lib/install-target.js (HOMEBREW_FORMULA) — a
-  // second copy of the FORMULA_NAME this renderer writes. Neither file can import
+  // formula it names is a literal in lib/install-markers.js (HOMEBREW_FORMULA,
+  // moved there by #201 and imported by lib/install-target.js, which builds the
+  // argv) — a second copy of the FORMULA_NAME this renderer writes. Neither can import
   // the other: package.json's `files` allow-list publishes lib/ and not scripts/,
   // so lib/ importing the renderer would resolve in a checkout and throw
   // ERR_MODULE_NOT_FOUND in every installed copy, and the purity spec above
@@ -413,7 +414,7 @@ describe('the formula name, spelled in two files that cannot import each other (
 
     // The real classification, over a Cellar path built from the name the RENDERER
     // produced. A rename on either side alone breaks it: rename the renderer and
-    // this path stops matching install-target's marker; rename install-target and
+    // this path stops matching the marker table's Cellar row; rename that row and
     // its marker stops matching this path. Either way the kind is `unknown`.
     const target = await classifyInstall({
       ralphHome: `/opt/homebrew/Cellar/${name}/1.2.3/libexec/lib/node_modules/@lucasfe/ralph`,

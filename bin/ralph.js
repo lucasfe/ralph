@@ -7,6 +7,10 @@ import { Command } from 'commander'
 // than in lib/commands/doctor.js. See the `exec` argument at the doctor action
 // below for why the seam is wired in from the entry point.
 import { execa } from 'execa'
+// #201: where this copy of Ralph is installed, imported HERE for the same reason `execa` is —
+// lib/paths.js derives it from `import.meta.url` and so imports `node:url`, a specifier
+// doctor's import-graph spec does not allow. See the `ralphHome` argument at the doctor action.
+import { RALPH_HOME } from '../lib/paths.js'
 import { startCommand, StartAbort } from '../lib/commands/start.js'
 import { liveCommand, LiveAbort } from '../lib/commands/live.js'
 import { stopCommand, StopAbort } from '../lib/commands/stop.js'
@@ -385,7 +389,18 @@ program
       // capability in as an argument satisfies both halves: the graph stays closed
       // and the row still runs `acli jira auth status` for a real user. Harmless in
       // every other mode — nothing outside TASK_SOURCE=jira consults it.
-      const result = await doctorCommand({ currentVersion: pkg.version, exec: execa })
+      //
+      // #201: and `ralphHome` is the third seam wired in from here on that same argument,
+      // for the box's `channel` row. lib/paths.js derives RALPH_HOME from `import.meta.url`
+      // and therefore imports `node:url`, which the graph walk above does not permit — so
+      // doctor takes the directory as an argument and matches path markers against it,
+      // spawning nothing. Without this line the row is simply absent, which is the honest
+      // answer for a caller that could not say and the reason it is not defaulted.
+      const result = await doctorCommand({
+        currentVersion: pkg.version,
+        exec: execa,
+        ralphHome: RALPH_HOME,
+      })
       process.exit(result.exitCode)
     } catch (e) {
       if (e instanceof DoctorAbort) {
