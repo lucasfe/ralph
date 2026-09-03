@@ -29,7 +29,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Volume } from 'memfs'
 import { renderFormula } from '../scripts/lib/render-homebrew-formula.js'
+// #198: the consumer of the formula's NAME. Imported here, in a test — which
+// package.json's `files` does not publish — because neither of the two files that
+// spell that name can import the other. See the last describe in this file.
+import { classifyInstall } from '../lib/install-target.js'
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url))
 const RENDERER = join(REPO_ROOT, 'scripts', 'lib', 'render-homebrew-formula.js')
@@ -374,5 +379,59 @@ describe('scripts/generate-homebrew-formula.js — argument plumbing only', () =
     ]) {
       expect(source, `CLI should not spell Ruby: ${ruby}`).not.toContain(ruby)
     }
+  })
+})
+
+// --- #198 ---------------------------------------------------------------------
+describe('the formula name, spelled in two files that cannot import each other (#198)', () => {
+  // `ralph update` on a Homebrew install runs `brew upgrade <formula>`, and the
+  // formula it names is a literal in lib/install-target.js (HOMEBREW_FORMULA) — a
+  // second copy of the FORMULA_NAME this renderer writes. Neither file can import
+  // the other: package.json's `files` allow-list publishes lib/ and not scripts/,
+  // so lib/ importing the renderer would resolve in a checkout and throw
+  // ERR_MODULE_NOT_FOUND in every installed copy, and the purity spec above
+  // asserts the renderer's source holds no `import` and no `require(` at all.
+  //
+  // So the duplication cannot be removed, and this is its whole mitigation.
+  // Without it a one-sided rename regresses silently, in both directions at once:
+  // the marker stops matching a Cellar, so a brew install classifies `unknown` and
+  // `ralph update` goes back to printing `npm install -g` (the #198 bug), AND the
+  // argv names a formula brew cannot find.
+
+  // The two places the renderer writes FORMULA_NAME.
+  const symlinkedBin = (text) =>
+    /^ {4}bin\.install_symlink libexec\/"bin\/(.+)"$/m.exec(text)?.[1] ?? null
+  const testedBin = (text) => /shell_output\("#\{bin\}\/(\S+) --version"\)/.exec(text)?.[1] ?? null
+
+  it('is the same name in the rendered formula and in the command `ralph update` runs', async () => {
+    const formula = render()
+    const name = symlinkedBin(formula)
+    // A name, not a path or an empty match: the assertion below would pass
+    // vacuously if both sides read `null`.
+    expect(name).toMatch(/^[a-z][a-z0-9-]*$/)
+    expect(testedBin(formula)).toBe(name)
+
+    // The real classification, over a Cellar path built from the name the RENDERER
+    // produced. A rename on either side alone breaks it: rename the renderer and
+    // this path stops matching install-target's marker; rename install-target and
+    // its marker stops matching this path. Either way the kind is `unknown`.
+    const target = await classifyInstall({
+      ralphHome: `/opt/homebrew/Cellar/${name}/1.2.3/libexec/lib/node_modules/@lucasfe/ralph`,
+      exec: async () => {
+        throw new Error('a Cellar is decided by its path alone; npm must not be probed')
+      },
+      fs: Volume.fromJSON({}),
+    })
+    expect(target.kind).toBe('global-brew')
+    expect(target.argv).toEqual(['brew', 'upgrade', name])
+  })
+
+  it('is the name Homebrew derives the formula class from', () => {
+    // FORMULA_CLASS is a third spelling of the same thing. Homebrew maps a
+    // formula's file name to its class name, so if these two disagree then
+    // `brew upgrade <name>` names a file whose class Homebrew will not accept.
+    const formula = render()
+    const klass = /^class (\w+) < Formula$/m.exec(formula)?.[1] ?? null
+    expect(klass?.toLowerCase()).toBe(symlinkedBin(formula))
   })
 })

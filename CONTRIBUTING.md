@@ -1726,14 +1726,14 @@ are not, each run through that recipe rather than reasoned about:
   `def std_npm_args(prefix: libexec, ignore_scripts: true)`, at
   `/opt/homebrew/Library/Homebrew/formula.rb:2262`.
 
-The specs are `test/homebrew-formula.test.js` (61 tests) and
+The specs are `test/homebrew-formula.test.js` (63 tests) and
 `test/homebrew-formula.qa.test.js` (65 tests), and they live under `test/` rather
 than beside the code they exercise for the reason any spec here does:
 `vitest.config.js`'s `include` is
 `['test/**/*.test.js', 'src/**/*.test.js', 'lib/**/*.test.js']`, so a spec file
-under `scripts/` is collected by nothing and "passes" by never running. Two of their
-pins constrain how the pair may be edited, and both are **static reads of the
-source** rather than assertions about one call:
+under `scripts/` is collected by nothing and "passes" by never running. Three of
+their pins constrain how the pair may be edited. The first two are **static reads
+of the source** rather than assertions about one call:
 
 - **The renderer's purity is asserted against its text.** The spec greps the file
   for `import`, `require(`, `process`, `Date.`, `Math.random` and `fetch(`, because
@@ -1746,11 +1746,41 @@ source** rather than assertions about one call:
   byte for byte against `renderFormula`'s output for `package.json`'s own fields.
   Moving one line of formula text into the CLI "just for now" fails both halves.
 
+The third is younger, and it is a real call rather than a grep:
+
+- **The formula's *name* is pinned to the command `ralph update` runs (#198), and
+  the duplication behind it must not be "fixed" with an import.**
+  `lib/install-target.js` spells that name a second time —
+  `const HOMEBREW_FORMULA = 'ralph'`, which is at once half of the marker that
+  recognizes a Cellar install (`Cellar` + the formula name, as adjacent whole
+  segments) and the argument in `brew upgrade ralph`. Neither direction of import
+  is available to remove the copy: `lib/` cannot import the renderer, because
+  `package.json`'s `files` allow-list publishes `lib/` and not `scripts/`, so the
+  import resolves in a checkout and throws `ERR_MODULE_NOT_FOUND` in every
+  *installed* copy — and the renderer cannot import `lib/`, because the purity pin
+  above leaves it no `import` at all. So the test is the whole mitigation: it reads
+  the name back out of the two lines that write it (`bin.install_symlink`, and the
+  `shell_output` version check), drives the real `classifyInstall` over a Cellar
+  path built from *that* name, and asserts `kind: 'global-brew'` with
+  `argv: ['brew', 'upgrade', <name>]`. Rename one side alone and it fails here
+  instead of on a user's machine, where it would do both halves of the damage at
+  once: the marker stops matching, so a brew install classifies `unknown` and
+  `ralph update` goes back to printing `npm install -g @lucasfe/ralph@latest` (the
+  #198 bug), *and* the argv names a formula `brew` cannot find. A second assertion
+  pins `FORMULA_CLASS` to the same name — they must be equal once lowercased —
+  because Homebrew derives a formula's class from its file name
+  (`Formulary.class_s`).
+
 **What does not exist yet, and must not be written up as though it does.** There is
 no tap, no `brew tap`, and no `brew install ralph`. Nothing under `.github/` and
 nothing in `package.json`'s `scripts` mentions the formula — grepping either tree
 for `homebrew`, `formula` or `brew` finds nothing — so this generator is run by hand
-and its output is consumed by nobody. The tap and the release-workflow step that
-fills it are later slices of #196. Until they land, the install path a user has is
-still the npm one [the README](./README.md#install) describes, and that is the only
-place install instructions belong.
+and its output is consumed by nobody; since #198 its *name* has a consumer, which is
+what the third pin above is for. The tap and the release-workflow step that fills it
+are later slices of #196. #198 is the far end of the same pipe and nothing more:
+`ralph update` now runs `brew upgrade ralph` for a Cellar install, where it used to
+classify that layout `unknown`, refuse, and print an `npm install -g` that would
+leave a second copy alongside the Homebrew one (the layout table is under
+[`ralph update`](./README.md#ralph-update)). Until the tap lands, the install path a
+user has is still the npm one [the README](./README.md#install) describes, and that
+is the only place install instructions belong.
