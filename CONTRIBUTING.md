@@ -1796,7 +1796,8 @@ registry ahead they are told to upgrade to something `brew` cannot fetch. Pointi
 every layout at the tag instead would only invert who gets lied to. So the source
 follows the channel.
 
-`classifyInstall` now attaches a **sixth field**, `latest` — the argv to spawn plus
+`classifyInstall` now attaches a **sixth field**, `latest` (#200 added a seventh,
+`noticeLabel` — see [below](#the-command-a-notice-names-200)) — the argv to spawn plus
 the format to parse plus the wording that names the channel in a failure. Every row
 but Homebrew carries `NPM_VERSION_QUERY` from `lib/update-check.js`, and carries the
 *same frozen object* rather than a copy of it, so `npx`, a linked checkout, a refusal
@@ -1806,9 +1807,12 @@ and `unknown` all have one too. The Homebrew row carries
 different formulae, and the #198 pin above still has one literal to read the name out
 of rather than two. `fetchLatestVersion(exec,
 timeoutMs, source = NPM_VERSION_QUERY)` takes it as a **defaulted third parameter**,
-which is why the function has exactly one changed caller: `lib/commands/update.js`
+which is why the function had exactly one changed caller: `lib/commands/update.js`
 passes `target.latest`, and the only other one — the weekly check in
-`resolveUpdateDecision` — is untouched, still spawning the argv it always did.
+`resolveUpdateDecision` — was left untouched, still spawning the argv it always did.
+(#200 changed that second caller too, without touching this signature: the channel
+reaches it as a new `resolveUpdateDecision` option. See
+[below](#the-command-a-notice-names-200).)
 
 Three properties are pinned, and each of them is a thing a later reader might
 otherwise undo:
@@ -1863,26 +1867,26 @@ name "ralph"`), so it is the exit code and not the parse that catches it, and th
 gets the channel-named failure and exit 1 rather than a silent no-op.
 
 One caller was deliberately left on npm: the weekly check in `resolveUpdateDecision`.
-It runs from `ralph start`, which never classifies — `classifyInstall` has exactly one
-non-test caller, `lib/commands/update.js` — and classifying there would add
+It ran from `ralph start`, which never classified — `classifyInstall` had exactly one
+non-test caller, `lib/commands/update.js` — and classifying there was reckoned to add
 filesystem probing plus, for any layout no marker matches, an `npm root -g` spawn, to
-a path whose whole point is to cost nothing before the loop. The consequence is
-written down in both places it shows — `lib/update-check.js` and
-[the README](./README.md#the-weekly-check) — because on a Homebrew install the notice
-tracks the registry and can therefore name a version `ralph update` then declines to
-install, reporting the tapped version as current.
+a path whose whole point is to cost nothing before the loop. The consequence was that
+on a Homebrew install the notice tracked the registry, and could therefore name a
+version `ralph update` then declined to install, reporting the tapped version as
+current.
 
-What that costs a user is pinned rather than argued. Accepting the question after such
-a notice reports `✅ Ralph is already up to date (<version>).` from the tap and
-installs nothing, so the gate's verdict comes back `accepted: true` with
-`installed: false` — which is the branch that prints the neutral
-`⚠️  Update did not complete` line at `lib/commands/start.js:807` and
-`lib/commands/cycle.js:320`, both of which read `accepted` and were left alone.
-`lib/update-gate.channel.qa.test.js`'s `DOCUMENTED: npm ahead of the tap nags, then
-correctly does nothing` drives the real `updateCommand` through `runUpdateGate` and
-holds that verdict, so a later reader can see the shape of the tradeoff instead of
-rediscovering it. The README's enumerations of what produces that line name this third
-cause alongside the failed install and the two refusals.
+**#200 reversed that**, once the cost was measured instead of assumed: the gate
+classifies with no `exec` at all, so the probe never runs and the classification adds
+no spawn to the pre-loop path — the gate still spawns nothing at all on a throttled
+run, which is what it did before. The tradeoff pinned here is the reason the reversal was cheap to argue
+for, and the section below is where it now lives. What outlasted it is the verdict
+shape: an update that starts and installs nothing comes back `accepted: true` with
+`installed: false` — the branch that prints the neutral
+`⚠️  Update did not complete` line at `lib/commands/start.js:813` and
+`lib/commands/cycle.js:325`, both of which read `accepted` and were left alone by
+both issues. The README's enumerations of what produces that line still name a
+channel that reports nothing newer alongside the failed install and the two refusals;
+what changed is which cause a Homebrew user is likely to meet.
 
 The specs are `lib/update-check.channel.test.js` (31 tests, including the
 default-versus-explicit equivalence of the npm query and a 17-row table of
@@ -1897,16 +1901,129 @@ its own fiction.
 
 The QA specs beside them are `lib/update-check.channel.qa.test.js` (63 tests),
 `lib/commands/update.channel.qa.test.js` (51 tests) and
-`lib/update-gate.channel.qa.test.js` (15 tests) — the last being the only one of the
-six that drives the gate, a module #199 does not modify and whose staying on npm is
-the thing being asserted. Two of its tests are prefixed `DOCUMENTED:` because they
-hold a tradeoff rather than a fix: npm ahead of the tap nags and then correctly
-installs nothing, and a tap ahead of npm is never noticed by `ralph start` at all —
-which is the residual gap #196's tap makes real, since a release the registry refused
-is exactly a release only the tap has. A third is prefixed `MEASURED:` and records a
-follow-up: the #24 notice still says `run npm i -g @lucasfe/ralph to update` to every
-install, so a Homebrew user is hinted at npm here and `brew upgrade ralph` there. The
-test greps the three modules that could name that command — `update-gate.js`,
-`banner-rows.js`, `commands/update.js`, comments stripped first, since
-`banner-rows.js` discusses `npm i -g` in prose while its row says `ralph update` —
-and finds the gate alone.
+`lib/update-gate.channel.qa.test.js` (23 tests) — the last being the only one of the
+six that drives the gate, which is why #200 rewrote it rather than adding a file
+beside it: the tradeoffs it held were #199's, and once the gate follows the channel
+they are no longer true. See the section below for what replaced them.
+
+### The command a notice names (#200)
+
+`lib/update-gate.js` printed one line for every install there is:
+
+```
+New version available: 0.26.0 (run npm i -g @lucasfe/ralph to update)
+```
+
+With #196's tap that line is worse than unhelpful on a Homebrew copy — it tells a
+user to `npm i -g` a package they installed with `brew`, which plants a **second
+install competing on `PATH`** rather than updating the one they have. So the
+notice's command comes out of the classification now, the same place `ralph update`
+takes its argv from.
+
+`classifyInstall` attaches a **seventh field**, `noticeLabel` — the command a
+one-line notice may name, or `null`. Every runnable layout derives it from its own
+argv, so brew reads `brew upgrade ralph` and pnpm/yarn/bun read their own manager.
+The kinds that do not derive it are `global-npm` — which has an argv and overrides it
+anyway — and the three that have no argv to derive from:
+
+- **`global-npm` carries `NPM_GLOBAL_NOTICE_LABEL`**, `npm i -g @lucasfe/ralph`,
+  which is *shorter* than the runnable `npm install -g @lucasfe/ralph@latest`. This
+  is the one printable form in that module not built from an argv, and the exception
+  is what keeps #24's bytes: eight suites pin them, and #200's job is to stop the
+  line lying to the layouts it does not describe, not to re-word it for the layout it
+  does. The difference is bounded to spelling and measured on npm 10.8.2 rather than
+  assumed — `npm install -h` lists `i` among the aliases of `install`, and
+  `npm config get tag` prints `latest`, the tag a bare spec already resolves to. The
+  invariant the file opens with still holds where it bites: `argv` is untouched,
+  `label` is still the runnable form, and nothing spawns the notice string, so a
+  command cannot render one way and spawn another.
+- **Both refusals carry `null`.** An `npx` run and a linked dev checkout have
+  nothing to install into, so the notice prints the version and **no command at
+  all** — the alternative is offering the exact command the accept path then
+  declines. `unknown` is the opposite case (nothing to run, something to suggest)
+  and carries the npm form, for the same reason `lib/commands/update.js` falls back
+  to `NPM_GLOBAL_UPDATE_LABEL` when it refuses to guess.
+
+The gate grew a **fifth seam**, `classify`, defaulting to `classifyInstall`, and
+calls it **with `exec: null`**. That is the load-bearing part of the cost argument
+#199 lost on: the only spawn in a classification is the `npm root -g` fallback for a
+path no marker matches, and withholding the spawner removes it. What that gives up
+is telling a plain npm global root apart from an unrecognized layout — and those two
+answer the *same* channel (the frozen `NPM_VERSION_QUERY`, by identity) and the
+*same* `noticeLabel`, so neither the notice nor the query can tell the difference.
+`classifyInstall` also stopped claiming a probe it never ran: with no `exec` its
+`reason` now says `npm root -g` "was not probed", not that it "did not report" a
+root, because `ralph update` prints that string to a user.
+
+The classification is memoized per run **as a promise, not as a flag** — the two
+consumers `await` one shared `classify` call, so "at most once per run" is a promise
+about the *answer* they share and not only about the call count, and a consumer that
+arrives while the first classification is still in flight gets that same answer
+rather than `undefined`. The memo is a local of the call (two `runUpdateGate`s in one
+process classify independently), it is guarded (a seam that throws or a getter that
+throws costs a notice, never the run — the memoized promise *resolves* to `null` and
+never rejects) and it is **lazy**, which is what keeps the cheap paths cheap:
+
+- `resolveUpdateDecision` takes a new `latestSource` — a query descriptor **or a
+  function returning one**, awaited — and the gate passes the thunk
+  `async () => (await installTarget())?.latest`. It is resolved on the one path that
+  queries a channel, *after* the opt-out and the throttle have returned, so an
+  opted-out run and a throttled run classify nothing.
+- A throttled run that has something newer cached still names the layout's command
+  and still spawns nothing.
+- `resolveLatestSource` reads `argv` **once, inside** its try and hands on a
+  descriptor this module owns (`{ ...named, argv: [...argv] }`), because
+  `fetchLatestVersion` reads `argv` outside any try of its own on the way to spawning
+  it. That is what makes the shape that was *validated* the shape that gets
+  *spawned*: returning the caller's object by reference left three further reads on
+  unguarded lines, where a getter could throw past the never-throws contract or hand
+  a different array to the spawn than the guard had checked. Anything unusable (a
+  thunk that throws, a descriptor with no `argv`, a bare string) falls back to the
+  npm query rather than skipping the check.
+
+The tradeoff is reversed, not removed. #199 documented "npm ahead of the tap nags,
+then correctly does nothing"; what is documented now is the other direction — **a
+registry ahead of the tap is silent on a Homebrew install**, because the notice
+tracks the formula. That is the better direction: the version a user is shown is one
+their own updater can install, and `brew upgrade` refreshes the tap anyway, so the
+release reaches them when the formula lands. `lib/update-gate.channel.qa.test.js`
+holds it as a `DOCUMENTED:` test, in the same slot #199's pair occupied.
+
+**Out of scope, on purpose:** the identity box's version row still says
+`ralph update`, for the 48-column reason `lib/banner-rows.js` documents at length.
+It is not an oversight and not the notice.
+
+The specs are `lib/install-target.notice.test.js` (58 tests — an 11-row layout table,
+every row's command asserted against the manager it would actually run, and the
+exec-versus-no-exec equivalence), `lib/update-check.decision-channel.test.js` (22
+tests — the channel is spawned, resolved exactly once, and resolved on *neither* the
+throttled nor the opted-out path, all by call count; plus a 10-row hostile-source
+table) and `lib/update-gate.notice-command.test.js` (22 tests — the notice per
+layout, npm's bytes unchanged, `classify` called with exactly `{ exec: null }`, zero
+extra spawns, and a source sweep proving the gate itself spells no package manager
+at all). `lib/update-gate.channel.qa.test.js` was rewritten around an injected
+layout (23 tests).
+
+One test-wide consequence is worth knowing before you write the next suite that
+reaches this notice: **the layout has to be injected.** `classifyInstall` falls back
+to `RALPH_HOME`, which in a vitest worker is this checkout — it has a `.git`, so it
+classifies `linked`, a refusal carrying no command, and a suite that asserts #24's
+bytes without injecting anything is asserting about the machine it runs on.
+`test/helpers/install-layout.js` exports `npmGlobalLayout()` for exactly that: it
+drives the **real** `classifyInstall` with only `ralphHome` and its two probes
+replaced, so a change to how a global install is recognized reaches those suites
+instead of passing a hand-written twin. Seven existing suites inject it.
+
+The QA pass over #200 added `lib/update-gate.notice-command.qa.test.js` (42),
+`lib/update-check.decision-channel.qa.test.js` (24) and
+`lib/update-gate.notice-command.consumers.qa.test.js` (15 — `start.js`'s `classify` forward
+had no deliberate coverage: it was pinned only in passing, by one assertion in a suite
+about something else, `start.update-check.qa.test.js:210`). It found the
+two defects the bullets above now describe as fixed — the by-reference channel and
+the boolean memo — and pinned four behaviours as **documented rather than fixed**: a
+custom `PNPM_HOME` and an ambiguous multi-manager path classify `unknown` and are
+therefore told to run npm (the pre-#200 marker-table limitation, which #200's framing
+does not close); the version cache carries no channel, so on a mixed-install machine
+an npm-layout run can print, for up to a week, the version a Homebrew run cached; a
+descriptor's `format` is never validated, so a half-added channel burns the week in
+silence; and `latestSource` is resolved even when there is no `exec` to use it.
