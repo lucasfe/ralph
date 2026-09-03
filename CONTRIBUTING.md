@@ -1784,3 +1784,129 @@ leave a second copy alongside the Homebrew one (the layout table is under
 [`ralph update`](./README.md#ralph-update)). Until the tap lands, the install path a
 user has is still the npm one [the README](./README.md#install) describes, and that
 is the only place install instructions belong.
+
+### The version a channel reports (#199)
+
+#198 taught `ralph update` to run `brew upgrade ralph`, but left it deciding
+*whether* to run anything by asking npm — `fetchLatestVersion` spawned
+`npm view @lucasfe/ralph version` for every layout there is. That is the wrong
+question for a Homebrew install and it fails in both directions: with the registry
+behind the formula a brew user is told they are current forever, and with the
+registry ahead they are told to upgrade to something `brew` cannot fetch. Pointing
+every layout at the tag instead would only invert who gets lied to. So the source
+follows the channel.
+
+`classifyInstall` now attaches a **sixth field**, `latest` — the argv to spawn plus
+the format to parse plus the wording that names the channel in a failure. Every row
+but Homebrew carries `NPM_VERSION_QUERY` from `lib/update-check.js`, and carries the
+*same frozen object* rather than a copy of it, so `npx`, a linked checkout, a refusal
+and `unknown` all have one too. The Homebrew row carries
+`brew info --json=v2 ralph`, built from the same `HOMEBREW_FORMULA` constant the
+`brew upgrade` argv is built from — so the query and the upgrade cannot come to name
+different formulae, and the #198 pin above still has one literal to read the name out
+of rather than two. `fetchLatestVersion(exec,
+timeoutMs, source = NPM_VERSION_QUERY)` takes it as a **defaulted third parameter**,
+which is why the function has exactly one changed caller: `lib/commands/update.js`
+passes `target.latest`, and the only other one — the weekly check in
+`resolveUpdateDecision` — is untouched, still spawning the argv it always did.
+
+Three properties are pinned, and each of them is a thing a later reader might
+otherwise undo:
+
+- **No consumer switches on `kind` to pick a query.** The descriptor is passed
+  through; a `kind` allowlist would be a second place the channel is known, and the
+  next channel would need edits in two files instead of a row in `GLOBAL_STORES`.
+  `lib/commands/update.channel.test.js` drives an invented `global-frobnicator`
+  classification and a `global-brew` one holding the *npm* descriptor: the query
+  follows the descriptor both times.
+- **`ralph update` classifies before it queries** — the reverse of the order it ran
+  in before, and forced by the descriptor being an output of classification. The
+  order is asserted on a call log
+  rather than inferred, in that file and in
+  `lib/commands/update.qa.test.js`. A brew run still makes exactly two spawns, but
+  they are different ones — `brew info --json=v2 ralph` then `brew upgrade ralph`,
+  where it used to be `npm view` then `brew upgrade` — so #198's exact-spawn
+  assertions were updated to name the new pair. What did **not** move is
+  the gating order *inside* the command: `advice` still wins over `argv`, so the two
+  refusals are still decided before any package manager is named.
+- **The Homebrew version is read from the tap already on the machine, and how stale
+  that is has no bound.** `brew info` refreshes nothing: `info` is not in
+  `Library/Homebrew/utils/auto-update.sh`'s `AUTO_UPDATE_COMMANDS`, which measures as
+  `install outdated upgrade bundle release` plus `tap` with an argument. Nor is
+  `HOMEBREW_AUTO_UPDATE_SECS` a ceiling on staleness — `env_config.rb` documents it
+  as "Run `brew update` once every `$HOMEBREW_AUTO_UPDATE_SECS` seconds **before some
+  commands**", i.e. the minimum interval between the refreshes *those* commands
+  perform (default 86400). So the answer is as old as the last auto-updating brew
+  command the user happened to run: a month, for someone who has installed nothing in
+  a month. (A *core* formula would be read from the cached JSON API instead, which
+  `brew info` does refresh once it is older than `DEFAULT_API_STALE_SECONDS` — 7 days;
+  the 450-second `HOMEBREW_API_AUTO_UPDATE_SECS` applies only to the auto-updating
+  commands. `ralph` will live in a custom tap, whose formulae are read off disk, so
+  the local-tap path is the one that applies.) None of that is a reason to run a
+  `brew update` here — that swaps unbounded staleness for an unbounded network fetch
+  inside a command holding the user's terminal, and is stale by the time the upgrade
+  runs anyway. What makes it acceptable is the **direction**: an old tap can only
+  **under**-report (say up to date while a newer formula exists upstream), never send
+  `brew` after a version it cannot fetch, and `brew upgrade` refreshes the tap itself,
+  so the next run sees it. Do not "fix" it into a hang.
+
+The document being parsed was measured on Homebrew 6.0.21-34-ga8820d0, with
+`brew info --json=v2 jq` standing in for a formula that is actually tapped: the
+top level is `{"formulae": [...], "casks": []}`, and the one entry in `formulae` has
+a three-key `versions` — `{"stable": "1.8.2", "head": "HEAD", "bottle": true}`. Only
+`stable` is read: `head` is a git build with no version, and an `installed` entry
+would answer "what is here?" rather than "what would an upgrade fetch?". A formula
+Homebrew cannot find — which is every machine today, since there is still no tap —
+exits **1 with empty stdout**, putting its diagnosis on stderr (measured:
+`brew info --json=v2 ralph`, stderr beginning `Error: No available formula with the
+name "ralph"`), so it is the exit code and not the parse that catches it, and the user
+gets the channel-named failure and exit 1 rather than a silent no-op.
+
+One caller was deliberately left on npm: the weekly check in `resolveUpdateDecision`.
+It runs from `ralph start`, which never classifies — `classifyInstall` has exactly one
+non-test caller, `lib/commands/update.js` — and classifying there would add
+filesystem probing plus, for any layout no marker matches, an `npm root -g` spawn, to
+a path whose whole point is to cost nothing before the loop. The consequence is
+written down in both places it shows — `lib/update-check.js` and
+[the README](./README.md#the-weekly-check) — because on a Homebrew install the notice
+tracks the registry and can therefore name a version `ralph update` then declines to
+install, reporting the tapped version as current.
+
+What that costs a user is pinned rather than argued. Accepting the question after such
+a notice reports `✅ Ralph is already up to date (<version>).` from the tap and
+installs nothing, so the gate's verdict comes back `accepted: true` with
+`installed: false` — which is the branch that prints the neutral
+`⚠️  Update did not complete` line at `lib/commands/start.js:807` and
+`lib/commands/cycle.js:320`, both of which read `accepted` and were left alone.
+`lib/update-gate.channel.qa.test.js`'s `DOCUMENTED: npm ahead of the tap nags, then
+correctly does nothing` drives the real `updateCommand` through `runUpdateGate` and
+holds that verdict, so a later reader can see the shape of the tradeoff instead of
+rediscovering it. The README's enumerations of what produces that line name this third
+cause alongside the failed install and the two refusals.
+
+The specs are `lib/update-check.channel.test.js` (31 tests, including the
+default-versus-explicit equivalence of the npm query and a 17-row table of
+unreadable `brew info` output, every row answering `null` and none of them throwing),
+`lib/install-target.channel.test.js` (26 tests — every layout carries a descriptor,
+the non-brew ones by identity), and `lib/commands/update.channel.test.js` (19 tests:
+call order, the stale-tap and newer-tap paths, and the two strings that must name the
+detected channel). That last file stubs **no filesystem at all**, on purpose:
+`updateCommand` injects only `exec` and `ralphHome`, a pin `update.qa.test.js`
+already holds, so an `fs` passed in would be inert and the test would be measuring
+its own fiction.
+
+The QA specs beside them are `lib/update-check.channel.qa.test.js` (63 tests),
+`lib/commands/update.channel.qa.test.js` (51 tests) and
+`lib/update-gate.channel.qa.test.js` (15 tests) — the last being the only one of the
+six that drives the gate, a module #199 does not modify and whose staying on npm is
+the thing being asserted. Two of its tests are prefixed `DOCUMENTED:` because they
+hold a tradeoff rather than a fix: npm ahead of the tap nags and then correctly
+installs nothing, and a tap ahead of npm is never noticed by `ralph start` at all —
+which is the residual gap #196's tap makes real, since a release the registry refused
+is exactly a release only the tap has. A third is prefixed `MEASURED:` and records a
+follow-up: the #24 notice still says `run npm i -g @lucasfe/ralph to update` to every
+install, so a Homebrew user is hinted at npm here and `brew upgrade ralph` there. The
+test greps the three modules that could name that command — `update-gate.js`,
+`banner-rows.js`, `commands/update.js`, comments stripped first, since
+`banner-rows.js` discusses `npm i -g` in prose while its row says `ralph update` —
+and finds the gate alone.
