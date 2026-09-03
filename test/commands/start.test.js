@@ -6,6 +6,7 @@ import { templatePath } from '../../lib/paths.js'
 import { sessionNameFor } from '../../lib/lock.js'
 import { globalConfigPath } from '../../lib/utils/global-config.js'
 import { readVersionCache, versionCachePath } from '../../lib/version-cache.js'
+import { npmGlobalLayout } from '../helpers/install-layout.js'
 // #141: the retired spellings, as data. See the migration-warning describe below for why this
 // file composes them instead of typing them.
 import { LEGACY_LABELS } from '../../lib/labels.js'
@@ -59,6 +60,8 @@ const baseDeps = () => ({
   home: HOME,
   processEnv: {},
   cacheFs: new Volume(),
+  // #200: the notice names the layout's updater — pin npm's, not this checkout's.
+  classify: npmGlobalLayout(),
 })
 
 // #24/#25: the shared update-flow harness. A full github-source preflight that

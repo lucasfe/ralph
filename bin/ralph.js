@@ -86,7 +86,7 @@ program
   //
   // "opened at the repo root" is the precondition, not decoration: `ralph live` derives the
   // session from the git toplevel while `ralph start` hashes the directory it was run in
-  // (start.js:679), so the two agree exactly when start was run at the root. Claiming it
+  // (start.js:684), so the two agree exactly when start was run at the root. Claiming it
   // attaches to whatever session `ralph start` opened would be a promise this command does
   // not keep from a subdirectory — #168 is where the siblings move onto the shared module.
   .description(

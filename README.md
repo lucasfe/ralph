@@ -1939,26 +1939,45 @@ question you typed is owed either an answer or a failure.
 
 ### The weekly check
 
-Before the loop launches, `ralph start` asks npm for the latest published
-version — **at most once every 7 days** — and prints
-`New version available: <version> (run npm i -g @lucasfe/ralph to update)`
-when what it knows about is newer than what you have. The notice itself is not
-throttled and keeps printing on every run that finds something newer (see
+Before the loop launches, `ralph start` asks **the channel this copy came
+from** for the latest version it carries — **at most once every 7 days** — and
+prints `New version available: <version> (run <the command for your install> to
+update)` when what it knows about is newer than what you have. The notice itself
+is not throttled and keeps printing on every run that finds something newer (see
 [Troubleshooting](#troubleshooting)).
 
-It asks **npm** no matter which channel this copy came from — unlike
-[`ralph update`](#ralph-update), which asks the channel it detected. That is
-deliberate: `ralph start` never works out how Ralph was installed, and having
-this check work it out would add filesystem probing — and, for some layouts, a
-second subprocess — to a path whose whole point is to cost nothing before the
-loop. The consequence is that on a Homebrew install the notice tracks the
-registry, so it can name a version `ralph update` then declines to install,
-telling you the version you have is the newest the tap carries. Accepting the
-question below on such a run is harmless and says so: the update asks the tap,
-prints `✅ Ralph is already up to date (<version>).`, installs nothing, and the
-run carries on with the neutral "did not complete" line described below. Nothing
-is lost either way: `brew upgrade` refreshes the tap, so once the formula catches
-up, the next run that puts the question to you installs it.
+Both halves of that line follow the install layout Ralph detects, the same
+layout [`ralph update`](#ralph-update) acts on. A global **npm** install is
+asked of the registry and told `npm i -g @lucasfe/ralph`; a **Homebrew** install
+is asked of the tapped formula and told `brew upgrade ralph`; a **pnpm**,
+**yarn** or **bun** install names its own manager. The two layouts with nothing
+to install into — an **`npx` run** and a **linked dev checkout** — get the
+version and **no command at all**, rather than a command the update path would
+then refuse. When the layout cannot be placed, the notice falls back to npm —
+the same channel and the same command `ralph update` suggests there, spelled the
+notice's shorter way (`npm i -g @lucasfe/ralph`) rather than the
+`npm install -g @lucasfe/ralph@latest` that command prints. See
+[Troubleshooting](#troubleshooting) for why both spellings are safe to paste.
+
+Detecting it costs **no subprocess**: this check is handed no way to spawn one
+at all, and works from the install's own path — plus at most two filesystem
+probes, for a `.git` under that path and for the path itself being a symlink,
+which is how a linked dev checkout is recognized — because a notice printed
+before every run may not spend a spawn. Skipping the `npm root -g` probe that
+[`ralph update`](#ralph-update) runs gives up only the confirmation that a path
+is npm's *own* global root — an unplaceable layout asks the same registry and
+names the same `npm i -g @lucasfe/ralph` — so the notice reads the same either
+way. And a run inside the 7-day window with nothing newer to report never works
+the layout out at all.
+
+Asking your own channel means a Homebrew install goes **quiet about a release
+the tap has not picked up yet**: the notice tracks the formula, so a version
+published to npm first reaches you once the tap catches up, which `brew upgrade`
+refreshes anyway. It reads the formula **already tapped on this machine** and
+refreshes nothing, exactly as [`ralph update`](#ralph-update) does, so that
+answer is as old as the last auto-updating `brew` command you happened to run.
+Either way it errs in the one safe direction — the version you are shown is one
+your own updater can install, rather than one it would decline.
 
 **`ralph cycle` runs the identical check, and on a terminal asks the identical
 question.** A scheduled cycle (see
@@ -1966,7 +1985,7 @@ question.** A scheduled cycle (see
 prints the same one-line notice, on stdout — which launchd captures in
 `logs/ralph-cycle.out.log`, where an unattended run is read. **Both** global
 7-day windows are shared with `ralph start`, so six cycles a day cost at most
-one registry query and one question a week between them, not six a day — and
+one version query and one question a week between them, not six a day — and
 being asked by one of the two commands this week means the other will not ask
 again until the window rolls over. `ralph doctor` is the exception that draws
 from neither: it *reads* that same file for the `cached` row of its identity box
@@ -1995,8 +2014,9 @@ old install's copy of the loop script, so re-launching by hand is the only way
 to be sure the loop runs one version rather than a mixture of two. Declining
 costs nothing — the loop starts immediately, with no extra output. An update
 that does not complete is not fatal either: a failed install, an `npx` run /
-linked dev checkout with nothing for Ralph to install, or a channel that holds
-nothing newer than what you have (the Homebrew case above), prints
+linked dev checkout with nothing for Ralph to install, or a channel whose live
+answer is no longer newer than the cached one that printed the notice — the
+cache can be up to a week old — prints
 `⚠️  Update did not complete — starting Ralph on <version>.` and the loop runs
 on the version you already have.
 
@@ -2025,7 +2045,7 @@ no issues and no run time to it.
 
 The question is asked **at most once every 7 days**, throttled by its own
 `last_prompted_at` stamp in the global update-check cache — a window
-independent of the weekly registry query, so declining *is* remembered, but
+independent of the weekly version query, so declining *is* remembered, but
 only until that window rolls over. Being *shown* the question is what consumes
 the window, and the stamp is written before your answer is read, so
 interrupting at the prompt (`Ctrl+C`) still counts as having been asked and you
@@ -2045,9 +2065,9 @@ Both 7-day windows are **global, not per-repo**. They live in
 (the value is trimmed before it is used) — one file for your whole machine, so
 five Ralph repos cost one check a week between them rather than one each, and
 one question a week between them rather than five.
-The file holds **two independent windows**: `last_check_at` gates the registry
+The file holds **two independent windows**: `last_check_at` gates the version
 query, `last_prompted_at` gates the question. Neither gates the other, so a run
-can query the registry without asking you anything, and can ask without
+can query its channel without asking you anything, and can ask without
 querying. A *scheduled* `ralph cycle` is the pure form of the first case: it
 reads and writes the same file and stamps `last_check_at`, but never
 `last_prompted_at`, because launchd gives it no terminal to ask on. Run by hand
@@ -2060,6 +2080,14 @@ network down and nothing useful cached there is simply nothing to say, and
 `ralph start` goes quiet and launches the loop. A stamp that is missing,
 unparseable, or somehow in the *future* counts as an open window rather than
 one that never expires.
+
+The cached `latest_version` is **whatever channel the last check asked** — its
+own install's, so a Homebrew copy caches the tapped formula's version and every
+other layout the registry's. The file records only the version, never which
+channel answered, so on a machine carrying two Ralph installs it holds whichever
+one ran last: for up to a week, the notice, `ralph doctor`'s `cached` row and
+`ralph start`'s `update` row can all be reporting the other install's channel.
+One install per machine — the ordinary case — never sees this.
 
 The file is separate from the credential dotenv (`ralph/.env`) in that same
 directory, which the check never reads or writes — and it lives outside your
@@ -2224,7 +2252,7 @@ command line.
 
 | Variable                | Default               | Purpose                                                                                                                                                                                   |
 | ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any registry query, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, both the interactive update prompt and the `update` row of the identity box [`ralph start`](#quick-start) opens with, which is served from that same cache and therefore does not read it either. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate the `cached` row of the identity box [`ralph doctor`](#quick-start) heads its report with, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the row reads `unknown (no update check cached yet)`. That `start`'s `update` row reads that very same file and *is* gated is the deliberate half of the distinction: `doctor`'s row is a diagnostic a user asked for, while `start`'s is the same nagging this variable exists to switch off, printed above every single run. The switch that does silence `doctor`'s row is [`RALPH_BANNER=off`](#configuration-reference), which takes the whole box with it. |
+| `RALPH_NO_UPDATE_CHECK` | unset (check enabled) | Opts out of the weekly update check in `ralph start` and in `ralph cycle`. When set, the check short-circuits before any version query, any look at how this copy was installed, any read or write of `~/.config/ralph/update-check.json`, and any notice — and, with it, both the interactive update prompt and the `update` row of the identity box [`ralph start`](#quick-start) opens with, which is served from that same cache and therefore does not read it either. Because that path reads no cache at all, *neither* of the file's two weekly windows (`last_check_at`, `last_prompted_at`) is consulted or stamped, so opting back in gets you the question straight away rather than a week of silence. It does not gate the `cached` row of the identity box [`ralph doctor`](#quick-start) heads its report with, which only ever *reads* that file and never checks: an opted-out machine simply has nothing cached, so the row reads `unknown (no update check cached yet)`. That `start`'s `update` row reads that very same file and *is* gated is the deliberate half of the distinction: `doctor`'s row is a diagnostic a user asked for, while `start`'s is the same nagging this variable exists to switch off, printed above every single run. The switch that does silence `doctor`'s row is [`RALPH_BANNER=off`](#configuration-reference), which takes the whole box with it. |
 | `NO_COLOR`              | unset (sprite shown on a TTY) | Suppresses the pixel sprite [`ralph start`](#quick-start) prints above its first preflight line — the one-second splash with it, so a run under this variable spends no time and writes no cursor movement on an animation nobody would have seen. Honored on **presence**, not truthiness — as [the convention](https://no-color.org) specifies ("when present, regardless of its value"), so `NO_COLOR=`, `NO_COLOR=0` and `NO_COLOR=false` **all** silence it. To get the sprite back, unset the variable rather than assigning it something that reads as off. It is only ever the *second* gate: a non-TTY stdout suppresses the sprite whatever this says, and nothing here can force the sprite onto a pipe. This is **not** a global colour switch for Ralph — the rest of Ralph's coloured output goes through [picocolors](https://github.com/alexeyraspopov/picocolors), which tests the value's truthiness instead, so `NO_COLOR=1` turns everything plain while the value-less `NO_COLOR=` silences the sprite and leaves the ✅ / ⚠️ lines green. The divergence is deliberate and in the safe direction: strip the escapes from a coloured sentence and it is still a sentence, strip them from the sprite and it is 442 blank cells. It does **not** suppress the identity box — that is facts rather than decoration and prints on every run bar one an explicit [`RALPH_BANNER=off`](#configuration-reference) silenced — but it does take the colour out of it: the box's `update` row is yellow on a colour terminal and plain text here, escape-free like the rest of it. The box [`ralph doctor`](#quick-start) heads its report with is coloured by picocolors' rule rather than this presence one, exactly like the ✓ / ✗ marks under it — so `NO_COLOR=1 ralph doctor` is plain from top to bottom, a piped `ralph doctor` emits not one escape byte *unless* `FORCE_COLOR` or `CI` is set (picocolors keeps colour on a non-TTY for both — its rule, not this one, and it paints the ✓ / ✗ marks and the `cached` row alike), and `NO_COLOR= ralph doctor` on a terminal keeps the colour on both the marks and the box's `cached` row. |
 | `RALPH_BANNER`          | unset (the `ralph.config.sh` line, then `full`) | Overrides the [`RALPH_BANNER`](#configuration-reference) line in `ralph.config.sh` for a single run of `ralph start`, of [`ralph doctor`](#quick-start) **or** of [`ralph status`](#quick-start) — the latter two head their reports with the same identity box: `full`, `static` or `off`, with that row carrying the values in full. The environment **wins** here, which is deliberately the opposite way round to `TASK_SOURCE` — a task source is a property of the repository, a banner is a property of one invocation — so a wrapper script, a cron entry or a CI job can silence the banner without editing, and committing, a file every other run in the repo shares. An unset or blank value is **not** a choice: it defers to the file, so `RALPH_BANNER= ralph start` gets whatever the repo asked for rather than an accidental mode. It cannot turn the sprite **on**, the same way `NO_COLOR`'s absence cannot: a non-TTY stdout, a `NO_COLOR` run or a terminal under 26 columns draws no sprite whatever this says, and it costs those runs nothing — no frames, no sleep, not one escape sequence. Those runs still print the identity box, in plain text; only an explicit `off` removes it, because that is a user asking for nothing rather than a terminal unable to show something. An unrecognized value falls back to `full` and warns on **stderr**, never on stdout and never fatally — in `ralph start`. `ralph doctor` and `ralph status` fall back the same way and **say nothing at all**: the three commands share the knob and its precedence, not the warning, so a typo you never see reported here is one `ralph start` will name for you (`status` could not report it if it wanted to — it writes to stderr in no mode, which is what keeps `ralph status --json` pipeable). `full` and `static` are indistinguishable in both, neither of which draws a sprite at any value. In `ralph status` this reaches the human view alone: `--json` prints its one document whatever the value, and the `never-run` mode prints no box at any value, having no run to identify. |
 | `RALPH_DIGEST_MODEL`    | unset (cheap default) | Model id [`ralph digest`](#quick-start) asks for the narration. Unset, empty, or whitespace-only uses the cheap per-agent default the agent registry declares — `haiku` under `RALPH_AGENT=claude`, `gpt-5-mini` under `codex`. It steers **only** the digest: the loop's own model is untouched, and `RALPH_CODEX_MODEL` is deliberately *not* consulted here, because the loop's model is chosen for depth while a digest that may run every few minutes all night is chosen for price. A wrong or unavailable id costs you the digest and never the run — the agent fails, no history entry is written, one line goes to stderr, and `ralph digest` still exits `0`. Whichever model answers is **recorded in the history entry's heading** and read back by [`ralph status`](#the-digest-section), so a paragraph in the live view can be weighed against who wrote it; entries written by Ralph 0.21.0, before the model was a field, report it as absent. **One path also reads it from `ralph.config.sh`:** the digest window `ralph start` opens when [`RALPH_DIGEST_INTERVAL`](#configuration-reference) is set. `start` parses the assignment out of that file and forwards it (with `RALPH_AGENT`) into the window, so an unattended digest can be given a model without exporting anything — a repo's committed choice, rather than a property of whichever shell launched it. Everywhere else, including a `ralph digest` you type yourself, the file is not consulted and the environment is the only source. |
@@ -2674,15 +2702,19 @@ windows, the prompt-from-cache rule, and the headless path.
 
 Run `ralph update` to update — it picks the right command for a global npm,
 pnpm, yarn, or bun install, and `brew upgrade` for a Homebrew one (see
-[`ralph update`](#ralph-update)). The notice's own hint says
-`npm i -g @lucasfe/ralph` whichever channel this copy came from, so updating by
-hand means **your** manager's command instead: on a Homebrew install that is
-`brew upgrade ralph`, and an `npm i -g` there would leave a second copy rather
-than replace the one you have. To
-silence the check, the notice, and the question together instead, set
-[`RALPH_NO_UPDATE_CHECK`](#environment-variables). Deleting `.ralph/state.json`
-silences nothing: the windows live in the global cache, and the
-`last_seen_release` field still present in that state file no longer drives
+[`ralph update`](#ralph-update)). The notice's own hint names the command for
+that same install — spelled the way you would type it, so a global npm install
+reads `npm i -g @lucasfe/ralph` where the update itself runs
+`npm install -g @lucasfe/ralph@latest`. Those two are the same operation, so
+either is safe to paste: `i` is one of npm's own aliases for `install`, and a
+spec with no tag resolves to `latest` unless you have changed npm's default
+`tag`. On a Homebrew install the hint reads `brew upgrade ralph`, never an
+`npm i -g` that would leave a second copy beside the one you have. On an `npx`
+run or a linked dev checkout — where there is nothing to install into — it names
+no command at all. To silence the check, the notice, and the question together
+instead, set [`RALPH_NO_UPDATE_CHECK`](#environment-variables). Deleting
+`.ralph/state.json` silences nothing: the windows live in the global cache, and
+the `last_seen_release` field still present in that state file no longer drives
 update notices — it is not a knob to reach for.
 
 **`ralph doctor`'s `cached` row reads `unknown (no update check cached

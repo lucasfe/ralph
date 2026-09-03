@@ -268,10 +268,13 @@ describe('QA ralph.sh teardown — whose session is it (#62)', () => {
   })
 
   it('does not kill a session when RALPH_ONCE is set in the ENVIRONMENT', () => {
-    // This is the production once-mode path and it is NOT the `--once` flag the dev's
-    // test uses: lib/commands/cycle.js spawns the loop with `RALPH_ONCE: '1'` in its
-    // env and no argument at all (cycle.js:478). If the guard had keyed on the flag,
-    // every scheduled cycle that aborted would kill a session it does not own.
+    // The ENVIRONMENT entry to once-mode, a signal of its own rather than the `--once`
+    // flag the dev's test uses: templates/ralph.sh seeds RALPH_ONCE_MODE from `RALPH_ONCE`
+    // (ralph.sh:11) before it ever looks at argv (ralph.sh:12-13). `ralph cycle` sets that
+    // variable on the loop it spawns (cycle.js:687) as well as passing the flag
+    // (cycle.js:685), so a guard keyed on the flag alone would leave the variable's half
+    // of the contract untested — and would kill a session it does not own for any caller
+    // that sets only the variable.
     seedAgentResolutionFailure()
     const aborted = runLoop({ once: true })
     expect(aborted.status).toBe(1)
