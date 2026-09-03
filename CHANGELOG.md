@@ -5,6 +5,21 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.26.0](https://github.com/lucasfe/ralph/compare/v0.25.4...v0.26.0) (2026-09-03)
+
+
+### Features
+
+* render Formula/ralph.rb from a version and a tarball digest ([#197](https://github.com/lucasfe/ralph/issues/197)) ([#205](https://github.com/lucasfe/ralph/issues/205)) ([357907b](https://github.com/lucasfe/ralph/commit/357907b4e3d9f0b35364cd6d0ae538c48de59397))
+
+
+### Bug Fixes
+
+* name the update command that fits the install's own layout ([#200](https://github.com/lucasfe/ralph/issues/200)) ([#209](https://github.com/lucasfe/ralph/issues/209)) ([6d96e8e](https://github.com/lucasfe/ralph/commit/6d96e8edd8e28a269283a22575947334806c4c2a))
+* recognize the Homebrew Cellar layout so `ralph update` runs `brew upgrade` ([#198](https://github.com/lucasfe/ralph/issues/198)) ([#207](https://github.com/lucasfe/ralph/issues/207)) ([5ecaedc](https://github.com/lucasfe/ralph/commit/5ecaedc08398c62d55ba637c18eb864b1e5828da))
+* report the install channel in `ralph doctor` without spawning ([#201](https://github.com/lucasfe/ralph/issues/201)) ([#210](https://github.com/lucasfe/ralph/issues/210)) ([8ceefce](https://github.com/lucasfe/ralph/commit/8ceefce69942e704e3cb8cb7b9484c88678d6dc3))
+* resolve the latest version from the channel this copy was installed from ([#199](https://github.com/lucasfe/ralph/issues/199)) ([#208](https://github.com/lucasfe/ralph/issues/208)) ([645a6a8](https://github.com/lucasfe/ralph/commit/645a6a8f03ea885918bc4567be16c51588197e0c))
+
 ## [0.25.4](https://github.com/lucasfe/ralph/compare/v0.25.3...v0.25.4) (2026-09-02)
 
 
