@@ -1750,10 +1750,14 @@ The third is younger, and it is a real call rather than a grep:
 
 - **The formula's *name* is pinned to the command `ralph update` runs (#198), and
   the duplication behind it must not be "fixed" with an import.**
-  `lib/install-target.js` spells that name a second time —
-  `const HOMEBREW_FORMULA = 'ralph'`, which is at once half of the marker that
-  recognizes a Cellar install (`Cellar` + the formula name, as adjacent whole
-  segments) and the argument in `brew upgrade ralph`. Neither direction of import
+  `lib/install-markers.js` spells that name a second time —
+  `export const HOMEBREW_FORMULA = 'ralph'`, which is at once half of the marker
+  that recognizes a Cellar install (`Cellar` + the formula name, as adjacent whole
+  segments) and — via `lib/install-target.js`, which imports it — the argument in
+  `brew upgrade ralph`. (It was declared *in* `install-target.js` until #201 split
+  the marker table out; see [below](#the-channel-a-diagnostic-reports-201). The
+  duplication argument is untouched by that move: `lib/` still holds exactly one
+  copy, and it is still a different file from the renderer's.) Neither direction of import
   is available to remove the copy: `lib/` cannot import the renderer, because
   `package.json`'s `files` allow-list publishes `lib/` and not `scripts/`, so the
   import resolves in a checkout and throws `ERR_MODULE_NOT_FOUND` in every
@@ -1818,8 +1822,13 @@ Three properties are pinned, and each of them is a thing a later reader might
 otherwise undo:
 
 - **No consumer switches on `kind` to pick a query.** The descriptor is passed
-  through; a `kind` allowlist would be a second place the channel is known, and the
-  next channel would need edits in two files instead of a row in `GLOBAL_STORES`.
+  through; a `kind` allowlist would be a second place the channel is known, so the
+  next channel would need an edit in a **consumer** on top of its row in the store
+  table. (Since #201 that table is itself two joined halves — a row in
+  `INSTALL_MARKERS` and its `STORE_UPDATES` entry, joined on `store`, with
+  `GLOBAL_STORES` derived from the pair. Both halves are still *declarations* of the
+  channel; the property pinned here is that no consumer becomes a third. See
+  [below](#the-channel-a-diagnostic-reports-201).)
   `lib/commands/update.channel.test.js` drives an invented `global-frobnicator`
   classification and a `global-brew` one holding the *npm* descriptor: the query
   follows the descriptor both times.
@@ -2027,3 +2036,112 @@ does not close); the version cache carries no channel, so on a mixed-install mac
 an npm-layout run can print, for up to a week, the version a Homebrew run cached; a
 descriptor's `format` is never validated, so a half-added channel burns the week in
 silence; and `latestSource` is resolved even when there is no `exec` to use it.
+
+### The channel a diagnostic reports (#201)
+
+`ralph doctor`'s identity box grew a `channel` row: **how this copy of Ralph was
+installed**, drawn between `cached` and `cwd` because the two are one thought — the
+registry and a Homebrew install are separate channels that hold different versions by
+design (#196), so "0.23.0 available" means one thing on a `brew` install and another
+on an npm one. (There is still no tap; see
+[The Homebrew formula](#the-homebrew-formula-a-generator-and-no-tap-yet) above for
+what does and does not exist.) The user-facing wording is in
+[the README](./README.md#quick-start), and the layout-by-layout mapping is under
+[`ralph update`](./README.md#ralph-update).
+
+The interesting part is not the row, it is **why the row needed a new file**.
+`lib/install-target.js` already knew how to recognize every layout, and `doctor`
+could not import a byte of it: that module imports `execa`, because a plain
+`npm install -g` has no directory of its own and `npm root -g` is the only thing
+that identifies it, and doctor's import graph is pinned closed against spawners
+(`lib/commands/doctor.version-line.qa.test.js` — #27's walk, hardened by #75 to strip
+comments first; #125 retitled the sibling case in that suite once `doctor` did start
+taking an `exec` seam). So
+#201 cut the half that needs no subprocess into **`lib/install-markers.js`**
+and had *both* consumers read it, rather than letting the diagnostic keep a second
+copy of the marker table.
+
+**Its import list is the contract: `node:path`, and nothing else, ever.** That is
+the acceptance criterion for the split rather than a convention anybody has to
+remember, and it is worth knowing exactly what it bought, because the numbers are
+the argument:
+
+- doctor's pinned bare-specifier set is **unchanged** — `node:fs`, `node:os`,
+  `node:path`, `picocolors`, the same four before and after, asserted at
+  `doctor.version-line.qa.test.js:1061`. That file was **not edited by #201**.
+- the transitive closure of doctor's *relative* imports grew by exactly **one
+  module**, 17 → 18, and the new one is `lib/install-markers.js`.
+  `lib/install-target.js` and `lib/paths.js` are still off it.
+- Not `node:fs` either, which `doctor` *is* allowed to reach: `linkSignal` takes its
+  `fs` as an argument, so "pure path matching" stays a property of the module
+  instead of a claim about it. `lib/install-markers.qa.test.js` asserts that
+  independently of the walk above.
+
+**What stayed behind is everything that implies a spawn**: the `kind` string, the
+update `argv`, and #199's `latest` query — now a `STORE_UPDATES` map keyed on the
+manager's own name, joined against `INSTALL_MARKERS` on that same `store` key, with
+`GLOBAL_STORES` derived from the pair. What moved is the markers, the matcher
+(`matchingStores`, which takes the table as an argument so the decorated and
+undecorated tables share one filter), the two link probes, and
+`HOMEBREW_FORMULA`. `classifyInstall` and the three `NPM_GLOBAL_*` exports came
+through the refactor **unchanged** — same four exports, same signature — so nothing
+about `ralph update` moved.
+
+Three things a later reader might otherwise undo:
+
+- **The row is not defaulted, and that is the honest answer.** `ralphHome` has no
+  default in `doctorCommand`: the obvious one is `RALPH_HOME` from `lib/paths.js`,
+  which reaches `node:url` and would fail the spec above. So `bin/ralph.js` passes it
+  in, exactly as it passes `exec`, and a caller that passes nothing gets **no row**
+  rather than a fabricated channel. `installFs` *is* defaulted (`{ existsSync,
+  lstatSync }`), because `node:fs` was already on the graph.
+- **The hedge is load-bearing.** Nine wordings, and the one for a path no marker
+  claimed is `npm or other (not probed)`. Reporting `npm` there would invent the
+  single most load-bearing fact on a bug report about a version. Three layouts share
+  it — a real global npm install, an unrecognized pnpm global directory (README's
+  `~/.pnpm-global` gap, pinned as documented-not-fixed in #200's QA pass above), and a
+  layout Ralph places nowhere at all — since `npm root -g` is the only thing that
+  separates them.
+- **The widest wording still fits.** The value column is 48 (`BANNER_WIDTH -
+  LABEL_WIDTH - 4`), the widest instance is the four-way
+  `ambiguous (matches pnpm, yarn, bun, brew)` at 41 code points, and `channel` is a
+  7-column label in an 8-column gutter. `install-markers.test.js` computes that
+  column from the composer's own constants rather than spelling `48`, and
+  `banner-rows.test.js` measures every label against `LABEL_WIDTH`.
+
+In the box itself the row cost a **third table** on `factRows`' one gate
+(`DIAGNOSTIC_ROWS`, `RELEASE_ROWS`, `RUN_ROWS`, in that call order) — the second one
+needed a parameter and the third needed nothing, which is the evidence #69's seam was
+the right shape. `ralph start` and `ralph status` pass no `channel`, so their boxes
+are unchanged to the byte.
+
+The specs are `lib/install-markers.test.js` (36 tests — the table, the two path
+primitives, the matcher, the probes, and a pair asserting the two halves cannot drift
+apart) and `lib/commands/doctor.install-channel.test.js` (15 — the row at the
+command's surface, the no-path case that draws nothing, and the cost). The QA pass
+added `lib/install-markers.qa.test.js` (125 — a byte-faithfulness sweep over every
+layout and field the extraction moved, the frozen table, near-miss segments, and
+precedence as a **matrix** rather than two cells) and
+`lib/commands/doctor.install-channel.qa.test.js` (79 — every value the row can take
+at the surface, both seams asserted **total**, and a proof that no other box moved).
+
+That QA pass found one real defect, and it is the reason `probe` takes a **thunk**
+rather than `(fs, methodName, path)`: the symlink answer takes two steps and only the
+first is the filesystem's, so #201's first cut read `.isSymbolicLink?.()` off the
+probe's *result*, **outside** the `try` — where the pre-#201 helper in
+`install-target.js` had had the whole expression inside one, so the regression was
+introduced by the extraction rather than inherited by it. `?.()` short-circuits on
+`null` and `undefined` only, so a `Stats` that had
+lost its methods (`structuredClone`d, JSON-round-tripped) or a stub exposing the flag
+as a plain boolean threw out of a diagnostic that promises never to throw over its
+own fs. Passing the **question** rather than a method name is what keeps the guard
+covering whatever the caller wrote instead of whatever the helper remembered to
+re-guard; the tests are under "the probe seam must be TOTAL".
+
+One asymmetry is deliberate and should stay: the **real-fs default stayed in
+`lib/install-target.js`**. A probe that cannot answer answers "no", and that is safe
+in a diagnostic (a wrong word in a report) and not safe in an updater — a `npm
+link`ed root lives *under* `npm root -g`, so a checkout the probes cannot see
+classifies `global-npm`, with an argv, and gets a tarball unpacked over a
+contributor's working tree. The caller that is about to write supplies a real
+filesystem; the caller that is about to print supplies its own seam.
