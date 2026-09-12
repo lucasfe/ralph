@@ -48,6 +48,24 @@ const FORMULA_CLASS = 'Ralph'
 const TAG_TARBALL_PREFIX = 'https://github.com/lucasfe/ralph/archive/refs/tags/v'
 const TAG_TARBALL_SUFFIX = '.tar.gz'
 
+/**
+ * The tag tarball URL for a release — the same string the formula's `url` line
+ * holds, exported for the one caller that needs it BEFORE a formula exists.
+ *
+ * #202's release job hashes the tarball to get the digest the formula is rendered
+ * with, so it has to know the URL a render it has not performed yet would point at.
+ * Spelling the endpoint a second time in the workflow would be a second copy of it,
+ * and a copy that drifted would mean a digest computed over bytes the formula does
+ * not fetch — a checksum mismatch on a user's machine, discovered by the user.
+ * `renderFormula` builds `url` from this function, so the two cannot disagree.
+ *
+ * @param {string} version release version, semver, no leading "v"
+ * @returns {string} the URL GitHub serves the tag's source tarball at
+ */
+export function tagTarballUrl(version) {
+  return `${TAG_TARBALL_PREFIX}${releaseVersion(version)}${TAG_TARBALL_SUFFIX}`
+}
+
 // semver.org's recommended pattern with its capture groups made non-capturing:
 // three numeric parts with no leading zeros, an optional pre-release and an
 // optional build. A leading "v" belongs to the tag, not the version, and is
@@ -233,7 +251,7 @@ export function renderFormula(options) {
     `class ${FORMULA_CLASS} < Formula`,
     `  desc ${desc}`,
     `  homepage ${home}`,
-    `  url "${TAG_TARBALL_PREFIX}${release}${TAG_TARBALL_SUFFIX}"`,
+    `  url "${tagTarballUrl(release)}"`,
     `  sha256 "${digest}"`,
     `  license ${spdx}`,
     '',

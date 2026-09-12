@@ -8,10 +8,18 @@ name: Release
 #      a Release PR that bumps `package.json` and prepends a CHANGELOG entry.
 #   2. A maintainer reviews and merges the Release PR. The merge triggers
 #      another `push: main` event → this workflow runs again.
-#   3. publish (always-run, idempotent): reads `package.json`, asks npm if
-#      that exact version is already published, and publishes only if it
-#      isn't. If the Release PR merged and the new version isn't on npm yet,
-#      this job fills the gap. If the version is already there, it's a no-op.
+#   3. Two SIBLING jobs run next, both waiting on `release-please` and on
+#      nothing else. Each is always-run and idempotent, so a push where
+#      release-please created nothing still evaluates them and they
+#      short-circuit:
+#        - publish: reads `package.json`, asks npm if that exact version is
+#          already published, and publishes only if it isn't. If the Release PR
+#          merged and the new version isn't on npm yet, this job fills the gap.
+#          If the version is already there, it's a no-op.
+#        - homebrew (#202): renders Formula/ralph.rb for that version, proves it
+#          installs on a macOS runner, and pushes it to lucasfe/homebrew-ralph.
+#          Its INDEPENDENCE from `publish` is the entire point of it; the job
+#          argues why at length, and that argument is load-bearing.
 
 on:
   push:
@@ -216,3 +224,225 @@ jobs:
             echo '::endgroup::'
             exit 1
           fi
+
+  homebrew:
+    name: Publish Formula/ralph.rb to the Homebrew tap
+    # A SIBLING OF `publish`, NOT A DEPENDENT, AND THAT IS THE WHOLE FEATURE.
+    # Do not "tidy" this into `needs: [release-please, publish]`. It reads like an
+    # oversight — surely the formula goes out after the package? — and the ordering
+    # it would impose is exactly the failure this channel exists to survive. npm has
+    # refused this package's publish since 0.23.0 (#196; the step above documents
+    # four ruled-out theories and the open question), and six tagged releases are
+    # sitting unpublished because of it. Chain this job behind that one and the
+    # second channel inherits the first one's outage: `publish` fails, GitHub skips
+    # `homebrew`, and a release that Homebrew could have delivered reaches nobody.
+    #
+    # Homebrew does not need npm to have succeeded. It builds from the source tarball
+    # GitHub serves for the RELEASE TAG, and release-please creates that tag when the
+    # Release PR merges — before either job starts. So the two channels are genuinely
+    # independent and the graph says so.
+    needs: release-please
+    # THE WORKFLOW RUN STILL GOES RED WHEN npm FAILS, ON PURPOSE. There is no
+    # `continue-on-error` anywhere in this file and there must not be. Marking the
+    # npm job soft would turn the red run green and retire the pressure to fix the
+    # 403 — and worse, it would make a FUTURE, DIFFERENT npm failure look exactly
+    # like today's known one. A red run beside a shipped formula is the honest
+    # report: users got the release, maintainers still owe npm an answer.
+    #
+    # The `if` below is the npm job's guard character for character, for the same
+    # reason: a push where release-please created nothing must still evaluate this
+    # job so the version check can short-circuit it.
+    if: always() && (needs.release-please.result == 'success' || needs.release-please.result == 'skipped')
+    # macos-latest because `brew` is only here, and the pre-flight below has to
+    # install the formula on the platform a user would. Free on a public repo.
+    runs-on: macos-latest
+    permissions:
+      # `contents: read` is for `actions/checkout` of THIS repository and nothing
+      # else. The tap is read anonymously (it is public, and the probe is a clone,
+      # not an API call) and written with a PAT, because GITHUB_TOKEN cannot write
+      # to another repository whatever scopes it is given. And NO `id-token: write`:
+      # nothing in this job speaks OIDC, so granting it would be an unused signing
+      # capability on the one job that runs a build over bytes fetched from the net.
+      contents: read
+    env:
+      TAP_REPO: lucasfe/homebrew-ralph
+      # A throwaway tap that exists only inside this runner. `brew audit [path ...]`
+      # is DISABLED — measured on Homebrew 6.0.21-34-ga8820d0:
+      # "Error: Calling `brew audit [path ...]` is disabled! Use `brew audit
+      # [name ...]` instead." — so every pre-flight command has to address the
+      # formula by name, and a name needs a tap to live in.
+      PREFLIGHT_TAP: ralphci/preflight
+      # THE SECRET GATE, AND WHY THIS JOB IS MERGEABLE BEFORE THE TAP EXISTS.
+      # HOMEBREW_TAP_TOKEN is a fine-grained PAT scoped to contents:write on the tap
+      # repository alone. It does not exist yet — creating it is #203 — so the push
+      # step is conditioned on this boolean and skips until it does.
+      #
+      # It is evaluated HERE rather than in the step's own `if` because `secrets` is
+      # not one of the contexts a step-level `if` can read; the expression would
+      # resolve to the empty string and the step would be skipped forever, including
+      # after the secret landed. A job-level `env` CAN read `secrets`, so the
+      # presence of the secret is turned into the string "true" or "false" once, and
+      # the step reads that. Both consequences are wanted: green on main today, and
+      # self-enabling the moment the secret appears, with no follow-up PR.
+      TAP_PUSH_ENABLED: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # NO `actions/setup-node` HERE, unlike the npm job. Two reasons. The generator
+      # is dependency-free (`scripts/generate-homebrew-formula.js` imports only
+      # `node:` builtins), so the runner's own Node runs it as well as a pinned one
+      # would. And `brew install` below compiles the formula, which runs `npm
+      # install` against the `node` Homebrew resolves as a dependency; adding a
+      # second Node to PATH ahead of it is a way for this job to build against an
+      # interpreter no user will have. That second reason is a deliberate
+      # conservatism rather than a measurement — Homebrew's build environment is
+      # sanitised and may well filter it out — and the cost of being careful is
+      # nothing, because nothing here needs a specific Node.
+      - name: Ask the tap whether it already carries this version
+        id: tap
+        run: |
+          # IDEMPOTENCE, mirroring the npm job's `npm view` pre-check: a re-run, or
+          # an unrelated push to main, must not re-push or double-bump. Everything
+          # after this step is gated on the answer.
+          #
+          # The probe CLONES the tap rather than asking the API, because the empty
+          # tap is a reachable state and every API-shaped probe reports it as a
+          # failure. Measured against the real lucasfe/homebrew-ralph, which today
+          # has no commits: `git clone --depth 1` exits 0 and warns "You appear to
+          # have cloned an empty repository", while `gh api .../contents/...` exits 1
+          # with `{"message":"This repository is empty."}` and `gh api .../commits`
+          # answers HTTP 409. A clone can tell an empty tap from a missing one at the
+          # exit status; a swallowed 404 cannot. The clone is also the checkout the
+          # push step needs, so it costs nothing extra.
+          #
+          # scripts/homebrew-tap-plan.js owns that logic — as a script and not a
+          # heredoc, so the empty-tap case is driven for real in
+          # test/homebrew-release-job.test.js instead of being a claim nobody can
+          # check until a release day. It prints `version=`, `tarball_url=` and
+          # `carries_version=` on stdout for $GITHUB_OUTPUT, and its reasoning on
+          # stderr, which is what puts the skip decision in this log.
+          TAP_DIR="$RUNNER_TEMP/homebrew-ralph"
+          echo "TAP_DIR=$TAP_DIR" >> "$GITHUB_ENV"
+          node scripts/homebrew-tap-plan.js \
+            --remote "https://github.com/$TAP_REPO" \
+            --into "$TAP_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch the tag tarball and hash the bytes it served
+        id: tarball
+        if: steps.tap.outputs.carries_version == 'false'
+        env:
+          # The URL comes from the probe, which builds it with `tagTarballUrl` in
+          # scripts/lib/render-homebrew-formula.js — the same function the formula's
+          # own `url` line is rendered from. So the bytes hashed below are, by
+          # construction, the bytes a user's `brew install` will fetch. Spelling the
+          # endpoint here instead would be a second copy that could drift, and drift
+          # means a checksum mismatch discovered on somebody else's machine.
+          TARBALL_URL: ${{ steps.tap.outputs.tarball_url }}
+        run: |
+          # Hashed from what the URL actually served, never from an archive produced
+          # locally out of this checkout. That distinction is MEASURED, not assumed:
+          # for v0.25.4, `curl -sL <the URL above> | shasum -a 256` gives
+          # 010d0b38…a94cc, while `git archive --format=tar.gz
+          # --prefix=ralph-0.25.4/ v0.25.4 | shasum -a 256` — the same tree, the same
+          # prefix — gives d63484d9…4557. Two different digests for the same release,
+          # and only one of them is the file `brew install` downloads.
+          TARBALL="$RUNNER_TEMP/ralph-source.tar.gz"
+          curl --fail --silent --show-error --location --output "$TARBALL" "$TARBALL_URL"
+          DIGEST=$(shasum -a 256 "$TARBALL" | cut -d ' ' -f 1)
+          echo "sha256=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "$TARBALL_URL"
+          echo "  sha256  $DIGEST"
+
+      - name: Render Formula/ralph.rb from that version and that digest
+        if: steps.tap.outputs.carries_version == 'false'
+        env:
+          VERSION: ${{ steps.tap.outputs.version }}
+          SHA256: ${{ steps.tarball.outputs.sha256 }}
+        run: |
+          # Straight into the tap clone, so the pre-flight below inspects the exact
+          # file the push would publish rather than a copy of it. `--version` is
+          # passed explicitly even though the generator defaults to package.json's,
+          # so the version hashed and the version rendered are one value.
+          mkdir -p "$TAP_DIR/Formula"
+          node scripts/generate-homebrew-formula.js \
+            --version "$VERSION" --sha256 "$SHA256" --out "$TAP_DIR/Formula/ralph.rb"
+          echo '::group::Formula/ralph.rb'
+          cat "$TAP_DIR/Formula/ralph.rb"
+          echo '::endgroup::'
+
+      # PRE-FLIGHT — THREE STEPS, ALL BEFORE THE PUSH. If this channel can ship a
+      # formula that does not install, it is not a fallback; it is a second way to
+      # fail. So the formula is installed, exercised and audited on a real macOS
+      # runner first, and any of the three failing takes the job down before the
+      # push step is reached. They are separate steps so the run log names which
+      # property broke.
+      - name: Pre-flight — brew install --build-from-source
+        if: steps.tap.outputs.carries_version == 'false'
+        run: |
+          # By name out of a throwaway tap, because addressing a formula by path is
+          # disabled (see PREFLIGHT_TAP above). `--no-git` keeps it a plain directory
+          # — nothing here commits or pushes to it. Measured locally on Homebrew
+          # 6.0.21-34-ga8820d0 with the formula rendered for 0.25.4: `brew tap-new
+          # --no-git`, the copy, and `brew install --dry-run --build-from-source
+          # ralphci/preflight/ralph` all succeed, and the dry run resolves `node` as
+          # the dependency the formula declares. That the real build then succeeds on
+          # a runner is what this step is here to find out rather than something
+          # asserted here.
+          #
+          # `--build-from-source` because there is no bottle and never will be: the
+          # formula compiles the tag's source tree with npm.
+          brew tap-new --no-git "$PREFLIGHT_TAP"
+          cp "$TAP_DIR/Formula/ralph.rb" "$(brew --repository "$PREFLIGHT_TAP")/Formula/ralph.rb"
+          brew install --build-from-source "$PREFLIGHT_TAP/ralph"
+
+      - name: Pre-flight — brew test
+        if: steps.tap.outputs.carries_version == 'false'
+        # Runs the formula's own `test do` block, which is
+        # `assert_match "<version>", shell_output("#{bin}/ralph --version")`. That
+        # asserts the two things an install can get wrong and still look fine: the
+        # linked executable runs, and the version it reports is the version the tap
+        # says it published.
+        run: brew test "$PREFLIGHT_TAP/ralph"
+
+      - name: Pre-flight — brew audit --strict
+        if: steps.tap.outputs.carries_version == 'false'
+        # Last of the three because it is the cheapest and the least conclusive: it
+        # checks the formula's shape, not that it works. Measured locally on Homebrew
+        # 6.0.21-34-ga8820d0 against the formula rendered for 0.25.4 — exit 0, no
+        # output at all, and `brew style` reports "1 file inspected, no offenses
+        # detected". CONTRIBUTING records the two edits that break it (reordering the
+        # fields, and qualifying `std_npm_args`); this step is what would catch a
+        # third.
+        run: brew audit --strict "$PREFLIGHT_TAP/ralph"
+
+      - name: Push Formula/ralph.rb to the tap
+        # Both gates, and neither is optional. `carries_version` keeps a re-run from
+        # pushing twice; TAP_PUSH_ENABLED keeps this job green on main while the
+        # secret #203 creates does not exist. Note it reads `env.`, not `secrets.` —
+        # see the env block for why a secret cannot be tested here directly.
+        if: steps.tap.outputs.carries_version == 'false' && env.TAP_PUSH_ENABLED == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.tap.outputs.version }}
+        run: |
+          cd "$TAP_DIR"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula/ralph.rb
+          git commit -m "ralph $VERSION"
+          # `HEAD:refs/heads/main` rather than `git push origin main`, because the
+          # first release pushes into an EMPTY repository: a clone of one leaves HEAD
+          # as an unborn symref (measured — `git symbolic-ref --short HEAD` answers
+          # `main` in a clone of the real lucasfe/homebrew-ralph, with `git status`
+          # reporting "No commits yet on main"), and the branch only starts existing
+          # with this commit. The explicit refspec covers that case and the ordinary
+          # one identically. Measured end to end against a local
+          # `git init --bare --initial-branch=main` remote with these exact commands:
+          # the first push answers `* [new branch] HEAD -> main`, and re-running the
+          # probe against that remote then reports `carries_version=true`, which is
+          # the idempotence this job leans on.
+          #
+          # The token goes in the URL because the clone above was anonymous and there
+          # is no credential configured for this remote; Actions masks the secret's
+          # value in the log.
+          git push "https://x-access-token:$TAP_TOKEN@github.com/$TAP_REPO" HEAD:refs/heads/main

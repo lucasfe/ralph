@@ -143,7 +143,20 @@ describe('packaging: the generator is development-only', () => {
   it('adds no dependency for GIF decoding', () => {
     // The whole point of hand-rolling GIF89a: no sharp, no jimp, no gifuct, and
     // nothing new in devDependencies either.
+    //
+    // AN EXACT SET RATHER THAN A DENYLIST, because a denylist cannot name the
+    // decoder nobody has heard of yet. The cost of that strength is that this is a
+    // tripwire on ANY dependency growth, so every entry has to be argued for where
+    // it is added, and the argument belongs here rather than in a commit message.
+    //
+    // `yaml` is #202's, and it is not a GIF anything. The `homebrew` release job's
+    // spec reads the RESOLVED job graph out of .github/workflows/release.yml, and
+    // the whole claim it makes is that the job waits on `release-please` and NOT on
+    // the npm `publish` job. A hand-rolled parse — or a grep — would pass just as
+    // happily on `needs: [release-please, publish]`, which is the single edit #202
+    // exists to prevent. It is dev-only, unpublished by the allow-list two tests
+    // up, and it has no dependencies of its own.
     expect(Object.keys(pkg.dependencies).sort()).toEqual(['commander', 'execa', 'picocolors'])
-    expect(Object.keys(pkg.devDependencies).sort()).toEqual(['memfs', 'vitest'])
+    expect(Object.keys(pkg.devDependencies).sort()).toEqual(['memfs', 'vitest', 'yaml'])
   })
 })
