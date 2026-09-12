@@ -1775,19 +1775,27 @@ The third is younger, and it is a real call rather than a grep:
   because Homebrew derives a formula's class from its file name
   (`Formulary.class_s`).
 
-**What does not exist yet, and must not be written up as though it does.** There is
-no tap, no `brew tap`, and no `brew install ralph`. Nothing under `.github/` and
-nothing in `package.json`'s `scripts` mentions the formula — grepping either tree
-for `homebrew`, `formula` or `brew` finds nothing — so this generator is run by hand
-and its output is consumed by nobody; since #198 its *name* has a consumer, which is
-what the third pin above is for. The tap and the release-workflow step that fills it
-are later slices of #196. #198 is the far end of the same pipe and nothing more:
+**What does not exist yet, and must not be written up as though it does.** Since
+#202 this generator does have a caller — the `homebrew` job in
+[`.github/workflows/release.yml`](.github/workflows/release.yml), written up under
+[The release job that fills the tap (#202)](#the-release-job-that-fills-the-tap-202)
+— so it is no longer run only by hand; since #198 its *name* has a consumer too,
+which is what the third pin above is for. What is still missing is the far end:
+**the tap has no content and the job cannot write to it.** Measured at the time of
+writing, `lucasfe/homebrew-ralph` is a real, public, and entirely empty repository —
+`git ls-remote https://github.com/lucasfe/homebrew-ralph` prints nothing and exits
+`0`, `gh api repos/lucasfe/homebrew-ralph/commits` answers HTTP `409`
+`Git Repository is empty.`, and `gh api repos/lucasfe/homebrew-ralph` reports
+`size: 0` (it does report `default_branch: main`, which is not evidence that a commit
+exists) — and no `HOMEBREW_TAP_TOKEN` secret is configured, which is why #202's push
+step is gated off. Both are #203. So there is still no `brew tap`, no
+`brew install ralph`, and the only install path a user has is the npm one
+[the README](./README.md#install) describes, which stays the only place install
+instructions belong. #198 is the far end of the same pipe and nothing more:
 `ralph update` now runs `brew upgrade ralph` for a Cellar install, where it used to
 classify that layout `unknown`, refuse, and print an `npm install -g` that would
 leave a second copy alongside the Homebrew one (the layout table is under
-[`ralph update`](./README.md#ralph-update)). Until the tap lands, the install path a
-user has is still the npm one [the README](./README.md#install) describes, and that
-is the only place install instructions belong.
+[`ralph update`](./README.md#ralph-update)).
 
 ### The version a channel reports (#199)
 
@@ -2145,3 +2153,132 @@ link`ed root lives *under* `npm root -g`, so a checkout the probes cannot see
 classifies `global-npm`, with an argv, and gets a tarball unpacked over a
 contributor's working tree. The caller that is about to write supplies a real
 filesystem; the caller that is about to print supplies its own seam.
+
+### The release job that fills the tap (#202)
+
+#197 built the generator and #198–#201 taught the CLI to recognise a Homebrew
+install; #202 is the part that actually ships one. It adds a `homebrew` job to
+[`.github/workflows/release.yml`](.github/workflows/release.yml) that renders
+`Formula/ralph.rb` for the version in `package.json`, **proves it installs** on a
+macOS runner, and only then pushes it to the tap.
+
+**It is a SIBLING of the npm `publish` job, and that is the entire feature.** Both
+jobs wait on `release-please` and on nothing else. Chaining the formula behind the
+publish would hand the second channel the first one's outage — npm has refused this
+package since 0.23.0, so `publish` fails, GitHub skips anything downstream of it, and
+a release Homebrew could have delivered reaches nobody. Homebrew does not need the
+publish to have succeeded: it builds from the tarball GitHub serves for the release
+**tag**, and release-please creates that tag when the Release PR merges, before
+either job starts. The job's comments argue this at the `needs:` edge itself, because
+`needs: [release-please, publish]` reads like the obvious tidy-up and is the one edit
+that breaks the whole point. `test/homebrew-release-job.test.js` asserts it against
+the **resolved** graph — the transitive closure of `needs`, plus a sweep for
+`needs.publish` in an `if:`, since an `if` reading another job's `result` makes a job
+downstream without appearing as an edge.
+
+**The workflow run still goes red when npm fails, deliberately.** There is no
+`continue-on-error` anywhere in the file and there must not be: it would turn the red
+run green, retire the pressure to fix the 403, and make a *future, different* npm
+failure look identical to today's known one. The release reaches users through brew
+regardless, so a red run beside a shipped formula is the honest report. The spec pins
+the *setting* rather than grepping the file, because the file is expected to say the
+word — naming the switch is how the argument warns off the next reader.
+
+**Idempotence, and the empty tap.** The job mirrors the npm job's `npm view`
+pre-check by asking the tap whether it already carries this version, and skipping
+everything if it does. That probe is `scripts/homebrew-tap-plan.js` — a script rather
+than a `run:` heredoc, so the case that matters can be driven in a test instead of
+being a claim nobody can check until a release day. It **clones** the tap, and the
+reason is measured rather than stylistic: an empty tap is a reachable state (#202
+merges before #203 commits the initial formula), and every API-shaped probe reports it
+as a failure, so using one means swallowing its failure to mean "no" — which cannot
+tell an empty tap from one that was deleted, renamed or made private. Against the real
+`lucasfe/homebrew-ralph`:
+
+```bash
+git clone --depth 1 https://github.com/lucasfe/homebrew-ralph   # exit 0
+# warning: You appear to have cloned an empty repository.
+#   …leaves a directory holding nothing but .git/, whose HEAD is a symref to `main`,
+#   and `git status` reports "No commits yet on main". git 2.50.1 (Apple Git-155).
+gh api repos/lucasfe/homebrew-ralph/contents/Formula/ralph.rb   # exit 1
+# {"message":"This repository is empty.", …, "status":"404"}
+gh api repos/lucasfe/homebrew-ralph/commits                     # HTTP 409
+# {"message":"Git Repository is empty.", …}
+curl -so /dev/null -w '%{http_code}' \
+  https://raw.githubusercontent.com/lucasfe/homebrew-ralph/main/Formula/ralph.rb
+# 404
+```
+
+Emptiness is `0` and absence is not, so the probe fails on a broken remote and carries
+on past an empty one. The clone is also the checkout the push step needs, so it costs
+the job nothing extra. `git init --bare --initial-branch=main` reproduces the empty
+case byte for byte locally (same exit status, same empty tree, same symref), which is
+how the specs drive it with the real `git` and no network. The marker the probe reads
+is the tap formula's own `url` line rather than a regex over the version, so a tap
+carrying `0.25.40` cannot be mistaken for one carrying `0.25.4`.
+
+**The digest is computed from the bytes that were fetched**, from the URL the formula
+will point at — never from an archive produced locally. That distinction is measured
+rather than assumed: for `v0.25.4`, GitHub's tarball hashes to
+`010d0b38…a94cc`, while `git archive --format=tar.gz --prefix=ralph-0.25.4/ v0.25.4`
+— the same tree under the same prefix — hashes to `d63484d9…4557`. Two digests for one
+release, and only one of them is the file `brew install` downloads.
+That identity is *structural*, not conventional: `tagTarballUrl` was extracted from
+`scripts/lib/render-homebrew-formula.js` (which now renders its own `url` line from
+it) and the probe reports it as an output, so the workflow never spells the archive
+endpoint at all. A second copy there could drift, and drift means a checksum mismatch
+discovered on somebody else's machine. Run by hand with the job's own commands against
+the real remotes, the three steps chain: the probe reports
+`carries_version=false` for the empty tap and `tarball_url=…/v0.25.4.tar.gz`, the
+`curl | shasum -a 256` of those bytes is
+`010d0b38ad1dab35f41ebcf3cd9ef62e3ff2acd36b024d0a133a2295ed9a94cc` — the same digest
+[recorded above](#the-homebrew-formula-a-generator-and-no-tap-yet) for that tag — and
+the rendered formula's `url` line is the string the probe reported, character for
+character. Pushed into a local `git init --bare --initial-branch=main` remote with the
+push step's exact commands, the first push answers `* [new branch] HEAD -> main` and a
+second probe against that remote then reports `carries_version=true`.
+
+**Pre-flight, three steps, all before the push.** `brew install
+--build-from-source`, then `brew test`, then `brew audit --strict`. If this channel
+can ship a formula that does not install it is not a fallback but a second way to
+fail, so any of the three failing takes the job down before the push step is reached;
+they are separate steps so the log names which property broke. They address the
+formula **by name out of a throwaway `brew tap-new --no-git` tap**, for the reason
+[above](#the-homebrew-formula-a-generator-and-no-tap-yet): `brew audit [path ...]` is
+disabled. Measured locally on Homebrew 6.0.21-34-ga8820d0 against the formula rendered
+for 0.25.4 — `brew tap-new --no-git ralphci/preflight`, the copy, `brew install
+--dry-run --build-from-source ralphci/preflight/ralph` (which resolves `node` as the
+declared dependency), `brew audit --strict` (exit 0, no output) and `brew style`
+("1 file inspected, no offenses detected") all succeed. Whether the *real* build
+succeeds on a runner is what the step is there to find out, not something asserted
+here.
+
+**The push is gated on a job-level `env` boolean, which is why this was mergeable
+before the tap existed.** `HOMEBREW_TAP_TOKEN` is a fine-grained PAT scoped to
+contents:write on the tap alone — `GITHUB_TOKEN` cannot write to another repository
+whatever scopes it is given — and it does not exist yet (#203). `secrets` is **not**
+one of the contexts a step-level `if` can read, so testing it there would resolve to
+the empty string and skip the step forever, *including after the secret landed*. A
+job-level `env` can read `secrets`, so `TAP_PUSH_ENABLED: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}`
+turns presence into the string `"true"` once and the step reads `env.`. Both
+consequences are wanted: green on main today, self-enabling the moment the secret
+appears, no follow-up PR. The spec finds that boolean by its shape rather than by its
+name, and asserts no `if:` in the job mentions `secrets.` at all.
+
+The job takes `permissions: contents: read` and **no `id-token`**: the checkout is
+this repository's, the tap is read anonymously, the push uses the PAT, and nothing
+here speaks OIDC — granting a signing capability to the one job that runs a build over
+bytes fetched from the network would be scope for nothing. The push uses
+`HEAD:refs/heads/main` rather than `git push origin main`, because the first release
+pushes into an empty repository where the branch only starts existing with that
+commit; the explicit refspec covers that case and the ordinary one identically.
+
+The spec is `test/homebrew-release-job.test.js` (31 tests). It parses the workflow
+with `yaml`, added as a **devDependency** — `package.json`'s `files` allow-list means
+it never ships — because the claims #202 makes are claims about the resolved graph and
+the step order, and a grep for `needs: release-please` would pass just as happily on
+`needs: [release-please, publish]`. Everything about the tap probe is driven for real
+against taps the spec builds itself. Two of its assertions are about **prose**, which
+is unusual here and deliberate: the sibling relationship and the red-run decision are
+both things a later reader would "fix" if the reason were not written at the edge, so
+the job's own comment block is swept for them.
