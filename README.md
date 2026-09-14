@@ -131,14 +131,20 @@ ran it. The `cached` row answers "am I current?", and it has three readings:
 something newer, `0.22.0 — up to date` (green) when it holds the version you
 already have — or an older one, since a local build ahead of the registry is not
 stale — and `unknown (no update check cached yet)` when nothing usable is
-cached. That number is **read** from the same global `update-check.json` the
-weekly check writes, whether that check ran under `ralph start` or under a
-scheduled `ralph cycle` (see [Updating Ralph](#updating-ralph)): `doctor` never
-queries the registry, never writes that file, and applies neither of the two
-7-day windows it holds — it reports whatever the last check left behind, however
-old, and running it neither refreshes the check nor spends the week's update
-question. That keeps it usable offline and on a half-broken install, which is
-when you reach for it.
+cached for this copy. That number is **read** from the same global
+`update-check.json` the weekly check writes, whether that check ran under
+`ralph start` or under a scheduled `ralph cycle` (see
+[Updating Ralph](#updating-ralph)): `doctor` never queries the registry, never
+writes that file, and applies neither of the two 7-day windows it holds — it
+reports whatever the last check on its own channel left behind, however old, and
+running it neither refreshes the check nor spends the week's update question. That keeps it usable
+offline and on a half-broken install, which is when you reach for it. What it
+will not do is report a number **another channel's** copy of Ralph cached: the
+file records which channel answered alongside the version, and `doctor` reads
+only the one its own install's channel resolved, so on a machine carrying both an
+npm and a Homebrew Ralph the row reads `unknown (no update check cached yet)`
+rather than the other copy's answer (see
+[Where the check keeps its state](#where-the-check-keeps-its-state)).
 
 The `channel` row directly under it says **which channel this copy was installed
 from**, and it is there because the answer is what makes the row above it
@@ -377,7 +383,9 @@ away.
 The `update` row is served **entirely from the cache** the weekly check already
 keeps (see [Where the check keeps its state](#where-the-check-keeps-its-state)),
 so the banner makes no registry query of its own and costs the first paint
-nothing: on a machine where that check has never run there is simply no row. It
+nothing: on a machine where that check has never run there is simply no row, and
+none either where the only version cached was resolved by a Ralph installed from
+**another channel** — a release this copy's own updater could not fetch. It
 appears only when what is cached is **strictly newer** than what you have — the
 same comparison behind [the weekly check](#the-weekly-check)'s notice, so the box
 and the notice can never disagree about what counts as newer, though a single run
@@ -2005,8 +2013,10 @@ before every run may not spend a spawn. Skipping the `npm root -g` probe that
 [`ralph update`](#ralph-update) runs gives up only the confirmation that a path
 is npm's *own* global root — an unplaceable layout asks the same registry and
 names the same `npm i -g @lucasfe/ralph` — so the notice reads the same either
-way. And a run inside the 7-day window with nothing newer to report never works
-the layout out at all.
+way. A run inside the 7-day window works the layout out too, even with nothing
+newer to report: whether the cached version is this copy's channel's answer at
+all cannot be decided without it. It is the same path matching and the same two
+probes, and still nothing that can spawn.
 
 Asking your own channel means a Homebrew install goes **quiet about a release
 the tap has not picked up yet**: the notice tracks the formula, so a version
@@ -2121,11 +2131,23 @@ one that never expires.
 
 The cached `latest_version` is **whatever channel the last check asked** — its
 own install's, so a Homebrew copy caches the tapped formula's version and every
-other layout the registry's. The file records only the version, never which
-channel answered, so on a machine carrying two Ralph installs it holds whichever
-one ran last: for up to a week, the notice, `ralph doctor`'s `cached` row and
-`ralph start`'s `update` row can all be reporting the other install's channel.
-One install per machine — the ordinary case — never sees this.
+other layout the registry's. The file records **which channel answered** beside
+it, in a `latest_version_channel` field holding `npm` or `brew`, and a copy of
+Ralph only ever reads back a version its own channel resolved. So on a machine
+carrying two Ralph installs neither reports the other's number: the notice,
+`ralph doctor`'s `cached` row and `ralph start`'s `update` row go quiet —
+`unknown (no update check cached yet)` in `doctor`'s box — rather than offer a
+release the channel they would name cannot install. A file written before that
+field existed belongs to no channel at all, so both copies read nothing from it
+once, and the next open window records who answered. One install per machine —
+the ordinary case — never sees any of this.
+
+What such a machine does pay is the other side of one shared file: whichever copy
+runs first spends the week's version query, so a copy that always runs second can
+go without a notice for as long as that pattern holds, not just for a week. It
+still updates normally — `ralph update` asks its own channel there and then, and
+reads none of this file — and the notice arrives in the first week that copy
+reaches the query first.
 
 The file is separate from the credential dotenv (`ralph/.env`) in that same
 directory, which the check never reads or writes — and it lives outside your
@@ -2137,8 +2159,8 @@ not a knob. `ralph doctor` reads the update-check file for the `cached` row of
 its identity box, and only reads it: it makes no registry query and stamps
 neither window, so running `doctor` neither refreshes the weekly check nor
 consumes the week's question. The `update` row of the identity box
-[`ralph start`](#quick-start) opens with reads it the same way — one field,
-`latest_version`, no query and no stamp, so it can never move either window — with
+[`ralph start`](#quick-start) opens with reads it the same way — the same version
+and its channel, no query and no stamp, so it can never move either window — with
 one difference from `doctor`: it is silenced by
 [`RALPH_NO_UPDATE_CHECK`](#environment-variables), and on that path the file is
 not opened at all. `doctor`'s row has a switch of its own instead, and it is the

@@ -521,6 +521,8 @@ describe('startCommand', () => {
         last_check_at: new Date(later).toISOString(),
         last_prompted_at: null,
         latest_version: '0.2.0',
+        // #215: the refreshed number is filed under the channel that answered the query.
+        latest_version_channel: 'npm',
       })
     })
 
@@ -850,7 +852,16 @@ describe('startCommand', () => {
     const cacheOf = (cacheFs, processEnv = {}) =>
       readVersionCache({ fs: cacheFs, home: HOME, processEnv })
 
-    const seededCache = (cache) => Volume.fromJSON({ [CACHE_PATH]: JSON.stringify(cache) }, '/')
+    // #215: a cached version is served only to the channel that resolved it, so a seed names one.
+    // Every run in this block resolves the npm query (`makeExec` answers `npm view`, and no run is
+    // placed in a Homebrew Cellar), and the stamp is spread in FIRST so a test can still describe
+    // an unattributed file by passing the field itself. Without it the throttled cases below would
+    // be silent for want of an attribution rather than because a window was closed.
+    const seededCache = (cache) =>
+      Volume.fromJSON(
+        { [CACHE_PATH]: JSON.stringify({ latest_version_channel: 'npm', ...cache }) },
+        '/',
+      )
 
     it('being prompted writes last_prompted_at to the global cache', async () => {
       const cacheFs = new Volume()
@@ -860,6 +871,7 @@ describe('startCommand', () => {
         last_check_at: new Date(T0).toISOString(),
         last_prompted_at: new Date(T0).toISOString(),
         latest_version: '0.2.0',
+        latest_version_channel: 'npm',
       })
     })
 
@@ -922,6 +934,7 @@ describe('startCommand', () => {
         last_check_at: new Date(T0).toISOString(),
         last_prompted_at: new Date(T0 - DAY).toISOString(),
         latest_version: '0.2.0',
+        latest_version_channel: 'npm',
       })
     })
 
@@ -939,6 +952,9 @@ describe('startCommand', () => {
         last_check_at: new Date(T0 - DAY).toISOString(),
         last_prompted_at: new Date(T0).toISOString(),
         latest_version: '0.2.0',
+        // #215: carried through from the seed — a throttled run re-stamps the prompt window and
+        // touches neither the number nor the channel it belongs to.
+        latest_version_channel: 'npm',
       })
     })
 
@@ -1009,6 +1025,9 @@ describe('startCommand', () => {
         'last_check_at',
         'last_prompted_at',
         'latest_version',
+        // #215: a fourth key, and the claim is unchanged — the answer to the question is still
+        // remembered by the window alone, never by a `declined_version` field.
+        'latest_version_channel',
       ])
       expect(raw.declined_version).toBeUndefined()
     })

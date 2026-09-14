@@ -1899,7 +1899,7 @@ run, which is what it did before. The tradeoff pinned here is the reason the rev
 for, and the section below is where it now lives. What outlasted it is the verdict
 shape: an update that starts and installs nothing comes back `accepted: true` with
 `installed: false` — the branch that prints the neutral
-`⚠️  Update did not complete` line at `lib/commands/start.js:813` and
+`⚠️  Update did not complete` line at `lib/commands/start.js:849` and
 `lib/commands/cycle.js:325`, both of which read `accepted` and were left alone by
 both issues. The README's enumerations of what produces that line still name a
 channel that reports nothing newer alongside the failed install and the two refusals;
@@ -2040,8 +2040,9 @@ two defects the bullets above now describe as fixed — the by-reference channel
 the boolean memo — and pinned four behaviours as **documented rather than fixed**: a
 custom `PNPM_HOME` and an ambiguous multi-manager path classify `unknown` and are
 therefore told to run npm (the pre-#200 marker-table limitation, which #200's framing
-does not close); the version cache carries no channel, so on a mixed-install machine
-an npm-layout run can print, for up to a week, the version a Homebrew run cached; a
+does not close); the version cache carried no channel, so on a mixed-install machine
+an npm-layout run could print, for up to a week, the version a Homebrew run cached
+(**closed by #215**, below); a
 descriptor's `format` is never validated, so a half-added channel burns the week in
 silence; and `latestSource` is resolved even when there is no `exec` to use it.
 
@@ -2076,7 +2077,7 @@ the argument:
 
 - doctor's pinned bare-specifier set is **unchanged** — `node:fs`, `node:os`,
   `node:path`, `picocolors`, the same four before and after, asserted at
-  `doctor.version-line.qa.test.js:1061`. That file was **not edited by #201**.
+  `doctor.version-line.qa.test.js:1105`. That file was **not edited by #201**.
 - the transitive closure of doctor's *relative* imports grew by exactly **one
   module**, 17 → 18, and the new one is `lib/install-markers.js`.
   `lib/install-target.js` and `lib/paths.js` are still off it.
@@ -2282,3 +2283,86 @@ against taps the spec builds itself. Two of its assertions are about **prose**, 
 is unusual here and deliberate: the sibling relationship and the red-run decision are
 both things a later reader would "fix" if the reason were not written at the edge, so
 the job's own comment block is swept for them.
+
+### The channel a cached version belongs to (#215)
+
+#199–#201 taught the CLI to ask its own channel, name its own command and report which
+channel it is. The file all of that writes did not follow:
+`~/.config/ralph/update-check.json` held one un-keyed `latest_version`, so on a machine
+carrying an npm copy and a Homebrew copy — and the second channel exists so a refused
+`npm publish` cannot stop a release from being installable, which is exactly why the two
+hold different versions on purpose — whichever copy ran the weekly check last owned that
+field. The reported symptom was
+`cached 0.23.0 — up to date` beside `channel Homebrew`: npm's last accepted version, a
+number the tap cannot produce. The harmful direction is the same field read the other
+way — the brew copy resolves the tap's newer version, the npm copy reads it and nags
+`npm i -g @lucasfe/ralph@latest`, which serves 0.23.0.
+
+**A stamp beside the value, not a map keyed by channel.** The on-disk shape is now
+exactly four keys — `last_check_at`, `last_prompted_at`, `latest_version`,
+`latest_version_channel` — and `lib/version-cache.js` owns both halves of the rule.
+`cachedVersionFor(cache, channel)` is the read: a version is served only on exact,
+trimmed, non-blank channel equality, so a reader that names no channel gets nothing, and
+a legacy file — a bare `latest_version` with no stamp — is attributed to nobody rather
+than to whoever is asking. `withLatestVersion` is the write, and it moves the version
+and the stamp as one pair: an unusable version clears both fields, and an unattributable
+one is written unattributed rather than filed under a channel that did not answer. The
+map (`latest_version_by_channel`) is argued down in that file's own comment — every copy
+queries exactly one channel, so a second entry could only ever be another copy's
+leftovers, and the shape change would reach every consumer of the field since #24.
+
+**The two throttle windows stay global**, neither stamped nor keyed: #24 caps a
+machine's network and #26 a user's attention, and two copies on one machine are one
+user. The cost is measured rather than hedged — a machine with a habitual first-runner
+starves the other copy **indefinitely**, six windows with zero sightings of the tap's
+version at `lib/update-check.cache-channel.qa.test.js:767` — and is tracked as **#228**
+rather than fixed here.
+
+**Two derivations of one id, joined from outside.** `VERSION_CHANNEL` (`npm`, `brew`)
+and `versionChannelFor({ ralphHome })` live in `lib/install-markers.js`: the READ side,
+path segments only, no filesystem probe at all — not even the two `describeInstallChannel`
+takes — and it always names a channel, since an ambiguous or unplaceable layout answers
+npm exactly as `classifyInstall`'s `unknown` carries `latest: NPM_VERSION_QUERY`. The
+WRITE side is `lib/install-target.js`, which decorates each store row's version query
+with that row's own `versionChannel` at the `GLOBAL_STORES` join; the npm-shaped rows
+keep sharing the frozen `NPM_VERSION_QUERY` **by identity**, so only Homebrew's
+descriptor is rebuilt. `lib/update-check.js` may not import either module — its
+import-graph pin is `lib/update-check.channel.qa.test.js:514`, which sweeps that file's
+comment-free source for `install-target`, `classifyInstall` and the string `brew` — so
+it spells `channel: 'npm'` on `NPM_VERSION_QUERY` for itself, and
+`lib/update-check.cache-channel.test.js` joins the two spellings from the outside,
+exactly as `test/homebrew-formula.test.js` joins the formula name's.
+
+**Who answered and who is reading are different questions.** `resolveUpdateDecision`'s
+`latestSource` now defaults to `NPM_VERSION_QUERY`, so *omitting* it names npm while a
+caller that tried and failed to name a channel reaches `undefined`. For that `undefined`
+the write stamps npm — `fetchLatestVersion` really does substitute the npm query, so npm
+is what replied — and the read answers null, because an unresolvable source is no
+evidence about which copy of Ralph is asking. Keep the npm fallback on the read and a
+brew copy reads npm's number again, which is the bug.
+
+**One cost flipped.** The channel is resolved **above** the throttle branch now: a
+throttled run does not query, but it does *serve* a version, and a version cannot be
+served without naming its owner. So a throttled run with nothing to report performs one
+path-only classification where it performed none —
+`lib/update-gate.notice-command.test.js:306` and
+`lib/update-gate.notice-command.qa.test.js:568` are the two counts this slice flipped.
+It still spawns nothing: `runUpdateGate` classifies with `exec: null`.
+
+At the surface, `ralph doctor`'s `cached` row derives its channel from the same
+`ralphHome` its `channel` row is derived from, so the two rows are one answer about one
+install — and at no new syscall, because that derivation takes no probe. `ralph start`
+grew an injectable `ralphHome` (defaulted to `RALPH_HOME`, which that file already
+imports) and reads the cache through the same `cachedVersionFor`, so the banner's
+`update` row and the diagnostic's row cannot come to disagree about whose number they
+may report.
+
+The specs are `lib/version-cache.channel.test.js` (14 tests — the field, the read rule
+and the paired write), `lib/update-check.cache-channel.test.js` (25 — the decision on
+the throttled and the querying path, and the two spellings of `npm` joined) and
+`lib/commands/doctor.cached-channel.test.js` (10 — the reported regression at doctor's
+own surface). The QA pass added `lib/version-cache.channel.qa.test.js` (45),
+`lib/install-markers.version-channel.qa.test.js` (60),
+`lib/update-check.cache-channel.qa.test.js` (43),
+`lib/update-gate.cache-channel.qa.test.js` (21) and
+`lib/commands/start.cache-channel.qa.test.js` (7).
