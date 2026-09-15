@@ -33,6 +33,12 @@ import { templatePath } from '../lib/paths.js'
 // would leave nothing to be reachable, and one that committed in the MAIN tree
 // would be testing the bug.
 //
+// #219 — and the tree the agent wakes in is SEEDED. The last describe drives the same
+// fixture with a gitignored `.env.local` and a `node_modules/` in the main root, and
+// asks the agent stub what it found: real git is what makes those two absent from a
+// fresh checkout in the first place, so the seed step has nothing to prove against a
+// stub either.
+//
 // HERMETIC: nothing here touches this repository. The worktrees created live under
 // the fixture's own `.ralph/worktrees/`, and afterEach removes the whole sandbox.
 
@@ -96,8 +102,13 @@ beforeEach(() => {
   execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: workdir })
   // The same two entries this repo's own .gitignore carries, so the worktrees the
   // loop creates under .ralph/ and the transcripts under logs/ do not show up as
-  // untracked content in the `git status` assertions below.
-  writeFileSync(join(workdir, '.gitignore'), '.ralph/\nlogs/\n')
+  // untracked content in the `git status` assertions below — plus `.env.local`, the
+  // #219 subject: a fresh worktree holds only TRACKED files, so a gitignored one has
+  // to be seeded into it or the project's tests cannot run there. MEASURED on git
+  // 2.50.1 (Apple Git-155): `git worktree add` into a repo whose .gitignore lists
+  // `.env.local` and `node_modules/` produces a directory holding `.git`, `.gitignore`
+  // and `README.md` and neither of those two.
+  writeFileSync(join(workdir, '.gitignore'), '.ralph/\nlogs/\n.env.local\nnode_modules/\n')
   writeFileSync(join(workdir, 'README.md'), 'seed\n')
   execFileSync('git', ['add', '.'], { cwd: workdir })
   execFileSync('git', ['commit', '-q', '-m', 'chore: seed'], { cwd: workdir })
@@ -117,6 +128,15 @@ beforeEach(() => {
   // thing `git checkout dev` in the old Cleanup block put at risk. An untracked
   // file would survive a branch switch and prove much less.
   writeFileSync(join(workdir, 'README.md'), 'seed\nlocal edit not committed\n')
+
+  // THE GITIGNORED CONFIG A PROJECT'S TESTS NEED (#219). Written after the commit on
+  // purpose: it is ignored, so it is in no tree and no `git worktree add` can produce
+  // it. The default seed list is what puts it in the worktree.
+  writeFileSync(join(workdir, '.env.local'), 'ANTHROPIC_API_KEY=sk-local\n')
+  // …and the one gitignored directory that is deliberately NOT seeded, so the
+  // assertion that the worktree has none of it is not vacuous.
+  mkdirSync(join(workdir, 'node_modules', 'left-pad'), { recursive: true })
+  writeFileSync(join(workdir, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1\n')
 
   writeFileSync(join(sandbox, 'count.txt'), '1')
 
@@ -138,6 +158,16 @@ exec "${REAL_NODE}" "$@"
 cat > "${join(sandbox, 'prompt.txt')}"
 pwd -P > "${join(sandbox, 'agent-cwd.txt')}"
 git rev-parse --abbrev-ref HEAD > "${join(sandbox, 'agent-branch.txt')}"
+ls -a > "${join(sandbox, 'agent-ls.txt')}"
+# #219: what the seed step left in the tree this invocation woke in. The append is
+# the write-through probe — a symlinked seed would put it in the MAIN root's file,
+# and the tree itself is deleted before the assertions can look at it.
+if [ -e .env.local ]; then
+  cp .env.local "${join(sandbox, 'agent-env-local.txt')}"
+  if [ -L .env.local ]; then echo yes > "${join(sandbox, 'agent-env-local-link.txt')}"
+  else echo no > "${join(sandbox, 'agent-env-local-link.txt')}"; fi
+  printf 'AGENT_WROTE=1\\n' >> .env.local
+fi
 echo "hello from the agent" > agent-file.txt
 git add agent-file.txt
 git commit -q -m "feat(issue-98): agent work"
@@ -279,6 +309,57 @@ describe('ralph.sh github arm — the issue is resolved in a worktree (#218)', (
     // above about reachability would be testing a branch the loop had deleted.
     runLoop()
     expect(git(['branch', '--list', 'issue-98']).trim()).toContain('issue-98')
+  })
+})
+
+describe('ralph.sh github arm — the worktree is seeded with the gitignored files (#219)', () => {
+  const ENV_LOCAL = 'ANTHROPIC_API_KEY=sk-local\n'
+
+  it('gives the agent the gitignored .env.local the main root has', () => {
+    const res = runLoop()
+    expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+    // The agent read this out of its own cwd, which the test above pins to the
+    // worktree — so the file was in the tree `git worktree add` had just made.
+    expect(readIf(join(sandbox, 'agent-env-local.txt'))).toBe(ENV_LOCAL)
+  })
+
+  it('seeds a COPY: the agent writing to it cannot reach the main root', () => {
+    runLoop()
+    expect(readIf(join(sandbox, 'agent-env-local-link.txt')).trim()).toBe('no')
+    // The agent appended a line to its own copy. The user's file is byte-identical.
+    expect(readFileSync(join(root, '.env.local'), 'utf8')).toBe(ENV_LOCAL)
+  })
+
+  it('seeds nothing when the knob is blank, and the run still completes', () => {
+    // Passed on the CHILD env for the reason runLoop's comment gives: the knob is
+    // RALPH_*, so test/setup/hermetic-env.js deletes it from the worker by prefix.
+    const res = runLoop({ extraEnv: { RALPH_WORKTREE_SEED_FILES: '' } })
+    expect(res.signal).toBeNull()
+    expect(existsSync(join(sandbox, 'agent-env-local.txt'))).toBe(false)
+    // Anti-vacuity: the agent ran and did its work, it just had no .env.local.
+    expect(git(['log', '--format=%s', 'issue-98'])).toContain('feat(issue-98): agent work')
+  })
+
+  it('seeds only what the knob names', () => {
+    const res = runLoop({ extraEnv: { RALPH_WORKTREE_SEED_FILES: '.mcp.json' } })
+    expect(res.signal).toBeNull()
+    // .mcp.json does not exist in this fixture — an absent entry is a no-op — and
+    // .env.local is no longer on the list, so nothing was seeded.
+    expect(existsSync(join(sandbox, 'agent-env-local.txt'))).toBe(false)
+  })
+
+  it('does not seed node_modules — the agent installs in the worktree instead', () => {
+    const res = runLoop({ extraEnv: { INSTALL_CMD: 'npm ci' } })
+    expect(res.signal).toBeNull()
+    const entries = readIf(join(sandbox, 'agent-ls.txt')).trim().split('\n')
+    expect(entries).toContain('.env.local')
+    expect(entries).not.toContain('node_modules')
+    // …while the MAIN root has one, so the negative above is about the worktree and
+    // not about a fixture that never had the directory.
+    expect(existsSync(join(root, 'node_modules', 'left-pad', 'index.js'))).toBe(true)
+    // And the per-issue install is what pays for it: step 0 of the prompt, run in the
+    // cwd the test above pins to the worktree.
+    expect(readIf(join(sandbox, 'prompt.txt'))).toContain('run `npm ci`')
   })
 })
 
