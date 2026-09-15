@@ -38,6 +38,10 @@ import { templatePath } from '../lib/paths.js'
 //   • The transcript has to survive the teardown even when the agent wandered out of
 //     the tree it was given or deleted that tree outright.
 //   • folder mode must be untouched: no worktree, no override in its prompt.
+//   • Since #219 the create path also SEEDS the tree with a configured list of gitignored
+//     files, and a refused entry on that list must cost its own file and nothing more —
+//     the loop turns a failed create into `break`, so a throw there would stop every
+//     future iteration. Section 6 asks that of the real loop, with a real repository.
 //
 // HERMETIC: every fixture is a fresh repository under the OS temp dir, with its own
 // bare `origin` beside it, and afterEach removes the whole sandbox. Nothing here runs
@@ -692,9 +696,16 @@ describe('the shape of the tree the agent wakes up in (#218 QA)', () => {
     expect(listing).toContain('.git')
     // The user's untracked scratch file is NOT in the worktree, which is the point of
     // cutting from origin/DEV_BRANCH — and also the cost: anything a project needs but
-    // does not track (a .env.local, an installed node_modules) has to be re-made by
-    // the prompt's own dependency step on every iteration.
+    // does not track has to be re-made in the tree. Since #219 that cost is split. A
+    // short, configured list of gitignored FILES is COPIED in by the create path itself
+    // (`RALPH_WORKTREE_SEED_FILES`, shipping `.env.local .mcp.json` — see section 6
+    // below); everything else, `node_modules` first among them, is still the prompt's own
+    // dependency step on every iteration, and a directory is refused whatever the list
+    // says. This fixture's main root holds NEITHER default, so the default list seeds
+    // nothing here (an absent entry is a silent no-op) and the assertion below still
+    // holds — section 6 builds a repository that has one.
     expect(listing).not.toContain('scratch.txt')
+    expect(listing).not.toContain('.env.local')
     // And the checkout is of the BASE, so the user's uncommitted edit is not in it.
     const readme = git(['show', 'origin/main:README.md'])
     expect(readme).toBe('seed\n')
@@ -801,5 +812,129 @@ exit 0
       existsSync(sandboxFile('gh-calls.log')),
       `gh was invoked in folder mode:\n${readIf(sandboxFile('gh-calls.log'))}`,
     ).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 6. The seed step, through the whole loop (#219 QA)
+// ---------------------------------------------------------------------------
+//
+// test/loop.worktree.test.js owns the happy path here: the agent finds `.env.local`, it is
+// a copy rather than a link, a blank knob seeds nothing, `node_modules` is absent from the
+// agent's cwd. What is left for this file is the decision the dev's spec can only assert
+// against an injected stderr — that a BAD ENTRY costs its own file and never the run.
+//
+// It has to be asked here, of the real loop, because the answer is a property of the shell:
+// templates/ralph.sh:745-749 reads `if ! issue_worktree=$(node lib/worktree.js create …)`
+// and turns a failure into `❌ … Aborting the loop.` plus `break`. So the difference between
+// a warning and a throw inside the seed step is the difference between one missing file and
+// every future iteration of every issue stopping until a human edits a config line. A unit
+// test that injects a stderr double cannot see that difference; this can.
+//
+// The refusals are also the only #219 behaviour a user meets by accident (a typo, a path
+// copied out of a shell history, a `node_modules` written on the line because it is the
+// obvious thing to want), so they are worth one real run each.
+
+describe('a refused seed entry costs one file, not the loop (#219 QA)', () => {
+  // A PROJECT's own gitignored config, deliberately not a ralph knob: templates/ralph.sh
+  // sources `.env.local` from the main root itself (line 124), so a ralph name in here
+  // would change the loop's behaviour and blur what the assertions are about. What the
+  // seed step is for is the OTHER reader of this file — the project's test command, which
+  // runs in the worktree.
+  const ENV_LOCAL = 'TEST_DATABASE_URL=postgres://localhost/ralph_qa_test\n'
+
+  // The #219 shape of the fixture, built per test rather than in the shared beforeEach so
+  // the sections above keep the repository they were written against. The .gitignore edit
+  // is committed with a PATHSPEC and then pushed, so `origin/main` is what a worktree
+  // checks out and neither ignored path can arrive by any route but the seed step.
+  //
+  // The pathspec is load-bearing: the fixture leaves `tracked-and-staged.txt` in the INDEX
+  // on purpose. MEASURED on git 2.50.1 in a throwaway repo with one staged file and one
+  // edited .gitignore — `git commit -m … -- .gitignore` leaves `git diff --cached
+  // --name-only` printing `staged.txt`, while `git add .gitignore && git commit` produces
+  // a commit naming BOTH files and an empty index. A plain commit here would therefore
+  // destroy the state section 1 compares against.
+  function seedableRepo() {
+    writeFileSync(join(workdir, '.gitignore'), '.ralph/\nlogs/\n.env.local\nnode_modules/\n')
+    const msg = 'chore: ignore the local config'
+    execFileSync('git', ['commit', '-q', '-m', msg, '--', '.gitignore'], { cwd: workdir })
+    execFileSync('git', ['push', '-q', 'origin', 'main'], { cwd: workdir })
+    writeFileSync(join(workdir, '.env.local'), ENV_LOCAL)
+    mkdirSync(join(workdir, 'node_modules', 'left-pad'), { recursive: true })
+    writeFileSync(join(workdir, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1\n')
+    // Inventories the tree it woke in, keeps a copy of whatever `.env.local` it was given,
+    // and then does the work — so one run answers "what was seeded?" and "did the iteration
+    // finish?" at once.
+    writeStub(
+      'claude',
+      `#!/bin/bash
+${record()}
+ls -A > "${sandboxFile('agent-ls.txt')}"
+if [ -f .env.local ]; then cp .env.local "${sandboxFile('agent-env-local.txt')}"; fi
+echo "hello from the agent" > agent-file.txt
+git add agent-file.txt
+git commit -q -m "feat(issue-98): agent work"
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`,
+    )
+  }
+
+  it('warns about every refused entry, seeds the good one, and still reports 1 ok', () => {
+    seedableRepo()
+    const before = treeSnapshot()
+    const res = runLoop({
+      // On the CHILD env: the knob is RALPH_*, so test/setup/hermetic-env.js has already
+      // deleted it from this worker by prefix.
+      extraEnv: {
+        RALPH_WORKTREE_SEED_FILES: '/etc/hosts ../../../outside.env .env.local',
+      },
+    })
+
+    expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+    // THE POINT: the iteration completed. A throw out of the seed step would have printed
+    // the abort line and counted a failure instead.
+    expect(res.stdout, `stderr:\n${res.stderr}`).toMatch(/1 ok, 0 failed/)
+    expect(res.stdout).not.toContain('could not create a worktree')
+
+    // Each refused value is named on the loop's stderr, which is where a human debugging a
+    // config line will look.
+    expect(res.stderr).toMatch(/refusing/)
+    expect(res.stderr).toContain('/etc/hosts')
+    expect(res.stderr).toContain('../../../outside.env')
+
+    // The legitimate entry landed, and nothing the refusals named did.
+    expect(readIf(sandboxFile('agent-env-local.txt'))).toBe(ENV_LOCAL)
+    const listing = readIf(sandboxFile('agent-ls.txt')).split('\n').filter(Boolean)
+    expect(listing).toContain('.env.local')
+    expect(listing).not.toContain('hosts')
+    expect(listing).not.toContain('outside.env')
+
+    // …and the seed step left the user's tree exactly as #218 promises: same branch, same
+    // HEAD, same porcelain, no reflog entry.
+    expect(treeSnapshot()).toEqual(before)
+    expect(readFileSync(join(root, '.env.local'), 'utf8')).toBe(ENV_LOCAL)
+  })
+
+  it('refuses node_modules when the config names it, and the run carries on without it', () => {
+    // The acceptance criterion is not "node_modules is off the default list" but "it cannot
+    // be put on it", so the interesting run is the one where a user has written it there.
+    seedableRepo()
+    const res = runLoop({
+      extraEnv: { RALPH_WORKTREE_SEED_FILES: 'node_modules .env.local', INSTALL_CMD: 'npm ci' },
+    })
+
+    expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+    expect(res.stdout, `stderr:\n${res.stderr}`).toMatch(/1 ok, 0 failed/)
+    expect(res.stderr).toContain('node_modules')
+    expect(res.stderr).toContain('not a regular file')
+
+    const listing = readIf(sandboxFile('agent-ls.txt')).split('\n').filter(Boolean)
+    expect(listing).toContain('.env.local')
+    expect(listing).not.toContain('node_modules')
+    // Anti-vacuity in both directions: the main root HAS one (so the absence is about the
+    // refusal), and the agent was told to install in the tree it woke in.
+    expect(existsSync(join(root, 'node_modules', 'left-pad', 'index.js'))).toBe(true)
+    expect(readIf(sandboxFile('prompt.txt'))).toContain('run `npm ci`')
   })
 })

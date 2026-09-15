@@ -281,3 +281,43 @@ MERGE_POLL_MAX=40
 # Heavy triage path. 0 = off (the default): the heavy tier is unavailable
 # and triage falls back to Tier 1, so behavior is unchanged.
 RALPH_HEAVY_TIER=0
+
+# Gitignored files copied into each per-issue worktree, space- or comma-separated.
+# A GitHub-mode issue is resolved in a dedicated git worktree, and a worktree is a
+# CHECKOUT: what lands in it is what git TRACKS, so the ignored configuration a
+# project's tests need is missing there. This list is what gets copied in, from this
+# repository's root into the new worktree, right after it is created and before the
+# agent starts. The default names the two files Ralph itself knows about: your local
+# credentials and an untracked MCP server list.
+#
+# A LISTED FILE THAT DOES NOT EXIST IS A SILENT NO-OP — most repos have one of the
+# two and not the other, so a warning per iteration would be noise about nothing
+# being wrong. What DOES warn, once, naming the value, is an entry Ralph refuses to
+# follow: an absolute path, a path that resolves outside this repository or lands
+# outside the worktree (`../`), anything that is not a regular file — a DIRECTORY
+# included — `.git` or anything under it (that is the pointer file git wrote into the
+# worktree), or a path that a symlinked directory inside the worktree would redirect
+# out of the tree. The run continues without that file rather than stopping — a typo
+# on this line must not be able to abort the loop.
+#
+# WHAT LANDS IN THE WORKTREE IS ALWAYS A REGULAR FILE OF ITS OWN, never a link back to
+# a file of yours. Where the checkout itself put a symlink at a seeded path — a link
+# this repository TRACKS — that link is REPLACED with a copy rather than written
+# through, and the replacement is named on stderr as well.
+#
+# A NAME WITH A BLANK OR A COMMA IN IT CANNOT BE LISTED HERE, because both are how
+# entries are separated. That is the disclosed cost of accepting either separator: a
+# `.env local` needs renaming, not quoting, since the quotes belong to the shell and
+# are gone before Ralph reads the value.
+#
+# EMPTY MEANS SEED NOTHING (`RALPH_WORKTREE_SEED_FILES=""`), which is a different
+# answer from deleting the line: a file that never assigns the name leaves Ralph's own
+# default in place, while an assignment of "" is a value and turns the step off.
+#
+# `node_modules` IS NOT ON THIS LIST AND CANNOT BE PUT ON IT — it is a directory, and
+# directories are refused. That is deliberate rather than an oversight: a symlinked
+# `node_modules` would let a branch that bumps a dependency mutate the one you are
+# developing against, which is the whole reason the work happens in a worktree. Step 0
+# of the agent's own sequence runs INSTALL_CMD (above) inside the worktree instead, so
+# each issue pays for its own install. That cost is accepted.
+RALPH_WORKTREE_SEED_FILES=".env.local .mcp.json"
