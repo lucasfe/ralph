@@ -130,6 +130,7 @@ exit 0
       'node',
       `#!/bin/bash
 case "$*" in
+  *worktree.js*) exec "${REAL_NODE}" "$@" ;;
   *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
 esac
 exit 0
@@ -211,6 +212,7 @@ exit 0
       'node',
       `#!/bin/bash
 case "$*" in
+  *worktree.js*) exec "${REAL_NODE}" "$@" ;;
   *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
 esac
 exit 0

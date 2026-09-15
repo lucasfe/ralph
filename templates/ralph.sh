@@ -127,7 +127,15 @@ if [ -f .env.local ]; then
   set +a
 fi
 
-mkdir -p logs
+# ABSOLUTE, and derived exactly once (#218). github mode now spawns the agent with
+# cwd set to a per-issue git worktree, and that worktree is DELETED at the end of the
+# iteration — so a relative `logs/…` handed to the agent's stream would resolve inside
+# the worktree and the transcript would be removed along with it, taking the one record
+# of what the agent did. Anchoring every log path to $PROJECT_ROOT (the MAIN repo root,
+# which this script never leaves) is what keeps them. Same directory as before: the
+# loop's own cwd IS $PROJECT_ROOT, so `logs/x` and `$LOG_DIR/x` name one file.
+LOG_DIR="$PROJECT_ROOT/logs"
+mkdir -p "$LOG_DIR"
 
 # --- Coding-agent resolution (#554) -----------------------------------------
 # Resolve which coding-agent CLI to drive (claude, the default, or codex) and
@@ -208,12 +216,29 @@ export RALPH_RESOLVED_AGENT
 # happens in Node (capture-issue-event.js via parseAgentStream), never here.
 #
 # Args: $1 = prompt-builder script path, $2 = log file path, $3 = raw jsonl path
-# (optional). Sets the global `claude_failed` to "1" when the agent exits
+# (optional), $4 = the directory to spawn the AGENT in (optional, defaults to
+# $PROJECT_ROOT). Sets the global `claude_failed` to "1" when the agent exits
 # non-zero, else "0" (name kept for the telemetry sidecar's RALPH_CLAUDE_EXIT).
+#
+# $4 MOVES ONE PIPELINE ELEMENT, NOT THIS SCRIPT (#218). github mode resolves each
+# issue in its own git worktree and the agent has to run inside it; the loop itself
+# must stay in the main repo root, because everything else here — the queue reads, the
+# state file, the log paths, the telemetry sidecar — is anchored there. So the `cd`
+# lives in a SUBSHELL around the agent element alone. `exec` then replaces that
+# subshell with the agent process, which is what keeps the agent's own exit status as
+# the subshell's status, and therefore keeps ${PIPESTATUS[1]} meaning what it has
+# always meant. A `cd` that fails short-circuits the `&&` and the subshell exits
+# non-zero, which reads as an agent failure — the correct outcome, since no agent ran.
 run_agent_stream() {
   prompt_script="$1"
   log_file="$2"
   raw_jsonl="${3:-}"
+  # `local`, unlike the three assignments above it: the main loop keeps a global of this
+  # exact name (set per iteration, then passed back in as $4), so an unlocalized
+  # assignment here would write straight through to it — and would overwrite it with
+  # $PROJECT_ROOT for any caller that passes no $4, such as the config-validation call
+  # below. The three above are pre-existing globals from before #218 and are left alone.
+  local agent_cwd="${4:-$PROJECT_ROOT}"
   local stream_filter="$RALPH_AGENT_STREAM_FILTER"
   # Truncate the unique per-issue log ONCE up front, then have BOTH the stderr
   # tee and the stdout tee APPEND. This removes a truncate-vs-append race: if
@@ -227,7 +252,7 @@ run_agent_stream() {
     # stays pipe element index 1 so ${PIPESTATUS[1]} exit detection is
     # unaffected (node|agent|tee|jq|tee → agent still index 1).
     node "$prompt_script" \
-      | "$RALPH_AGENT_CLI" "${RALPH_AGENT_ARGS[@]}" \
+      | ( cd "$agent_cwd" && exec "$RALPH_AGENT_CLI" "${RALPH_AGENT_ARGS[@]}" ) \
           2> >(tee -a "$log_file" >&2) \
       | tee "$raw_jsonl" \
       | jq -rR --unbuffered "$stream_filter" \
@@ -236,7 +261,7 @@ run_agent_stream() {
     # No raw path supplied (e.g. the config-validation call) — pipeline is
     # node|agent|jq|tee, agent still index 1.
     node "$prompt_script" \
-      | "$RALPH_AGENT_CLI" "${RALPH_AGENT_ARGS[@]}" \
+      | ( cd "$agent_cwd" && exec "$RALPH_AGENT_CLI" "${RALPH_AGENT_ARGS[@]}" ) \
           2> >(tee -a "$log_file" >&2) \
       | jq -rR --unbuffered "$stream_filter" \
       | tee -a "$log_file"
@@ -249,8 +274,14 @@ run_agent_stream() {
   fi
 }
 
+# Args: $1 = the log handle (an issue number, a task id, or a filesystem-safe Jira
+# key), $2 = the directory to spawn the agent in (optional; the folder and jira arms
+# pass nothing and get $PROJECT_ROOT, unchanged from before #218).
 run_agent_for_issue() {
-  run_agent_stream "$RALPH_PKG_DIR/lib/build-prompt.js" "logs/ralph-issue-$1.log" "logs/ralph-issue-$1.jsonl"
+  run_agent_stream "$RALPH_PKG_DIR/lib/build-prompt.js" \
+    "$LOG_DIR/ralph-issue-$1.log" \
+    "$LOG_DIR/ralph-issue-$1.jsonl" \
+    "${2:-$PROJECT_ROOT}"
 }
 # ---------------------------------------------------------------------------
 
@@ -298,7 +329,7 @@ if [ -f ralph.config.sh ]; then
   if [ "$needs_validate" = "yes" ]; then
     echo "==> Validating ralph.config.sh against the project manifests..."
     claude_failed=0
-    run_agent_stream "$RALPH_PKG_DIR/lib/build-validate-prompt.js" "logs/ralph-validate.log"
+    run_agent_stream "$RALPH_PKG_DIR/lib/build-validate-prompt.js" "$LOG_DIR/ralph-validate.log"
 
     if [ ! -f .ralph/state.json ]; then
       echo "❌ Validation did not produce .ralph/state.json. Aborting." >&2
@@ -667,8 +698,8 @@ while :; do
       RALPH_RUN_ID="$RALPH_RUN_ID" \
       RALPH_CLAUDE_EXIT="$claude_failed" \
       RALPH_DEV_BRANCH="${DEV_BRANCH:-}" \
-      RALPH_RAW_JSONL_PATH="logs/ralph-issue-$task_log_handle.jsonl" \
-      RALPH_STDERR_LOG_PATH="logs/ralph-issue-$task_log_handle.log" \
+      RALPH_RAW_JSONL_PATH="$LOG_DIR/ralph-issue-$task_log_handle.jsonl" \
+      RALPH_STDERR_LOG_PATH="$LOG_DIR/ralph-issue-$task_log_handle.log" \
       RALPH_AGENT="${RALPH_RESOLVED_AGENT:-claude}" \
       RALPH_CODEX_MODEL="${RALPH_CODEX_MODEL:-}" \
       RALPH_DURATION_MS="$issue_dur_ms" \
@@ -687,15 +718,67 @@ while :; do
     continue
   fi
 
+  # --- Per-issue git worktree (#218) ---------------------------------------
+  # The issue is resolved in a DEDICATED worktree at
+  # $PROJECT_ROOT/.ralph/worktrees/issue-$num, checked out on a new `issue-$num`
+  # branch cut from origin/$DEV_BRANCH, and the agent is spawned with its cwd set
+  # there. That is what lets the loop stop touching the user's own checkout: nothing
+  # in this run creates a branch in it, and nothing switches it.
+  #
+  # NO `git worktree` IS SPELLED HERE, deliberately: every worktree fact — the path,
+  # the refusals ($HOME, `/`, a relative root, anything inside `.git/`), the fetch,
+  # the base-ref fallback, the teardown — lives in lib/worktree.js, which is unit
+  # tested with an injected fs and git. Same shape as the folder queue, the jira queue
+  # and the agent bridge above.
+  #
+  # GITHUB ONLY, in this slice. folder and jira mode commit directly to $DEV_BRANCH in
+  # the main tree and open no PR, so neither has a per-task branch to isolate; both
+  # keep the exact dispatch they had before this change ($agent_cwd stays
+  # $PROJECT_ROOT, and jira's dispatch is in its own arm further up).
+  #
+  # ABORT, DON'T SKIP, when the worktree cannot be created. The realistic failure is
+  # `issue-$num` being checked out somewhere else — quite possibly in the user's own
+  # tree — and git refusing to take it. Marking the issue `failed` and moving on would
+  # label work that may be in flight; stopping says so and leaves the queue untouched.
+  agent_cwd="$PROJECT_ROOT"
+  if [ "$TASK_SOURCE" = "github" ]; then
+    if ! issue_worktree=$(node "$RALPH_PKG_DIR/lib/worktree.js" create "$PROJECT_ROOT" "issue-$num" "${DEV_BRANCH:-main}"); then
+      echo "❌ ralph.sh: could not create a worktree for issue #$num. Aborting the loop." >&2
+      failures+=("$num")
+      break
+    fi
+    agent_cwd="$issue_worktree"
+    # The {{PROJECT_ROOT}} placeholder ONLY (lib/build-prompt.js reads it). The prompt
+    # builder itself keeps running here, in the main root, because it reads the
+    # project's own PROMPT.md from its cwd and that file is typically untracked — a
+    # fresh worktree checkout would not contain it. So the agent is told to stay inside
+    # the tree it is actually in, and the project prompt is still found.
+    export RALPH_PROMPT_PROJECT_ROOT="$issue_worktree"
+  fi
+
   # Stream the agent's JSON to jq, but keep stderr OUT of the JSON pipe: any
   # non-JSON line the agent prints to stderr (auth/credit/rate-limit errors,
   # warnings) used to be merged via `2>&1` and broke jq with "Invalid numeric
   # literal". Route stderr to the per-issue log + terminal instead. jq is also
   # made tolerant of stray non-JSON input as defense-in-depth.
   issue_start_ms=$(date +%s000)
-  run_agent_for_issue "$num"
+  run_agent_for_issue "$num" "$agent_cwd"
   issue_end_ms=$(date +%s000)
   issue_dur_ms=$(( issue_end_ms - issue_start_ms ))
+
+  # TEARDOWN, UNCONDITIONAL on the outcome (#218), and placed here — before the
+  # folder arm's `continue` and before every github classification branch, including
+  # the zero-progress `break` — so no path out of an iteration can leak a worktree.
+  # Outcome-aware teardown (keeping the tree of a failed issue around to inspect) is a
+  # later slice of #217; today the commits are on the `issue-$num` BRANCH, which this
+  # never deletes, so removing the tree loses nothing. The transcripts are safe for the
+  # same reason $LOG_DIR is absolute.
+  if [ "$TASK_SOURCE" = "github" ]; then
+    node "$RALPH_PKG_DIR/lib/worktree.js" remove "$PROJECT_ROOT" "issue-$num" || true
+    # The next iteration re-exports it; leaving it set would point the placeholder at a
+    # directory that no longer exists if anything downstream built a prompt.
+    unset RALPH_PROMPT_PROJECT_ROOT
+  fi
 
   if [ "$TASK_SOURCE" = "folder" ]; then
     # Terminal directory decides the outcome: the agent moves a completed task
@@ -720,8 +803,8 @@ while :; do
       RALPH_RUN_ID="$RALPH_RUN_ID" \
       RALPH_CLAUDE_EXIT="$claude_failed" \
       RALPH_DEV_BRANCH="${DEV_BRANCH:-}" \
-      RALPH_RAW_JSONL_PATH="logs/ralph-issue-$num.jsonl" \
-      RALPH_STDERR_LOG_PATH="logs/ralph-issue-$num.log" \
+      RALPH_RAW_JSONL_PATH="$LOG_DIR/ralph-issue-$num.jsonl" \
+      RALPH_STDERR_LOG_PATH="$LOG_DIR/ralph-issue-$num.log" \
       RALPH_AGENT="${RALPH_RESOLVED_AGENT:-claude}" \
       RALPH_CODEX_MODEL="${RALPH_CODEX_MODEL:-}" \
       RALPH_DURATION_MS="$issue_dur_ms" \
@@ -756,8 +839,8 @@ while :; do
     RALPH_ISSUE_LABELS="$labels" \
     RALPH_ISSUE_STATE="$state" \
     RALPH_DEV_BRANCH="${DEV_BRANCH:-}" \
-    RALPH_RAW_JSONL_PATH="logs/ralph-issue-$num.jsonl" \
-    RALPH_STDERR_LOG_PATH="logs/ralph-issue-$num.log" \
+    RALPH_RAW_JSONL_PATH="$LOG_DIR/ralph-issue-$num.jsonl" \
+    RALPH_STDERR_LOG_PATH="$LOG_DIR/ralph-issue-$num.log" \
     RALPH_AGENT="${RALPH_RESOLVED_AGENT:-claude}" \
     RALPH_CODEX_MODEL="${RALPH_CODEX_MODEL:-}" \
     RALPH_DURATION_MS="$issue_dur_ms" \
@@ -797,9 +880,27 @@ while :; do
 done
 
 echo "==> Cleanup"
-git checkout dev 2>/dev/null || true
-git pull --ff-only 2>/dev/null || true
-git branch --merged dev 2>/dev/null | grep -E '^\s+issue-' | xargs -r git branch -d 2>/dev/null || true
+# NOTHING HERE MOVES THE USER'S HEAD (#218). This block used to open with
+# `git checkout dev` followed by `git pull --ff-only`, and that pair is the bug PRD
+# #217 exists to fix: a loop the user started to work their issue queue ended by
+# switching the branch they were on and fast-forwarding it. The work happens in
+# per-issue worktrees now, so the main tree has no reason to be touched at all.
+#
+# WHAT REPLACED THE `pull`: a `fetch`. Deleting the checkout alone would have left a
+# bare `git pull --ff-only` behind, which is strictly worse than what it replaced — it
+# would fast-forward whatever branch the user happens to be on rather than the dev
+# branch. `fetch` gets the same information (it is what updates
+# refs/remotes/origin/*) and moves no local branch and no working tree.
+#
+# WHAT REPLACED THE `--merged dev`: `--merged origin/$DEV_BRANCH`. `git branch
+# --merged <ref>` needs no branch checked out — it takes any commit-ish — so the
+# pruning survives the checkout's removal intact. The remote-tracking ref is also the
+# more accurate question: an issue branch is merged when it has landed on the remote
+# dev branch, which the fetch above just refreshed, not when it has landed on a local
+# copy that nothing in this block updates any more. The `grep` is unchanged and still
+# skips the current branch, which `git branch` marks with `* ` rather than spaces.
+git fetch origin "${DEV_BRANCH:-main}" 2>/dev/null || true
+git branch --merged "origin/${DEV_BRANCH:-main}" 2>/dev/null | grep -E '^\s+issue-' | xargs -r git branch -d 2>/dev/null || true
 
 # --- End-of-run notifications ---------------------------------------------
 ELAPSED=$(( $(date +%s) - START ))
@@ -849,7 +950,7 @@ fi
 run_event_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 printf 'RALPH_CYCLE_EVENT {"ts":"%s","status":"%s","ok":%d,"failed":%d,"durationMin":%d,"processed":%d,"run_id":"%s"}\n' \
   "$run_event_ts" "$status" "$ok_count" "$fail_count" "$duration_min" "$((ok_count + fail_count))" "$RALPH_RUN_ID" \
-  >> logs/ralph-cycle.out.log || true
+  >> "$LOG_DIR/ralph-cycle.out.log" || true
 # ---------------------------------------------------------------------------
 
 # Re-source creds so any added mid-run are picked up: global config fills unset

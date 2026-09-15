@@ -519,6 +519,22 @@ the commit-direct pair behind: keep that one in sync by hand. The forked
 orchestrator prose is not asserted either, so you are free to word each agent's
 delegation instructions differently — just keep the shared structure in lockstep.
 
+**Step 3 is one place that "sync by hand" must not reach** (#218). The two GitHub
+templates read `3. **Confirm the worktree**`: `templates/ralph.sh` creates a
+per-issue git worktree, cuts the `issue-N` branch itself, and spawns the agent
+inside that directory, so the agent wakes already on the branch, is told to
+create none and switch to none, and is handed the worktree as
+`{{PROJECT_ROOT}}`. The two commit-direct templates keep
+`3. **Prepare working tree**` — `git checkout {{DEV_BRANCH}} && git pull` —
+because folder and Jira runs still work in the main checkout. Do not propagate
+the worktree step across that boundary: the loop builds a worktree **only** under
+`TASK_SOURCE=github`, so a commit-direct agent told to confirm one would be
+confirming a tree nothing created, and its step-3 check would send every
+iteration straight to "Failed". `test/loop.worktree.test.js` pins the GitHub half
+(neither template may carry `Prepare branch` or `git checkout -b`), and
+`lib/template-parity.test.js` pins the step heading within each pair, so the two
+pairs are free to differ here and locked within themselves.
+
 The **label names** these templates spell have a guard of their own, because a
 template cannot import the module that owns them: see
 [Label names live in one module](#label-names-live-in-one-module-139). A per-file
