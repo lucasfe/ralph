@@ -154,6 +154,7 @@ case "$*" in
   *jira-queue.js*) exec "${REAL_NODE}" "$@" ;;
   *run-state.js*) exec "${REAL_NODE}" "$@" ;;
   *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+  *worktree.js*) exec "${REAL_NODE}" "$@" ;;
   *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
   *folder-queue.js*) exec "${REAL_NODE}" "$@" ;;
 esac
@@ -277,6 +278,20 @@ beforeEach(() => {
     `#!/bin/bash
 if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "${workdir}"
+  exit 0
+fi
+# #218: before dispatching, the loop asks lib/worktree.js for a per-issue worktree and
+# then runs the agent with cwd set to it. A stub that answered "worktree add" with a
+# bare exit 0 would leave the loop cd-ing into a directory that does not exist, and no
+# agent would run at all - so the fiction this stub maintains has to include the
+# directory. argv is "worktree add -B <branch> <path> <start>", so the path is $5;
+# "worktree remove --force <path>" puts it in $4. The rm is gated on the SHAPE of the
+# path, so this stub can only ever delete something that looks like a ralph worktree.
+if [ "$1" = "worktree" ]; then
+  case "$2" in
+    add) mkdir -p "$5" ;;
+    remove) case "$4" in */.ralph/worktrees/*) rm -rf "$4" ;; esac ;;
+  esac
   exit 0
 fi
 exit 0

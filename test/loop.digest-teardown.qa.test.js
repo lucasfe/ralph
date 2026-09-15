@@ -96,6 +96,7 @@ function seedCleanRun() {
     'node',
     `#!/bin/bash
 case "$*" in
+  *worktree.js*) exec "${REAL_NODE}" "$@" ;;
   *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
 esac
 exit 0
@@ -356,6 +357,7 @@ describe('QA ralph.sh teardown — signals, not just exits (#62)', () => {
       'node',
       `#!/bin/bash
 case "$*" in
+  *worktree.js*) exec "${REAL_NODE}" "$@" ;;
   *agent-invocation.js*) sleep 3 ;;
 esac
 exit 0

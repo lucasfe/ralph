@@ -68,7 +68,15 @@ So, without exception:
 
 2. **Mark in progress**: `gh issue edit N --add-label in-progress`
 
-3. **Prepare branch**: `git checkout {{DEV_BRANCH}} && git pull && git checkout -b issue-N`
+3. **Confirm the worktree**: the loop already prepared your working tree. It
+   created a dedicated git worktree for this issue, cut a fresh `issue-N` branch
+   from `origin/{{DEV_BRANCH}}`, and started you inside it — so you are **already on
+   `issue-N`**, and `{{PROJECT_ROOT}}` above is that worktree rather than the main
+   checkout. Confirm with `git rev-parse --abbrev-ref HEAD` and, if it answers
+   anything but `issue-N`, go straight to "Failed": you are not in the tree this
+   invocation was set up in. Create no branch and switch to none — the tree you are
+   in is removed after this invocation returns, while the branch and its commits
+   survive, which is what the PR is opened from.
 
 3b. **Triage and scale the team**: before dispatching, classify the issue and
    scale the team to fit it. Read the issue and the files it implies, then pick
@@ -322,7 +330,7 @@ reviewers** instead of a single pass:
 ## Failed (at any point)
 
 - `gh issue edit N --remove-label in-progress --add-label failed`
-- `gh issue comment N --body "Claude tried but failed: <short reason>. See log in logs/ralph-issue-N.log and PR (if opened)."`
+- `gh issue comment N --body "Claude tried but failed: <short reason>. See log in the main checkout's logs/ralph-issue-N.log (the loop writes it there, not in this worktree) and PR (if opened)."`
 - If a PR was opened: `gh pr close <pr>`
 - Exit.
 
