@@ -1620,7 +1620,7 @@ No long-lived npm token is stored — publishing authenticates via OIDC,
 so the npm Trusted Publisher for `@lucasfe/ralph` must point at this repo
 (`lucasfe/ralph`) and the `release.yml` workflow.
 
-## The Homebrew formula: a generator, and no tap yet
+## The Homebrew formula: a generator, and the tap it fills
 
 npm is the only channel that flow reaches, and releases have stopped arriving on it.
 Three measurements, all taken at the time of writing. `npm view @lucasfe/ralph
@@ -1775,22 +1775,33 @@ The third is younger, and it is a real call rather than a grep:
   because Homebrew derives a formula's class from its file name
   (`Formulary.class_s`).
 
-**What does not exist yet, and must not be written up as though it does.** Since
-#202 this generator does have a caller — the `homebrew` job in
+**What exists now, and what still does not.** Since #202 this generator does have a
+caller — the `homebrew` job in
 [`.github/workflows/release.yml`](.github/workflows/release.yml), written up under
 [The release job that fills the tap (#202)](#the-release-job-that-fills-the-tap-202)
 — so it is no longer run only by hand; since #198 its *name* has a consumer too,
-which is what the third pin above is for. What is still missing is the far end:
-**the tap has no content and the job cannot write to it.** Measured at the time of
-writing, `lucasfe/homebrew-ralph` is a real, public, and entirely empty repository —
-`git ls-remote https://github.com/lucasfe/homebrew-ralph` prints nothing and exits
-`0`, `gh api repos/lucasfe/homebrew-ralph/commits` answers HTTP `409`
-`Git Repository is empty.`, and `gh api repos/lucasfe/homebrew-ralph` reports
-`size: 0` (it does report `default_branch: main`, which is not evidence that a commit
-exists) — and no `HOMEBREW_TAP_TOKEN` secret is configured, which is why #202's push
-step is gated off. Both are #203. So there is still no `brew tap`, no
-`brew install ralph`, and the only install path a user has is the npm one
-[the README](./README.md#install) describes, which stays the only place install
+which is what the third pin above is for. And since #203 the far end exists: the
+`HOMEBREW_TAP_TOKEN` secret landed and the job's push step ran. Measured 2026-09-14,
+`git ls-remote https://github.com/lucasfe/homebrew-ralph` answers
+`19879e19… refs/heads/main`, `gh api repos/lucasfe/homebrew-ralph/commits` reports
+exactly one commit — `ralph 0.26.0`, authored by `github-actions[bot]` on 2026-09-13,
+which is the push step's own message and identity — and `Formula/ralph.rb` is served
+over `raw.githubusercontent.com` with HTTP `200`, holding
+`url ".../v0.26.0.tar.gz"`. Before that push the same repository was public and
+entirely empty, which is the state #202's probe is built around and measured against:
+`git ls-remote` printed nothing and exited `0`,
+`gh api repos/lucasfe/homebrew-ralph/commits` answered HTTP `409`
+`Git Repository is empty.`, and `gh api repos/lucasfe/homebrew-ralph` reported
+`size: 0` (it did report `default_branch: main`, which is not evidence that a commit
+exists).
+
+**What a full tap still does not buy a user is `brew install ralph`.** Measured on
+Homebrew 7.0.0, `brew tap lucasfe/ralph` is refused outright until
+`brew trust lucasfe/ralph` runs — and the gate is on by default at `6.0.21` too, so
+this is not a 7-only rule. That is the failure #216 is about, written up under
+[The install path the pre-flight could not see (#216)](#the-install-path-the-pre-flight-could-not-see-216).
+So the npm instructions [the README](./README.md#install) describes remain the only
+install instructions this repo publishes, and it stays the only place install
 instructions belong. #198 is the far end of the same pipe and nothing more:
 `ralph update` now runs `brew upgrade ralph` for a Cellar install, where it used to
 classify that layout `unknown`, refuse, and print an `npm install -g` that would
@@ -1877,7 +1888,8 @@ top level is `{"formulae": [...], "casks": []}`, and the one entry in `formulae`
 a three-key `versions` — `{"stable": "1.8.2", "head": "HEAD", "bottle": true}`. Only
 `stable` is read: `head` is a git build with no version, and an `installed` entry
 would answer "what is here?" rather than "what would an upgrade fetch?". A formula
-Homebrew cannot find — which is every machine today, since there is still no tap —
+Homebrew cannot find — which is every machine that has not both tapped and trusted
+`lucasfe/ralph`, the tap being full but untrusted by default (#216) —
 exits **1 with empty stdout**, putting its diagnosis on stderr (measured:
 `brew info --json=v2 ralph`, stderr beginning `Error: No available formula with the
 name "ralph"`), so it is the exit code and not the parse that catches it, and the user
@@ -2052,9 +2064,9 @@ silence; and `latestSource` is resolved even when there is no `exec` to use it.
 installed**, drawn between `cached` and `cwd` because the two are one thought — the
 registry and a Homebrew install are separate channels that hold different versions by
 design (#196), so "0.23.0 available" means one thing on a `brew` install and another
-on an npm one. (There is still no tap; see
-[The Homebrew formula](#the-homebrew-formula-a-generator-and-no-tap-yet) above for
-what does and does not exist.) The user-facing wording is in
+on an npm one. (The tap carries a formula now; see
+[The Homebrew formula](#the-homebrew-formula-a-generator-and-the-tap-it-fills) above for
+what it does and does not buy a user.) The user-facing wording is in
 [the README](./README.md#quick-start), and the layout-by-layout mapping is under
 [`ralph update`](./README.md#ralph-update).
 
@@ -2193,8 +2205,11 @@ being a claim nobody can check until a release day. It **clones** the tap, and t
 reason is measured rather than stylistic: an empty tap is a reachable state (#202
 merges before #203 commits the initial formula), and every API-shaped probe reports it
 as a failure, so using one means swallowing its failure to mean "no" — which cannot
-tell an empty tap from one that was deleted, renamed or made private. Against the real
-`lucasfe/homebrew-ralph`:
+tell an empty tap from one that was deleted, renamed or made private. Measured against
+the real `lucasfe/homebrew-ralph` **while it was still empty** — it carries
+`ralph 0.26.0` now, so the block below is history rather than a state to go looking
+for, and the reasoning outlives it because a tap recreated, renamed or force-reset is
+the same state again:
 
 ```bash
 git clone --depth 1 https://github.com/lucasfe/homebrew-ralph   # exit 0
@@ -2233,7 +2248,7 @@ the real remotes, the three steps chain: the probe reports
 `carries_version=false` for the empty tap and `tarball_url=…/v0.25.4.tar.gz`, the
 `curl | shasum -a 256` of those bytes is
 `010d0b38ad1dab35f41ebcf3cd9ef62e3ff2acd36b024d0a133a2295ed9a94cc` — the same digest
-[recorded above](#the-homebrew-formula-a-generator-and-no-tap-yet) for that tag — and
+[recorded above](#the-homebrew-formula-a-generator-and-the-tap-it-fills) for that tag — and
 the rendered formula's `url` line is the string the probe reported, character for
 character. Pushed into a local `git init --bare --initial-branch=main` remote with the
 push step's exact commands, the first push answers `* [new branch] HEAD -> main` and a
@@ -2245,7 +2260,7 @@ can ship a formula that does not install it is not a fallback but a second way t
 fail, so any of the three failing takes the job down before the push step is reached;
 they are separate steps so the log names which property broke. They address the
 formula **by name out of a throwaway `brew tap-new --no-git` tap**, for the reason
-[above](#the-homebrew-formula-a-generator-and-no-tap-yet): `brew audit [path ...]` is
+[above](#the-homebrew-formula-a-generator-and-the-tap-it-fills): `brew audit [path ...]` is
 disabled. Measured locally on Homebrew 6.0.21-34-ga8820d0 against the formula rendered
 for 0.25.4 — `brew tap-new --no-git ralphci/preflight`, the copy, `brew install
 --dry-run --build-from-source ralphci/preflight/ralph` (which resolves `node` as the
@@ -2257,25 +2272,29 @@ here.
 **The push is gated on a job-level `env` boolean, which is why this was mergeable
 before the tap existed.** `HOMEBREW_TAP_TOKEN` is a fine-grained PAT scoped to
 contents:write on the tap alone — `GITHUB_TOKEN` cannot write to another repository
-whatever scopes it is given — and it does not exist yet (#203). `secrets` is **not**
+whatever scopes it is given — and it did not exist when #202 landed (#203 created it;
+0.26.0 was the first release it pushed). `secrets` is **not**
 one of the contexts a step-level `if` can read, so testing it there would resolve to
 the empty string and skip the step forever, *including after the secret landed*. A
 job-level `env` can read `secrets`, so `TAP_PUSH_ENABLED: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}`
 turns presence into the string `"true"` once and the step reads `env.`. Both
-consequences are wanted: green on main today, self-enabling the moment the secret
-appears, no follow-up PR. The spec finds that boolean by its shape rather than by its
-name, and asserts no `if:` in the job mentions `secrets.` at all.
+consequences were wanted and both happened: green on main while the secret was
+missing, self-enabling the moment it appeared, no follow-up PR. What the boolean is
+*for* now is a fork or a clone without the secret, where the push and the #216 smoke
+step must skip rather than fail. The spec finds that boolean by its shape rather than
+by its name, and asserts no `if:` in the job mentions `secrets.` at all.
 
 The job takes `permissions: contents: read` and **no `id-token`**: the checkout is
 this repository's, the tap is read anonymously, the push uses the PAT, and nothing
 here speaks OIDC — granting a signing capability to the one job that runs a build over
 bytes fetched from the network would be scope for nothing. The push uses
 `HEAD:refs/heads/main` rather than `git push origin main`, because the first release
-pushes into an empty repository where the branch only starts existing with that
+pushed into an empty repository where the branch only started existing with that
 commit; the explicit refspec covers that case and the ordinary one identically.
 
-The spec is `test/homebrew-release-job.test.js` (31 tests). It parses the workflow
-with `yaml`, added as a **devDependency** — `package.json`'s `files` allow-list means
+The spec is `test/homebrew-release-job.test.js` (41 tests, ten of them #216's). It
+parses the workflow with `yaml`, added as a **devDependency** — `package.json`'s
+`files` allow-list means
 it never ships — because the claims #202 makes are claims about the resolved graph and
 the step order, and a grep for `needs: release-please` would pass just as happily on
 `needs: [release-please, publish]`. Everything about the tap probe is driven for real
@@ -2366,3 +2385,178 @@ own surface). The QA pass added `lib/version-cache.channel.qa.test.js` (45),
 `lib/update-check.cache-channel.qa.test.js` (43),
 `lib/update-gate.cache-channel.qa.test.js` (21) and
 `lib/commands/start.cache-channel.qa.test.js` (7).
+
+### The install path the pre-flight could not see (#216)
+
+#202's three pre-flight steps all passed on the formula the 0.26.0 release pushed, and
+that formula could not be tapped at all. Measured by hand on 2026-09-13, Homebrew
+7.0.0, against the tap that release had just filled:
+
+```bash
+brew tap lucasfe/ralph
+# ==> Tapping lucasfe/ralph
+# Cloning into '/opt/homebrew/Library/Taps/lucasfe/homebrew-ralph'...
+# Error: Invalid formula (golden_gate): .../Formula/ralph.rb
+# Refusing to load formula lucasfe/ralph/ralph from untrusted tap lucasfe/ralph.
+# Run `brew trust --formula lucasfe/ralph/ralph` or `brew trust lucasfe/ralph` to trust it.
+#   …the same refusal once per platform brew enumerates, about thirty lines…
+# Error: Cannot tap lucasfe/ralph: invalid syntax in tap!
+brew install ralph
+# Error: No available formula with the name "ralph". Did you mean ralph-orchestrator?
+```
+
+Nothing was wrong with the formula. Homebrew gates third-party taps behind trust — at
+`6.0.21` as much as at `7.0.0`, which the `env_config.rb` reading below settles — and
+reports the refusal as `Invalid formula` once per platform it enumerates, which is why
+the surface error accuses the syntax; `brew trust lucasfe/ralph` clears it in one line
+and `brew install ralph` then succeeds. (`ralph-orchestrator` is somebody else's
+package, which is the other half of what a user meets: not "your tap is untrusted" but
+a suggestion to install something unrelated.)
+
+**The pre-flight is blind to this structurally, not by bad luck, and it stays exactly
+as it is.** Two reasons, both read out of brew's own source in `$(brew --repository)` at
+tags `6.0.21` and `7.0.0` — the step's comment block carries the file-and-line citations
+so they live in one place. First, `brew install` **auto-trusts a fully-qualified name as
+it installs it**: `cmd/install.rb` calls `Trust.trust_fully_qualified_items!`, which
+writes a trust entry for any `<user>/<tap>/<formula>` argument out of a non-official tap,
+and the pre-flight installs exactly that spelling — the 0.26.0 run's log has the receipt,
+`==> Trusted formula ralphci/preflight/ralph`. Second, the pre-flight **never taps a
+remote**: `brew tap-new --no-git` builds the tap on the runner, and the refusal fires in
+`brew tap` against a tap fetched from a stranger. It is *not* that a local tap is
+implicitly trusted — the tempting explanation, and the wrong one:
+`Tap#implicitly_trusted?` is `official? && canonical_remote?` and `official?` is
+`user == "Homebrew"`, so `ralphci/preflight` is not implicitly trusted by anything. None
+of that is a reason to change those three steps: they run
+**before** the push, which makes them the only checks that can stop a broken formula
+from reaching the tap at all. What was missing is a check *after* the push, because
+that is the only place the real install path exists.
+
+**So there is a fourth step, and it is the only one that walks a user's path.** It
+takes the pre-flight's tap and keg away, trusts the tap, `brew tap`s the real remote,
+installs **`ralph` bare**, and asserts `ralph --version` carries the version this run
+pushed. The bare name is the point, and the auto-trust above is why it is not merely a
+stylistic preference: `brew install lucasfe/ralph/ralph` would *grant* the trust this
+step exists to prove is needed, and would pass against a tap that no `brew install ralph`
+can find — exactly the measured failure above. Only the bare name proves the tap reached
+brew's *search path* rather than merely its disk. It carries the push step's `if`
+character for character —
+on either skip path nothing was pushed, and the step would be grading whatever the tap
+already held.
+
+**It runs after the bytes are public, and it fails the job anyway.** Nothing can move
+it earlier; the real path does not exist until the formula is on the tap. So a red here
+does not mean the release was stopped — it means the release shipped and nobody can
+install it, which is worth a red run. The alternative is a green one asserting that the
+release landed, which would be false, and there is still no `continue-on-error`
+anywhere in the file.
+
+**The teardown is what makes the assertion falsifiable.** By the time the step runs,
+`ralph` is already installed at the very version it is about to assert — the first
+pre-flight step built it — and `ralphci/preflight` is still tapped. Left alone, a bare
+`brew install ralph` is answered locally (or is ambiguous across two tapped formulae
+called `ralph`; which of the two brew would do was **not** measured), and
+`ralph --version` then prints the right number whatever the remote tap holds. So the
+keg is uninstalled and the tap untapped first, keg before untap so the name still
+resolves. This is [A spec that cannot go red (#122)](#a-spec-that-cannot-go-red-122) in
+a workflow file: a check something other than the subject can satisfy is not a check. The
+uninstall earns its place a second way: the pre-flight's install left a trust entry for
+`ralphci/preflight/ralph` behind, and `brew uninstall` takes it back out —
+`cmd/uninstall.rb` collects each keg's tap and calls `Trust.untrust!` on every item whose
+tap is not itself trusted, identically at `6.0.21` and `7.0.0`.
+
+**`brew trust --tap`, unconditionally.** No `brew commands` probe guards this call, and
+the reason is not that a runner without the subcommand would be tolerable: it is that no
+such runner can refuse the tap in the first place. The same checkout that
+settled the auto-trust above settles this: `brew trust` and the enforcement that makes it
+necessary shipped **in the same release** — `git log` dates "Add tap trust commands" and
+"Add tap trust enforcement" to the same day, `git tag --contains` gives both the same
+earliest tag (`5.1.15`), and `git show 6.0.21:…/cmd/trust.rb` prints the command with its
+`--tap, --taps` switch. So a brew that can refuse this tap can always clear it, and a
+brew too old to clear it has no gate to refuse with; a guard here would insure against a
+world that cannot occur, which is indirection this repo would rather not keep. `--tap`
+rather than `--formula` because the refusal is a property of the *tap* being third-party —
+one formula produced it once per platform — so trusting the tap covers what it holds today
+and anything it grows later. Trust comes **before** `brew tap`, the opposite order to the
+by-hand session, so the tap never has to fail on the way to succeeding: `Trust.trust!`
+appends to `trust.json` under a lock and the `Tap.fetch` on that path only parses a name,
+so trusting an unfetched tap needs no checkout and no network. That last point is a source
+read at both tags, not an inference from `brew help trust`'s description of the store.
+
+**The one way this step could have gone green having checked nothing** is an empty
+`VERSION`, so the step guards it with `: "${VERSION:?the tap probe reported no version}"`
+— its fourth command, after the two diagnostics described below and the `TAP_NAME`
+derivation, and before the teardown.
+The verdict at the bottom is a substring test, `*"$VERSION"*`, and the empty string is a
+substring of every string — with `VERSION` empty that test passes for whatever the tap
+serves, including the previous release. `-e` does not catch it: Actions runs a `run:`
+block as `bash -e {0}`, with no `-u`, so an expansion of a name nobody set is the empty
+string and not an error. Today's probe cannot produce it (`homebrew-tap-plan.js` emits
+`version=` in the same `write` as `carries_version=`), but the step reaches that output
+through a step id, an output name and an `env:` key, and a rename of any of the three is
+enough. The guard sits before the teardown so a broken probe leaves the runner's Homebrew alone.
+The comparison staying a substring test is deliberate: the formula's own `test do` block
+asserts the version with `assert_match`, so the two channels check it the same way.
+
+**The gate is not a Homebrew 7 novelty**, tempting as the 7.0.0 session above makes that
+reading. At tag `6.0.21`, `env_config.rb` declares `HOMEBREW_REQUIRE_TAP_TRUST`
+with `default: true` and `disabled_by: :HOMEBREW_NO_REQUIRE_TAP_TRUST`, and the boolean
+predicate generated from that returns true whenever the default is true and the variable
+is blank — so `require_trusted_formula!` reaches `raise_untrusted!` there just as it does
+on `7.0.0`. #216 reports the runner on 6.0.21, so the smoke step should meet the same
+refusal the by-hand session met, and its `brew trust` is load-bearing rather than
+future-proofing.
+
+**Two things a green run still would not settle**, and neither is measurable from this
+repository. Whether the runner image exports `HOMEBREW_NO_REQUIRE_TAP_TRUST`, which
+switches the gate off and is the one way a pass here could mean less than it looks: the
+0.26.0 log prints no `HOMEBREW_*` variable at all. And the runner's brew version itself —
+#216 reports 6.0.21 and no log in this repository prints one, so that figure is a report
+rather than a measurement. Both are why the step now opens with `brew --version` and a
+dump of the image's `HOMEBREW_*` environment: the next release answers what this section
+cannot. What a *user* has to type is a README question and still an open one: the README
+publishes no Homebrew install instructions at all, and the reason not to add them here is
+that this change did not open that channel — it measured what is wrong with it. Whenever
+they are written, the tap being full is not enough; they have to carry
+`brew trust lucasfe/ralph` ahead of `brew install ralph`.
+
+The spec is the same `test/homebrew-release-job.test.js`, ten tests longer, and one
+existing assertion was **re-expressed rather than deleted**. `pushes from exactly one
+step, and that step is last` could not survive a step that deliberately follows the
+push, but the property it protected — no pre-flight check may run after the push — is
+untouched. It now reads `pushes from exactly one step, and only the smoke test follows
+it`, pinning the three positions as `pre-flight < push < smoke`: exactly one step
+pushes, exactly one step follows it, and that step is the smoke test. A `brew`
+pre-flight moved down past the push still goes red, and so does a fifth step quietly
+appended after the smoke test. The new tests are a sweep for the same reason every
+assertion in that file is one — the real path exists only on a macOS runner with a real
+remote tap — and one of them slices the step's own comment block, because the
+placement argument lives above `- name:` where the YAML parse cannot see it. A second spec
+was re-expressed for the same reason: `invokes 'brew trust', and asks this
+Homebrew whether it can` became `invokes 'brew trust' unconditionally, before it taps`,
+which pins the trust call at column zero of the `run` body — not nested in a branch —
+and asserts no `brew commands` probe has come back. The tenth of #216's tests pins the two
+diagnostics the step opens with, `brew --version` and the `HOMEBREW_*` dump, because the
+comment block claims them.
+
+**And a QA sibling, `test/homebrew-release-job.qa.test.js`** (16 tests), on the pattern
+the formula itself already keeps (`homebrew-formula.test.js` /
+`homebrew-formula.qa.test.js`): the specs above say what the step is *for*, these say
+what an ordinary later edit can break while all of those stay green. It imports none of
+the dev file's locators — it finds the step by its declared `name` where the dev file
+finds it by `brew install ralph` in the commands, and asserts the two agree — so a
+locator that can be fooled shows up as disagreement rather than being inherited. It pins
+the orderings the step's prose claims but nothing held it to (keg before untap, trust
+before tap, untap before tap), re-derives the secret boolean from the job's env block by
+shape and *evaluates* the gate over the four worlds of `(carries_version, secret
+present)` instead of pattern-matching it, applies `${TAP_REPO/homebrew-/}` to the
+`TAP_REPO` actually in the env and checks the answer against the anchored tap-name rule,
+checks that every variable the shell expands is declared somewhere (there is no `-u`),
+and holds the version attributions to what was measured — a universal "every figure here
+came from X" is refused by shape, because that is the one kind of comment in the file
+that decays on its own. Two of its specs found real defects: the empty-`VERSION` hole
+above, and a sentence claiming every Homebrew figure in the job came from
+6.0.21-34-ga8820d0 while the same block cited 7.0.0 four times. It also cost the dev
+file an expectation: `toMatch(/env\.[A-Z_]+ == 'true'/)` was **deleted** rather than
+strengthened, because flipping `&&` to `||` in *both* gates left it and the equality
+beside it green — a wildcard that cannot go red on its own is indirection, and the
+truth-table spec covers what it was reaching for.
