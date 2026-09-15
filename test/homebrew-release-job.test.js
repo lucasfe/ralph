@@ -130,6 +130,63 @@ const runOf = (step) => (typeof step?.run === 'string' ? step.run : '')
 const stepRunning = (needle) => steps().findIndex((step) => runOf(step).includes(needle))
 const ifOf = (step) => (typeof step?.if === 'string' ? step.if : '')
 
+const isCommentLine = (line) => /^\s*#/.test(line)
+/** One step's `run` with the shell's own comment lines dropped: what it executes. */
+const commandsOf = (step) => runOf(step).split('\n').filter((line) => !isCommentLine(line)).join('\n')
+
+/**
+ * The post-push smoke step (#216), found by the one command that is unique to it: an
+ * install of the BARE formula name. The pre-flight installs `"$PREFLIGHT_TAP/ralph"`,
+ * which does not contain this substring, so the needle cannot pick up the local
+ * stand-in by accident — and it is the property under test rather than a proxy for it,
+ * since the bare name is the whole point of the step.
+ *
+ * Matched against the COMMANDS rather than the whole `run`, and that is not
+ * cosmetic: the step's own prose quotes `brew install ralph` three times while
+ * explaining the failure it exists for (counted, not eyeballed — the run body holds
+ * three quotations and one command), so a locator over the raw text would still find it
+ * after somebody deleted the command — the haystack half of CONTRIBUTING's "A spec
+ * that cannot go red (#122)", measured here by mutation rather than assumed.
+ */
+const smokeStep = () =>
+  steps().findIndex((step) => commandsOf(step).includes('brew install ralph'))
+
+/**
+ * The verbatim text of one step of the `homebrew` job, INCLUDING the comment block
+ * immediately above its `- name:`. That inclusion is the reason this exists rather
+ * than reading `step.run`: the steps in this job put the argument for why they exist
+ * at all above the `- name:`, and only the shell's own commentary inside `run: |`
+ * survives the YAML parse, so a claim about a step's prose that read the parsed step
+ * would be asking half the question.
+ *
+ * Steps are cut at the six-space `- ` items a step of this job always begins with,
+ * and the cut walks back over the contiguous comment lines above each one so a
+ * leading block belongs to the step it introduces rather than to the step before it.
+ *
+ * THROWS on a fragment it cannot find, for the reason jobSource() does and
+ * CONTRIBUTING's "A spec that cannot go red (#122)" spells out: a slicer that fails
+ * open turns every search over its output into a tautology.
+ */
+function homebrewStepSource(nameFragment) {
+  const lines = jobSource('homebrew').split('\n')
+  const starts = []
+  for (const [index, line] of lines.entries()) {
+    if (!/^ {6}- /.test(line)) continue
+    let from = index
+    while (from > 0 && /^\s*#/.test(lines[from - 1])) from -= 1
+    starts.push({ from, head: index })
+  }
+  const at = starts.findIndex(({ head }) => lines[head].includes(nameFragment))
+  if (at < 0) {
+    throw new Error(
+      `no step of the \`homebrew\` job declares \`${nameFragment}\`; it declares ` +
+        `${starts.map(({ head }) => lines[head].trim()).join(' | ')}`,
+    )
+  }
+  const end = at + 1 < starts.length ? starts[at + 1].from : lines.length
+  return lines.slice(starts[at].from, end).join('\n')
+}
+
 describe('#202 — the release workflow declares a `homebrew` job', () => {
   it('parses as YAML and names both release channels', () => {
     // Fails closed: every assertion below reads off this parse, so a workflow that
@@ -210,10 +267,24 @@ describe('#202 — the push is gated on a secret that does not exist yet', () =>
 })
 
 describe('#202 — pre-flight runs before the push, and a failure stops it', () => {
-  it('pushes from exactly one step, and that step is last', () => {
+  it('pushes from exactly one step, and only the smoke test follows it', () => {
+    // THIS ASSERTED "THE PUSH IS THE LAST STEP" UNTIL #216, and the property it was
+    // protecting is unchanged: no pre-flight check may run after the push, because a
+    // check that runs after the push cannot stop a bad formula from reaching the tap.
+    // What #216 changed is only that the push is no longer FINAL — it added a smoke
+    // test that installs from the real remote, which is a thing that can only exist
+    // once the bytes are public. So the order is `pre-flight < push < smoke` BY
+    // DESIGN, and it is spelled out as those three positions rather than relaxed to
+    // "the push is somewhere in the middle": exactly one step pushes, exactly one
+    // step follows it, and that step is the smoke test. Move a `brew` pre-flight down
+    // past the push and this goes red exactly as it did before.
     const pushes = steps().filter((step) => runOf(step).includes('git push'))
     expect(pushes).toHaveLength(1)
-    expect(stepRunning('git push')).toBe(steps().length - 1)
+    const push = stepRunning('git push')
+    expect(smokeStep(), 'the smoke test does not run immediately after the push').toBe(
+      push + 1,
+    )
+    expect(smokeStep(), 'a step was added after the smoke test').toBe(steps().length - 1)
   })
 
   it('installs, tests and audits the rendered formula BEFORE that step', () => {
@@ -257,6 +328,182 @@ describe('#202 — pre-flight runs before the push, and a failure stops it', () 
         `step "${step.name ?? runOf(step).split('\n')[0]}" would run again on a re-run`,
       ).toContain(`steps.${id}.outputs.carries_version == 'false'`)
     }
+  })
+})
+
+// #216 — the pre-flight above cannot see the one failure that mattered.
+//
+// All three pre-flight steps passed on the formula the 0.26.0 release pushed, and
+// that formula could not be tapped at all: on Homebrew 7.0.0,
+// `brew tap lucasfe/ralph` clones the tap and then refuses it — "Refusing to load
+// formula lucasfe/ralph/ralph from untrusted tap lucasfe/ralph", reported as
+// `Invalid formula` once per platform brew enumerates and ending
+// `Error: Cannot tap lucasfe/ralph: invalid syntax in tap!` — after which
+// `brew install ralph` answers `No available formula with the name "ralph"`. The
+// pre-flight is blind to that STRUCTURALLY, not by bad luck, and the reason is not the
+// one this comment used to give (that a local `brew tap-new --no-git` tap is trusted
+// implicitly — `Tap#implicitly_trusted?` is `official? && canonical_remote?` and
+// `official?` is `user == "Homebrew"`, so `ralphci/preflight` is not). It is that
+// `brew install` writes a trust entry for any fully-qualified `<user>/<tap>/<formula>`
+// name out of a non-official tap as it installs it — `cmd/install.rb:197` calling
+// `Trust.trust_fully_qualified_items!`, and the 0.26.0 run's log printing
+// `==> Trusted formula ralphci/preflight/ralph` — plus the plainer half: the pre-flight
+// never runs `brew tap` against a remote at all, which is where the refusal fires.
+// Both readable in `$(brew --repository)` at tags 6.0.21 and 7.0.0; the workflow's own
+// comment block carries the citations.
+//
+// So these specs are about a step that runs AFTER the push, and they are a sweep for
+// the same reason every spec above is one: the real install path exists only on a
+// macOS runner with a real remote tap, and nothing in this repository can execute it.
+// What a sweep can pin exactly is the shape of the step — where it sits relative to
+// the push, which name it addresses the formula by, which gate it carries, and that
+// it takes the local stand-in away first so its own assertion can fail.
+describe('#216 — a smoke test installs from the REMOTE tap, the way a user does', () => {
+  const smoke = () => steps()[smokeStep()]
+  /** What the step runs, prose taken out — see runnableLines() for why that matters. */
+  const smokeCommands = () => (smokeStep() >= 0 ? commandsOf(smoke()) : '')
+  /**
+   * Everything the step argues, wherever it argues it: the block above `- name:` and
+   * the commentary inside `run: |`. Both halves carry load here — the placement
+   * argument sits above the step, the `brew trust` measurements sit beside the call —
+   * and which one holds a given sentence is an editing decision no assertion should
+   * pin.
+   */
+  const smokeCommentary = () =>
+    homebrewStepSource('Smoke test').split('\n').filter(isCommentLine).join('\n')
+
+  it('exists, and runs after the push rather than before it', () => {
+    // Fails closed: every assertion below reads off this step.
+    expect(smokeStep(), 'no step installs the formula by its bare name').toBeGreaterThanOrEqual(0)
+    expect(smokeStep()).toBeGreaterThan(stepRunning('git push'))
+  })
+
+  it('taps the real remote instead of building another local stand-in', () => {
+    expect(smokeCommands()).toMatch(/^\s*brew tap /m)
+    // `tap-new` is the pre-flight's instrument and the reason it cannot see this
+    // failure class. A smoke test that reached for it would be a third pre-flight.
+    expect(smokeCommands()).not.toMatch(/brew tap-new/)
+  })
+
+  it('installs the BARE name, never a tap-qualified one', () => {
+    // The bare name is what install instructions can tell somebody to type, and it is
+    // the only spelling that proves the tap landed on brew's SEARCH PATH rather than
+    // merely on disk. A tap-qualified `lucasfe/ralph/ralph` hands brew the tap instead
+    // of asking it to find one, so it cannot see the second half of the failure #216
+    // measured: `No available formula with the name "ralph"`, with a stranger's package
+    // suggested in its place.
+    const installs = smokeCommands()
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('brew install'))
+    expect(installs).toEqual(['brew install ralph'])
+  })
+
+  it('asserts the version the push published, taken from the probe', () => {
+    expect(smokeCommands()).toMatch(/ralph --version/)
+    expect(smoke()?.env?.VERSION).toBe('${{ steps.tap.outputs.version }}')
+    expect(smokeCommands()).toContain('$VERSION')
+    // No release number written down anywhere in the commands — a literal would be a
+    // second copy of the version, and a copy that stopped matching the tap would
+    // fail this step on a release that was perfectly fine. Prose is exempt: the
+    // comments quote measured Homebrew versions on purpose.
+    expect(smokeCommands()).not.toMatch(/\d+\.\d+\.\d+/)
+  })
+
+  it('invokes `brew trust` unconditionally, before it taps', () => {
+    // THIS ASSERTED A `brew commands` PROBE AHEAD OF THE TRUST until review round 1.
+    // The probe was there because the step claimed the runner's brew might not have the
+    // subcommand and that nothing here could find out; the second half was false.
+    // `$(brew --repository)` is a full Homebrew checkout, so every tagged version is
+    // readable: `git show 6.0.21:Library/Homebrew/cmd/trust.rb` prints the command with
+    // its `switch "--tap", "--taps"`, and `git tag --contains` gives the same earliest
+    // tag (5.1.15) for the commit that added `brew trust` and the commit that added the
+    // enforcement — they shipped together. A brew that can refuse this tap can clear it,
+    // and one too old to clear it has nothing to refuse, so the branch guarded a world
+    // that cannot occur. What survives is the property that mattered: trust is invoked,
+    // it is not hidden behind a condition, and it runs before the tap.
+    const commands = smokeCommands()
+    // Column zero in the dedented `run` body: not nested inside an `if`/`else`.
+    expect(commands, 'the trust call is indented, so something is branching on it').toMatch(
+      /^brew trust --tap "\$TAP_NAME"$/m,
+    )
+    expect(commands.indexOf('brew trust')).toBeLessThan(commands.indexOf('brew tap "'))
+    expect(commands, 'the deleted `brew commands` probe is back').not.toMatch(/brew commands/)
+  })
+
+  it('records the runner\'s Homebrew before anything depends on it', () => {
+    // Every claim this step makes about the runner's brew — that it has `trust`, that it
+    // enforces the tap-trust gate — rests on a version no run of this job has ever
+    // printed: #216 reports 6.0.21 and the 0.26.0 log contains no `brew --version` line
+    // and no `HOMEBREW_*` variable. Both diagnostics were added in review round 1, and
+    // the step's comment block now says so, which is why they are pinned: a later edit
+    // that drops them would leave that comment false, and comment accuracy is the review
+    // class this repo blocks on. First, too — a version printed after the failure it
+    // would have explained is a version printed too late.
+    const commands = smokeCommands()
+    expect(commands).toMatch(/^brew --version$/m)
+    expect(commands, 'nothing dumps the image\'s HOMEBREW_* environment').toMatch(
+      /^env \| grep '\^HOMEBREW_'/m,
+    )
+    expect(commands.indexOf('brew --version')).toBeLessThan(commands.indexOf('brew trust'))
+  })
+
+  it('carries the push step\'s own gate, character for character', () => {
+    // Not "an equivalent gate": the same one, for the same reason the job carries the
+    // npm job's `always()` verbatim. This step asserts a formula is installable FROM
+    // THE TAP, so it is meaningless unless the push it is checking actually ran —
+    // both on the idempotence skip (`carries_version == 'true'`, where the tap
+    // already carried this version and this run pushed nothing) and on the
+    // secret-missing skip, where nothing was pushed at all and `brew tap` would
+    // install a stale formula or fail on an empty tap.
+    //
+    // A third expectation stood here, `toMatch(/env\.[A-Z_]+ == 'true'/)`, and it is
+    // gone rather than strengthened: QA measured that flipping `&&` to `||` in BOTH
+    // gates left all three green — the equality holds when the two steps are wrong
+    // together, and the regex matches any env boolean at all. What it was reaching for
+    // is now asserted where it can fail on its own, in the sibling
+    // `homebrew-release-job.qa.test.js`: the secret boolean is re-derived from the
+    // job's env block by shape and named, and the gate is EVALUATED over the four
+    // worlds of (carries_version, secret present). A wildcard that cannot go red is
+    // indirection this repo would rather not carry.
+    const push = steps()[stepRunning('git push')]
+    expect(ifOf(smoke())).toBe(ifOf(push))
+    expect(ifOf(smoke())).toContain("carries_version == 'false'")
+  })
+
+  it('takes the pre-flight tap and keg away first, so the install can go red', () => {
+    // The assertion this step makes is unfalsifiable without this. By the time it
+    // runs, `ralph` IS installed — the first pre-flight step built it — and
+    // `ralphci/preflight` is still tapped, so a bare `brew install ralph` is answered
+    // by the local stand-in rather than by the remote tap, at the same version, and
+    // `ralph --version` then reports the pushed version no matter what the tap holds.
+    // See CONTRIBUTING's "A spec that cannot go red (#122)": a check satisfied by
+    // something other than the thing under test is not a check.
+    const commands = smokeCommands()
+    expect(commands).toMatch(/brew uninstall/)
+    expect(commands).toMatch(/brew untap "\$PREFLIGHT_TAP"/)
+    for (const teardown of ['brew uninstall', 'brew untap']) {
+      expect(
+        commands.indexOf(teardown),
+        `\`${teardown}\` runs after the install it exists to make meaningful`,
+      ).toBeLessThan(commands.indexOf('brew install ralph'))
+    }
+  })
+
+  it('names the Homebrew it measured and quotes the refusal it prevents', () => {
+    // `brew trust` reads like defensive noise unless the failure is written next to
+    // it, and a reader who cannot see the failure will delete the call — this repo's
+    // review gate blocks on comment accuracy for exactly this reason. So the step
+    // carries the version the gate was measured on and brew's own words for it.
+    expect(smokeCommentary()).toMatch(/Homebrew 7/)
+    expect(smokeCommentary()).toMatch(/Refusing to load formula/)
+  })
+
+  it('says plainly that it runs after the bytes are already public', () => {
+    // The one thing this step cannot do, stated where somebody deciding what to do
+    // with a red run will read it: it did not stop the formula from shipping, and it
+    // cannot. Unlike the pre-flight it is a report, not a gate.
+    expect(smokeCommentary()).toMatch(/already public/i)
   })
 })
 
