@@ -83,6 +83,49 @@ function runLoop({ timeout = 90000, extraEnv = {} } = {}) {
 }
 
 const readIf = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '')
+const worktreeDir = (handle = 'issue-98') => join(root, '.ralph', 'worktrees', handle)
+
+// One line per registered worktree — how "git kept no stale record" is asked of a real
+// repository, and the same instrument the removal test below uses in reverse to say the
+// kept tree is a live worktree rather than an orphaned directory.
+const registrations = () =>
+  git(['worktree', 'list', '--porcelain'])
+    .split('\n')
+    .filter((l) => l.startsWith('worktree '))
+
+// --- gh: one issue (#98) ------------------------------------------------------
+// `state` and `labels` are what the loop CLASSIFIES the iteration from, and since #220
+// the classification is also what decides teardown — so they are the knob every outcome
+// test below turns. `drain` is what empties the queue after the first selection; only
+// the zero-progress test turns it off, because that guard cannot fire until the SAME
+// issue has been handed out twice. Every invocation is logged, so a test can assert the
+// loop's own label edits rather than infer them from its stdout.
+function writeGh({ state = 'CLOSED', labels = '', drain = true } = {}) {
+  writeStub(
+    'gh',
+    `#!/bin/bash
+echo "$*" >> "${join(sandbox, 'gh-calls.log')}"
+CNT_FILE="${join(sandbox, 'count.txt')}"
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  case "$*" in
+    *sort:created-asc*) echo "98"; ${drain ? 'echo "0" > "$CNT_FILE"' : ':'} ;;
+    *) cat "$CNT_FILE" ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
+  case "$*" in
+    *labels*) echo "${labels}" ;;
+    *state*)  echo "${state}" ;;
+    *)        echo "" ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "pr" ]; then echo "[]"; exit 0; fi
+exit 0
+`,
+  )
+}
 
 beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), 'ralph-worktree-'))
@@ -194,29 +237,7 @@ exit 0
   )
 
   // --- gh: one issue (#98), reported CLOSED afterwards (a success) -------------
-  writeStub(
-    'gh',
-    `#!/bin/bash
-CNT_FILE="${join(sandbox, 'count.txt')}"
-if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
-  case "$*" in
-    *sort:created-asc*) echo "98"; echo "0" > "$CNT_FILE" ;;
-    *) cat "$CNT_FILE" ;;
-  esac
-  exit 0
-fi
-if [ "$1" = "issue" ] && [ "$2" = "view" ]; then
-  case "$*" in
-    *labels*) echo "" ;;
-    *state*)  echo "CLOSED" ;;
-    *)        echo "" ;;
-  esac
-  exit 0
-fi
-if [ "$1" = "pr" ]; then echo "[]"; exit 0; fi
-exit 0
-`,
-  )
+  writeGh()
 
   writeStub('tmux', `#!/bin/bash\nexit 0\n`)
   writeStub('curl', `#!/bin/bash\nexit 0\n`)
@@ -363,6 +384,117 @@ describe('ralph.sh github arm — the worktree is seeded with the gitignored fil
   })
 })
 
+// #220 — teardown follows the OUTCOME: a terminal success takes the worktree with it, a
+// failure leaves it standing.
+//
+// Real git for the same reason the rest of this file uses it, and one more: "the tree is
+// still there and it is still a registered worktree on issue-98" is a question only a
+// repository can answer, and the whole value of the keep is that a human can `cd` into
+// it and read a diff. A stub that `exit 0`s to `worktree remove` would agree with any
+// rule at all, including the unconditional one this slice replaces.
+//
+// EVERY KEEP STUB LEAVES SOMETHING UNCOMMITTED, deliberately. The commits are on the
+// `issue-98` branch either way — teardown never touched those — so a tree whose contents
+// were all committed would make the keep indistinguishable from the removal that
+// preceded it. The uncommitted file IS the thing #218's unconditional teardown destroyed:
+// the transcript records what the agent said, the tree records what it did to the code.
+
+// Exits non-zero after writing something it never committed — a run killed by a rate
+// limit or a crashed tool.
+const AGENT_FAILS = () => `#!/bin/bash
+cat > "${join(sandbox, 'prompt.txt')}"
+pwd -P > "${join(sandbox, 'agent-cwd.txt')}"
+echo "half-finished" > scratch-from-agent.txt
+echo '{"type":"result","subtype":"error"}'
+echo "agent exploded" >&2
+exit 7
+`
+
+// Exits ZERO having changed no exclusion state, which is the spin the zero-progress
+// guard exists to stop — and, with a `failed` label already on the issue, the way to ask
+// for the label branch without an exit code that could explain the keep on its own.
+const AGENT_CHANGES_NO_STATE = () => `#!/bin/bash
+cat > "${join(sandbox, 'prompt.txt')}"
+pwd -P > "${join(sandbox, 'agent-cwd.txt')}"
+echo "half-finished" > scratch-from-agent.txt
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`
+
+describe('ralph.sh github arm — teardown follows the outcome (#220)', () => {
+  const leftBehind = () => readIf(join(worktreeDir(), 'scratch-from-agent.txt'))
+
+  it('removes the worktree when the agent left `pending-merge` on an issue still OPEN', () => {
+    // The other half of the terminal-success branch: `CLOSED` is covered above, and this
+    // is the label a ralph agent leaves when the PR is up and merging. Both must remove.
+    writeGh({ state: 'OPEN', labels: 'pending-merge' })
+    const res = runLoop()
+
+    expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+    expect(res.stdout, `stderr:\n${res.stderr}`).toMatch(/1 ok, 0 failed/)
+    expect(existsSync(worktreeDir())).toBe(false)
+    expect(registrations()).toEqual([`worktree ${root}`])
+    // Anti-vacuity: the iteration really ran and its commits survived the removal.
+    expect(git(['log', '--format=%s', 'issue-98'])).toContain('feat(issue-98): agent work')
+  })
+
+  it('KEEPS the worktree when the agent left the issue `failed`', () => {
+    // The label is doing the work here, not the exit code: this agent exits 0.
+    writeStub('claude', AGENT_CHANGES_NO_STATE())
+    writeGh({ state: 'OPEN', labels: 'failed' })
+    const res = runLoop()
+
+    expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+    expect(res.stdout, `stderr:\n${res.stderr}`).toMatch(/0 ok, 1 failed/)
+
+    // The tree is there, and what the agent never committed is in it — which is the
+    // whole point of keeping it.
+    expect(existsSync(worktreeDir())).toBe(true)
+    expect(leftBehind()).toBe('half-finished\n')
+    // …and it is a LIVE worktree, not an orphaned directory: git still lists it, and it
+    // is still on the branch whose diff a human would read.
+    expect(registrations()).toHaveLength(2)
+    expect(registrations()).toContain(`worktree ${worktreeDir()}`)
+    expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreeDir()).trim()).toBe('issue-98')
+  })
+
+  it('KEEPS the worktree when the agent exits non-zero, and still marks the issue failed', () => {
+    writeStub('claude', AGENT_FAILS())
+    writeGh({ state: 'OPEN' })
+    const res = runLoop()
+
+    expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+    // The classification is unchanged by #220: the loop still labels the issue itself so
+    // the queue advances, and still counts the iteration a failure.
+    expect(res.stderr).toMatch(/failed on issue #98 \(non-zero exit\)/)
+    expect(readIf(join(sandbox, 'gh-calls.log'))).toContain('issue edit 98 --add-label failed')
+    expect(res.stdout).toMatch(/0 ok, 1 failed/)
+
+    expect(existsSync(worktreeDir())).toBe(true)
+    expect(leftBehind()).toBe('half-finished\n')
+    // The user's own checkout still never saw it, which is #218's promise unchanged.
+    expect(existsSync(join(root, 'scratch-from-agent.txt'))).toBe(false)
+  })
+
+  it('KEEPS the worktree when the zero-progress guard aborts the run', () => {
+    // `drain: false` leaves the queue non-empty, so #98 is handed out a second time, and
+    // this agent changes no state either time — the exact spin the guard breaks on.
+    writeStub('claude', AGENT_CHANGES_NO_STATE())
+    writeGh({ state: 'OPEN', drain: false })
+    const res = runLoop()
+
+    expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+    expect(res.stderr).toMatch(/no progress on issue #98 \(re-selected without state change\)/)
+    expect(res.stdout).toContain('==> Cleanup')
+    expect(res.stdout).toMatch(/0 ok, 2 failed/)
+
+    // The `break` leaves the second iteration's tree exactly where it was — the abort is
+    // the case a human is MOST likely to want to look at, since the loop stopped on it.
+    expect(existsSync(worktreeDir())).toBe(true)
+    expect(leftBehind()).toBe('half-finished\n')
+  })
+})
+
 describe('the loop and the two GitHub prompts hold no branch-switching of their own (#218)', () => {
   const loop = readFileSync(RALPH_TEMPLATE, 'utf8')
   const claudePrompt = readFileSync(templatePath('prompt-team.md'), 'utf8')
@@ -384,6 +516,12 @@ describe('the loop and the two GitHub prompts hold no branch-switching of their 
     // Anti-vacuity: the knowledge did not simply vanish, it moved to the module.
     expect(loopCode).toMatch(/lib\/worktree\.js" create /)
     expect(loopCode).toMatch(/lib\/worktree\.js" remove /)
+    // #220: teardown is outcome-aware now, and it is still spelled EXACTLY ONCE — in the
+    // helper the classification drives, rather than copied into each terminal-success
+    // branch. A copy is what lets one call site be fixed while the other keeps the bug,
+    // and it is also what would make the `|| true`-versus-warn decision divergeable.
+    expect(loopCode.match(/lib\/worktree\.js" remove /g)).toHaveLength(1)
+    expect(loopCode).toMatch(/remove_issue_worktree "\$num"/)
   })
 
   it('templates/ralph.sh never checks out a branch, so a run cannot move the HEAD of the main tree', () => {
@@ -413,5 +551,24 @@ describe('the loop and the two GitHub prompts hold no branch-switching of their 
     // Whitespace-tolerant: the sentence wraps mid-phrase in both templates, and the
     // claim is the words, not the line break.
     expect(get()).toMatch(/already on\s+`issue-N`/)
+  })
+
+  it.each([
+    ['prompt-team.md', () => claudePrompt],
+    ['prompt-team-codex.md', () => codexPrompt],
+  ])('%s promises the agent the teardown the loop actually performs (#220)', (_name, get) => {
+    const md = get()
+    // Both templates used to tell the agent its tree "is removed after this invocation
+    // returns" — flatly false since #220, and false in the one direction that matters:
+    // an agent that believes the tree is doomed either way has no reason to leave the
+    // evidence of a failure behind in it. The old sentence is pinned as an ABSENCE so a
+    // future edit cannot quietly reintroduce the promise.
+    expect(md).not.toContain('removed after this invocation returns')
+    expect(md).toMatch(/removed once this issue is finished/)
+    expect(md).toMatch(/kept for a human to inspect/)
+    // And the half that did NOT change: whichever way teardown goes, the commits are on
+    // the branch, which is what the PR in step 7 is opened from. Without this the two
+    // clauses above could be read as "a failed run's work is only in the directory".
+    expect(md).toMatch(/the branch and its commits survive/)
   })
 })

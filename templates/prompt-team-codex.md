@@ -51,8 +51,9 @@ and triage uses only Tier 0 (Light) and Tier 1 (Standard).
    checkout. Confirm with `git rev-parse --abbrev-ref HEAD` and, if it answers
    anything but `issue-N`, go straight to "Failed": you are not in the tree this
    invocation was set up in. Create no branch and switch to none — the tree you are
-   in is removed after this invocation returns, while the branch and its commits
-   survive, which is what the PR is opened from.
+   in is removed once this issue is finished, and kept for a human to inspect when it
+   is not, while the branch and its commits survive either way, which is what the PR
+   is opened from.
 
 3b. **Triage and scale the team**: before dispatching, classify the issue and
    scale the team to fit it. Read the issue and the files it implies, then pick

@@ -790,11 +790,21 @@ pushed them, rescue them before the loop reaches that issue again.
 
 Three consequences are worth knowing:
 
-- **The worktree is removed when the iteration ends; the branch is not.** The
-  commits live on `issue-N`, which is what the PR is opened from, so the
-  removal loses nothing that was committed — but anything the agent left
-  **uncommitted** goes with the tree. Removal is unconditional: a failed
-  iteration leaves no worktree behind either.
+- **Teardown follows the iteration's verdict: a success takes its worktree with
+  it, a failure leaves the tree standing.** An iteration Ralph counts as a
+  success — the issue came back **closed**, or carrying `pending-merge`, and not
+  labelled `failed` — has the tree and git's record of it removed. Every verdict
+  it counts as a failure keeps `.ralph/worktrees/issue-N` on disk: a `failed`
+  label, an agent that exited non-zero, an issue simply left open, and the
+  [zero-progress abort](#troubleshooting) all do, so that
+  `git -C .ralph/worktrees/issue-N diff` is there to read — the tree is the
+  record of what the agent *did* to the code, as against what its transcript
+  says it did. Neither outcome deletes the **branch**: the commits live on
+  `issue-N`, which is what the PR is opened from, so a removal loses nothing
+  that was committed — but anything the agent left **uncommitted** goes with the
+  tree, and goes **silently**, because the removal is forced and so never
+  refuses over local modifications. That is the cost a finished issue pays and
+  an unfinished one does not.
 - **A fresh worktree holds tracked files only — plus a short seed list.** A
   worktree is a checkout, so nothing gitignored is in the one git makes: no
   `node_modules`, no `.env.local`, no build cache. Because a project's tests
@@ -814,9 +824,20 @@ Three consequences are worth knowing:
   removing the worktree can never take the record of what the agent did with
   it.
 
-A worktree left behind by a crashed run is not a problem to clean up by hand:
-the next run for that issue clears the leftover directory and any stale git
-registration itself before creating its own.
+A worktree left standing — kept by the rule above, or left behind by a crashed
+run — is not a problem to clean up by hand, and not a deadlock either: the next
+run that reaches that issue clears whatever is at the path before adding its own
+(the directory, a stale git registration, and a `git worktree lock` included), so
+a retry starts from a clean tree. Until then the tree and the commits that
+explain it are both readable, because the Cleanup step's pruning cannot reach a
+kept tree's branch: `git branch --merged` marks a branch another worktree is
+holding with `+` instead of a space, which the pruning skips, and `git branch -d`
+refuses such a branch anyway. Both halves go at the same moment, though — the
+retry re-adds with `git worktree add -B`, which resets `issue-N` onto the fresh
+base exactly as above — so read a kept tree, or rescue what you need out of it,
+before the loop reaches that issue again. What accumulates meanwhile is one
+directory per unfinished issue, and nothing removes those until their issue is
+worked again.
 
 `folder` and `jira` runs create no worktree and are unchanged by this — both
 commit straight to `DEV_BRANCH` in the main checkout, so their agent still
@@ -1054,7 +1075,7 @@ that surprises people, because two of the three sources never publish anything:
 | Work comes from | open issues on the repo's GitHub board, read with `gh` | numbered `.md` files under the gitignored `.ralph/tasks/` tree | work items on a Jira site, read with Atlassian's `acli` |
 | Eligibility is expressed as | a **fixed search query** inside the generated `ralph.sh` — `state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge` — not a config knob; the pick adds `sort:created-asc` | the **directory** itself: the lowest-numbered file in `afk/todo/` | **your JQL**, in [`JIRA_JQL`](#the-eligibility-query--jira_jql) — eligibility only, with Ralph appending the label exclusion and the ordering |
 | CLI and auth it needs | `gh`, authenticated (`gh auth login`) | **no source CLI at all** — `ralph doctor` skips both `gh` and `acli` | `acli`, logged in (`acli jira auth login`) |
-| Where the agent works | a **per-issue git worktree** at `.ralph/worktrees/issue-N`, on an `issue-N` branch cut from `origin/DEV_BRANCH` — the worktree is removed when the iteration ends, the branch is kept, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-issue)) | **your checkout**, on `DEV_BRANCH` — the agent prepares the tree itself (`git checkout DEV_BRANCH && git pull`) | **your checkout**, on `DEV_BRANCH` — the agent prepares the tree itself (`git checkout DEV_BRANCH && git pull`) |
+| Where the agent works | a **per-issue git worktree** at `.ralph/worktrees/issue-N`, on an `issue-N` branch cut from `origin/DEV_BRANCH` — the worktree is removed when the iteration resolves its issue and kept for you to inspect when it does not, the branch is kept either way, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-issue)) | **your checkout**, on `DEV_BRANCH` — the agent prepares the tree itself (`git checkout DEV_BRANCH && git pull`) | **your checkout**, on `DEV_BRANCH` — the agent prepares the tree itself (`git checkout DEV_BRANCH && git pull`) |
 | **Delivery shape** | an `issue-N` **branch**, **pushed**, with a PR set to **auto-merge** (`gh pr merge … --auto`) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** |
 | Ralph claims work by | the **agent** adding the `in-progress` label to the issue | the **agent** moving the file `afk/todo → afk/in-progress` | the **loop** adding the `in-progress` label to the ticket |
 | Completion is recorded as | the issue reaching `CLOSED` (usually via `Closes #N` on the merge) or carrying `pending-merge` | the file arriving in `afk/done/` | the `done` label, with `in-progress` removed, a comment carrying the commit SHA, and a transition to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where the project's workflow accepts one |
@@ -2958,9 +2979,9 @@ abort, and it is nearly always one of two. Either the branch is live elsewhere
 that tree off `issue-N` or `git worktree remove` it — or `DEV_BRANCH` names a
 branch that exists neither on `origin` nor locally (`cannot resolve a base
 commit for '<name>'`), which is a value to fix in `ralph.config.sh`. A
-**leftover** worktree from a crashed run is not this failure: the next run
-clears the stale directory and its stale git registration itself, locked ones
-included.
+**leftover** worktree — one Ralph kept after a failed iteration, or one a crashed
+run left behind — is not this failure: the next run clears the stale directory
+and its stale git registration itself, locked ones included.
 
 **A `⚠️  worktree: refusing to seed '<file>'` or `could not seed '<file>'`
 warning goes past and the run carries on.** — Expected, and it costs that one
@@ -2980,6 +3001,22 @@ at '<file>' with a copy` line beside it is not a failure either — your
 repository *tracks* a symlink at that path, and a seeded file is always a
 regular file of the worktree's own rather than a link back into your checkout.
 A listed file your repo does not have prints nothing at all.
+
+**A `⚠️  ralph.sh: could not remove the worktree for issue #N` warning goes past
+and the run carries on.** — Ralph resolved that issue and then could not take its
+worktree down, so `.ralph/worktrees/issue-N` is still on your disk. The verdict
+is untouched: the iteration is still counted a success, the Cleanup step still
+runs, and the run's exit status is unchanged — teardown gets no vote on whether
+the issue was resolved, and the warning is there so that a leftover directory is
+never silent. What git and node made of it is on stderr just above, as a
+`worktree.js: remove failed (…)` line; a permission problem on the worktree or on
+`.ralph/worktrees` is the usual cause. Nothing has to be done about it — the next
+run that reaches that issue clears the leftover itself, as it does for a
+[deliberately kept one](#where-an-iteration-runs--a-worktree-per-issue) — but if
+you want it gone sooner, fix what blocked the delete, `rm -rf` the directory, and
+run `git worktree prune` in case git's record of it outlived it. A worktree left
+standing after an iteration Ralph counted a **failure** is not this warning and
+not a fault: that one is kept on purpose, silently.
 
 **The loop aborts with `no progress on issue #N`.** — A zero-progress
 guard fired: the same issue was re-selected on consecutive iterations
