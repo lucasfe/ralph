@@ -681,14 +681,25 @@ describe('the Cleanup pruning and a kept worktree (#220 QA)', () => {
 // braces. What no test asks is whether a worktree ALREADY on disk survives a run in one
 // of those modes, which is the only way the guard can be observed from outside: a folder
 // run works task #1, so an unguarded removal would be aimed at `.ralph/worktrees/issue-1`.
+//
+// #221 SHARPENED THIS, and did not overturn it. Folder mode now creates a worktree of its
+// own (`task-1`, detached), so the run below ends with TWO trees the guard has to leave
+// alone: the leftover `issue-1` an unguarded `remove_issue_worktree 1` would aim at, and
+// the folder task's own tree, whose teardown is a separate slice (#223). Both are asserted,
+// so #223 cannot land silently and a regression in the guard cannot hide behind it.
 
-describe('folder mode performs no teardown, even with a worktree sitting there (#220 QA)', () => {
+describe('folder mode performs no teardown, even with worktrees sitting there (#220 QA, #221)', () => {
   function seedTask() {
     const dir = join(workdir, '.ralph', 'tasks', 'afk', 'todo')
     mkdirSync(dir, { recursive: true })
     writeFileSync(join(dir, '001-first.md'), 'do the thing')
   }
 
+  // Deliberately COMMITS NOTHING: this section is about teardown, and a worktree whose
+  // HEAD is still the dev branch's own tip makes the loop's advance step a silent no-op,
+  // so nothing here can be confused for a park or an advance. `$PROJECT_ROOT` is still
+  // the MAIN root in the agent's environment (only the prompt's {{PROJECT_ROOT}} is
+  // overridden), which is how the gitignored task lane is reachable from the worktree.
   function folderAgent() {
     writeStub(
       'claude',
@@ -709,8 +720,8 @@ exit 0
   it('leaves an existing issue-1 worktree registered, on its branch, with its contents', () => {
     seedTask()
     folderAgent()
-    // A worktree at exactly the path a folder task #1 would derive, made the way the
-    // loop makes them so the fixture is not a fiction about one.
+    // A worktree at exactly the path an unguarded `remove_issue_worktree 1` would name,
+    // made the way the loop makes them so the fixture is not a fiction about one.
     execFileSync('node', [WORKTREE_CLI, 'create', root, 'issue-1', 'main'], {
       cwd: root,
       encoding: 'utf8',
@@ -720,16 +731,25 @@ exit 0
     const res = runLoop({ timeout: 40000, extraEnv: { TASK_SOURCE: 'folder' } })
     expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
     expect(res.stdout, `stderr:\n${res.stderr}`).toMatch(/1 ok, 0 failed/)
-    // The task really was worked, in the MAIN root — so this is a folder run that got
-    // all the way through its outcome handling, not one that bailed early.
-    expect(readIf(sandboxFile('cwd-folder.txt')).trim()).toBe(root)
+    // The task really was worked, in ITS OWN detached tree — so this is a folder run that
+    // got all the way through its outcome handling, not one that bailed early.
+    expect(readIf(sandboxFile('cwd-folder.txt')).trim()).toBe(worktreeDir('task-1'))
 
     // Nothing was removed, deregistered, or emptied.
     expect(readFileSync(join(worktreeDir('issue-1'), 'precious.txt'), 'utf8')).toBe(
       'a human is reading this\n',
     )
-    expect(registrations()).toEqual([`worktree ${root}`, `worktree ${worktreeDir('issue-1')}`])
+    // Sorted rather than in registration order: three entries now, and which of the two
+    // children git lists first is not the claim. The main root sorts first either way —
+    // it is a prefix of both — and `issue-1` before `task-1`.
+    expect(registrations().sort()).toEqual([
+      `worktree ${root}`,
+      `worktree ${worktreeDir('issue-1')}`,
+      `worktree ${worktreeDir('task-1')}`,
+    ])
     expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreeDir('issue-1')).trim()).toBe('issue-1')
+    // The folder task's own tree is detached, and it is still there: #223 owns removing it.
+    expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreeDir('task-1')).trim()).toBe('HEAD')
     // And no removal was even attempted, successfully or otherwise.
     expect(res.stderr).not.toMatch(/could not remove the worktree/)
     expect(res.stderr).not.toMatch(/worktree remove declined/)

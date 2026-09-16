@@ -39,7 +39,11 @@ import { templatePath } from '../lib/paths.js'
 //     leftover registration from a dead run — must abort without yanking HEAD.
 //   • The transcript has to survive the teardown even when the agent wandered out of
 //     the tree it was given or deleted that tree outright.
-//   • folder mode must be untouched: no worktree, no override in its prompt.
+//   • folder mode gets a DETACHED worktree of its own since #221, and the promise this
+//     file exists for has to hold there too: the main tree here is dirty on the very
+//     branch folder mode delivers to, so the loop may not write that branch — it parks
+//     the commit instead, and the user's three kinds of work in progress are compared
+//     byte for byte afterwards.
 //   • Since #219 the create path also SEEDS the tree with a configured list of gitignored
 //     files, and a refused entry on that list must cost its own file and nothing more —
 //     the loop turns a failed create into `break`, so a throw there would stop every
@@ -819,7 +823,19 @@ describe('the shape of the tree the agent wakes up in (#218 QA)', () => {
 // 5. Cross-mode non-regression
 // ---------------------------------------------------------------------------
 
-describe('folder mode is untouched by #218 (#218 QA)', () => {
+// #221 REPLACED THIS SECTION'S CLAIM. It used to read "folder mode is untouched by
+// #218" and assert that no worktree existed at all; folder mode now gets one too, so
+// what survives is the PROMISE that block was really protecting — the user's checkout is
+// not disturbed — asked of the new mechanism instead of of its absence.
+//
+// AND THIS FIXTURE'S MAIN TREE IS DIRTY, which makes it the park case for free: the
+// beforeEach above leaves a modified tracked file, a staged change and an untracked file
+// in the main root, on the very branch folder mode delivers to. So the loop may not write
+// that branch, and `treeSnapshot()` — branch, sha, full porcelain status, HEAD reflog —
+// is the assertion that it did not. test/loop.worktree.folder.test.js owns the advance
+// paths against a clean tree; what is added here is the same run seen from the side of a
+// human with work in progress.
+describe('folder mode resolves its task in a detached worktree, and the dirty main tree survives it (#221 QA)', () => {
   function seedTask() {
     const dir = join(workdir, '.ralph', 'tasks', 'afk', 'todo')
     mkdirSync(dir, { recursive: true })
@@ -827,25 +843,35 @@ describe('folder mode is untouched by #218 (#218 QA)', () => {
   }
 
   // The agent moves the task to done itself, exactly as the folder orchestrator prompt
-  // instructs, and records the prompt it was handed plus where it ran.
+  // instructs, and commits in the tree it was handed — which is what gives the loop a
+  // commit to advance the branch to, or to park.
+  //
+  // `$PROJECT_ROOT` is read for the task lane on purpose: that variable is still the
+  // MAIN root in the agent's environment (templates/ralph.sh exports it once, before any
+  // task is selected), and only the PROMPT's {{PROJECT_ROOT}} is overridden. It is the
+  // reason the gitignored `.ralph/tasks/` tree is reachable from inside the worktree at
+  // all, and the reason {{MAIN_REPO_ROOT}} can name it.
   function folderAgent() {
     writeStub(
       'claude',
       `#!/bin/bash
-cat > "${sandboxFile('prompt.txt')}"
-pwd -P > "${sandboxFile('agent-cwd.txt')}"
+${record()}
 TODO="$PROJECT_ROOT/.ralph/tasks/afk/todo"
 DONE="$PROJECT_ROOT/.ralph/tasks/afk/done"
 mkdir -p "$DONE"
 f=$(ls "$TODO"/*.md 2>/dev/null | sort | head -1)
 [ -n "$f" ] && mv "$f" "$DONE/"
+echo "hello from the agent" > agent-file.txt
+git add agent-file.txt
+git commit -q -m "feat: agent work (task #1)"
+git rev-parse HEAD > "${sandboxFile('agent-head.txt')}"
 echo '{"type":"result","subtype":"success"}'
 exit 0
 `,
     )
   }
 
-  it('creates no worktree, runs the agent in the main root, and moves no HEAD', () => {
+  it('runs the agent in a detached worktree and moves nothing in the user’s checkout', () => {
     seedTask()
     folderAgent()
     const before = treeSnapshot()
@@ -854,21 +880,48 @@ exit 0
     expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
     expect(res.stdout).toMatch(/1 ok, 0 failed/)
 
-    // No worktree was created for a folder task — the parent directory is not even
-    // made, because lib/worktree.js is never invoked in this arm.
-    expect(existsSync(join(root, '.ralph', 'worktrees'))).toBe(false)
-    expect(registrations()).toEqual([`worktree ${root}`])
-    expect(readIf(sandboxFile('agent-cwd.txt')).trim()).toBe(root)
+    // A worktree WAS created for the folder task, and the agent woke up in it.
+    expect(registrations()).toEqual([`worktree ${root}`, `worktree ${worktreeDir('task-1')}`])
+    expect(readIf(sandboxFile('agent-cwd.txt')).trim()).toBe(worktreeDir('task-1'))
+    // DETACHED: no `task-1` branch to collide with the `main` the main tree holds.
+    expect(readIf(sandboxFile('agent-branch.txt')).trim()).toBe('HEAD')
+
+    // THE USER'S TREE IS BYTE-IDENTICAL: same branch, same commit, same staged and
+    // untracked entries, same HEAD reflog. The dirty status is exactly why the branch
+    // could not be advanced, and it is exactly what the loop refused to spend.
     expect(treeSnapshot()).toEqual(before)
+    expect(existsSync(join(root, 'agent-file.txt'))).toBe(false)
   })
 
-  it('renders {{PROJECT_ROOT}} as the MAIN root, with no worktree path leaking in', () => {
+  it('parks the commit on ralph/task-N and names both the branch and the sha on stderr', () => {
+    seedTask()
+    folderAgent()
+    const res = runLoop({ timeout: 40000, extraEnv: { TASK_SOURCE: 'folder' } })
+
+    const agentSha = readIf(sandboxFile('agent-head.txt')).trim()
+    expect(agentSha).toMatch(/^[0-9a-f]{40}$/)
+    // NOT LOST, and reachable by a name a human can type.
+    expect(git(['rev-parse', 'refs/heads/ralph/task-1']).trim()).toBe(agentSha)
+    expect(res.stderr).toContain('ralph/task-1')
+    expect(res.stderr).toContain(agentSha)
+
+    // AND THE VERDICT IS THE TASK'S OWN: the agent moved the file to done, so this is a
+    // success. A branch Ralph could not advance is not a task Ralph failed.
+    expect(res.stdout, `stderr:\n${res.stderr}`).toMatch(/1 ok, 0 failed/)
+    expect(res.status).toBe(0)
+    expect(existsSync(join(root, '.ralph', 'tasks', 'afk', 'done', '001-first.md'))).toBe(true)
+  })
+
+  it('renders {{PROJECT_ROOT}} as the worktree and reaches the task lanes through the main root', () => {
     seedTask()
     folderAgent()
     runLoop({ timeout: 40000, extraEnv: { TASK_SOURCE: 'folder' } })
     const prompt = readIf(sandboxFile('prompt.txt'))
-    expect(prompt).toContain(`Your project root is \`${root}\``)
-    expect(prompt).not.toContain('.ralph/worktrees')
+    // The two roots come apart here, and each one has to name its own thing: the code is
+    // in the worktree, the gitignored task queue is only in the main checkout.
+    expect(prompt).toContain(`Your project root is \`${worktreeDir('task-1')}\``)
+    expect(prompt).toContain(`${root}/.ralph/tasks/afk/todo/`)
+    expect(prompt).toContain(`${root}/.ralph/tasks/afk/done/`)
   })
 
   it('keeps its per-task transcript at the main root', () => {
@@ -882,7 +935,7 @@ exit 0
     )
   })
 
-  it('never invokes gh, which is the other half of "unchanged"', () => {
+  it('never invokes gh, which the worktree changed nothing about', () => {
     seedTask()
     folderAgent()
     runLoop({ timeout: 40000, extraEnv: { TASK_SOURCE: 'folder' } })

@@ -18,9 +18,12 @@ full team. A third **Tier 2 / Heavy** path exists for the largest tasks, but
 it is gated behind the `{{RALPH_HEAVY_TIER}}` flag and is off by default.
 
 Your project root is `{{PROJECT_ROOT}}`. Stay inside it for all
-operations.
+operations — with the single exception named in step 1: the task queue lives in
+the main checkout at `{{MAIN_REPO_ROOT}}`, which is where this loop keeps its own
+`.ralph/` directory.
 
-Task source: `{{TASK_SOURCE}}`. Tasks live under `.ralph/tasks/` in two lanes:
+Task source: `{{TASK_SOURCE}}`. Tasks live under `{{MAIN_REPO_ROOT}}/.ralph/tasks/`
+in two lanes:
 `afk/` (autonomous — this loop owns it) with the status directories `todo/`,
 `in-progress/`, `done/`, and `failed/`, and `hitl/` (human-in-the-loop —
 never touched by this loop). Each task is a numbered markdown file
@@ -67,22 +70,42 @@ So, without exception:
 0. **Ensure dependencies**: run `{{INSTALL_CMD}}` (skip if empty).
 
 1. **Select task**: pick the lowest-numbered file in
-   `.ralph/tasks/afk/todo/` (the folder analog of `sort:created-asc`). Read it
-   and parse the frontmatter `title`/`labels` and the body. If the directory is
-   empty, write "RALPH_DONE" and exit. (The bash already checks this before
-   invoking you, so normally there will be one.)
+   `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/todo/` (the folder analog of
+   `sort:created-asc`). That path is in the MAIN checkout, not in your project
+   root: the `.ralph/` tree is gitignored, so it exists there and nowhere else.
+   Read it and parse the frontmatter `title`/`labels` and the body. If the
+   directory is empty, write "RALPH_DONE" and exit. (The bash already checks this
+   before invoking you, so normally there will be one.)
 
-2. **Mark in progress**: move the task file from `.ralph/tasks/afk/todo/` to
-   `.ralph/tasks/afk/in-progress/` with a plain `mv` (keep the same filename) —
-   e.g. `mv .ralph/tasks/afk/todo/<file> .ralph/tasks/afk/in-progress/`. The
-   `.ralph/` tree is gitignored, so this is a filesystem-only move: never
-   `git mv` and never `git add` a task file. This is your happy-path claim on
-   the task; the outer bash sweeps a task left in `todo/` or stuck in
-   `in-progress/` to `failed/` if you do not finish.
+2. **Mark in progress**: move the task file from
+   `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/todo/` to
+   `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/in-progress/` with a plain `mv` (keep the
+   same filename) — e.g. `mv {{MAIN_REPO_ROOT}}/.ralph/tasks/afk/todo/<file>
+   {{MAIN_REPO_ROOT}}/.ralph/tasks/afk/in-progress/`. The `.ralph/` tree is
+   gitignored, so this is a filesystem-only move: never `git mv` and never
+   `git add` a task file. This is your happy-path claim on the task; the outer
+   bash sweeps a task left in `todo/` or stuck in `in-progress/` to `failed/` if
+   you do not finish.
 
-3. **Prepare working tree**: `git checkout {{DEV_BRANCH}} && git pull`. Folder
-   mode commits **directly to `{{DEV_BRANCH}}`** — there is NO feature branch,
-   NO pull request, and NO auto-merge. Do all work on `{{DEV_BRANCH}}`.
+3. **Prepare working tree**: the loop already prepared it. It created a dedicated
+   git worktree for this task at the tip of the local `{{DEV_BRANCH}}`, left it
+   **detached** (folder mode delivers straight to `{{DEV_BRANCH}}`, and git will
+   not check one branch out in two trees), and started you inside it — so
+   `{{PROJECT_ROOT}}` above is that worktree rather than the main checkout, and
+   `git rev-parse --abbrev-ref HEAD` answers the literal `HEAD`. Commit on that
+   detached HEAD. **Create no branch and switch to none**, and do not check
+   `{{DEV_BRANCH}}` out or pull it: this source never pushes, so a pull can only
+   merge in remote content that no task here produced, and checking the branch
+   out takes it out of the loop's hands. Git will usually refuse you outright,
+   for the reason above: it will not check one branch out in two trees, and the
+   main checkout normally holds this one. Where it does not refuse,
+   `{{DEV_BRANCH}}` ends up checked out in this worktree, which the loop keeps
+   registered after you exit, and that alone is enough to make the NEXT task's
+   commit get parked instead of advancing the branch. Once you return,
+   the loop advances `{{DEV_BRANCH}}` to your commit for you — or, when it
+   cannot do that without disturbing a human's working tree, it instead
+   parks your commit on a `ralph/task-N` branch and says so. There is still
+   NO feature branch, NO pull request, and NO auto-merge.
 
 3b. **Triage and scale the team**: before dispatching, classify the task and
    scale the team to fit it. Read the task and the files it implies, then pick
@@ -268,19 +291,21 @@ reviewers** instead of a single pass:
    the empty ones). If they fail, fix and re-run. Repeat up to 3 times;
    if they still fail, go to "Failed".
 
-6. **Mark complete**: move the task file from `.ralph/tasks/afk/in-progress/` to
-   `.ralph/tasks/afk/done/` with a plain `mv` (keep the same filename) — e.g.
-   `mv .ralph/tasks/afk/in-progress/<file> .ralph/tasks/afk/done/`. This is your
-   happy-path completion move. As in step 2, the `.ralph/` tree is gitignored:
-   filesystem-only move, never `git mv`.
+6. **Mark complete**: move the task file from
+   `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/in-progress/` to
+   `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/done/` with a plain `mv` (keep the same
+   filename) — e.g. `mv {{MAIN_REPO_ROOT}}/.ralph/tasks/afk/in-progress/<file>
+   {{MAIN_REPO_ROOT}}/.ralph/tasks/afk/done/`. This is your happy-path completion
+   move. As in step 2, the `.ralph/` tree is gitignored: filesystem-only move,
+   never `git mv`.
 
-7. **Commit to `{{DEV_BRANCH}}`**: `git add <specific files> && git commit -m
-   "fix: <description> (task #N)"`. Stage ONLY code/tests — both the new/updated
-   tests and the implementation in the same commit so the TDD pair is reviewable
-   together. Do NOT stage the task file: the `.ralph/` tree is gitignored and the
-   status move (step 6) is a filesystem-only operation that never enters a
-   commit or diff. The bash pushes `{{DEV_BRANCH}}` for you after this invocation
-   returns. The commit message
+7. **Commit for `{{DEV_BRANCH}}`**: `git add <specific files> && git commit -m
+   "fix: <description> (task #N)"`, on the detached HEAD you woke on (step 3) —
+   the loop is what moves `{{DEV_BRANCH}}` to this commit once you return. Stage
+   ONLY code/tests — both the new/updated tests and the implementation in the
+   same commit so the TDD pair is reviewable together. Do NOT stage the task
+   file: the `.ralph/` tree is gitignored and the status move (step 6) is a
+   filesystem-only operation that never enters a commit or diff. The commit message
    body must document the TDD process; use this template as the commit summary:
 
    ```
@@ -306,8 +331,9 @@ reviewers** instead of a single pass:
 
    Each section carries one role's output — Dev/TDD from step 4, QA scenarios
    from step 4b, Review verdict from step 4c, Docs updated from step 4d. Retain
-   a **single per-task log** (`logs/ralph-issue-N.log`) for the whole team run;
-   there are **no per-role logs**.
+   a **single per-task log** (`{{MAIN_REPO_ROOT}}/logs/ralph-issue-N.log` — the
+   loop writes it in the main checkout, not in the worktree you are in) for the
+   whole team run; there are **no per-role logs**.
 
    If TDD was skipped per the triage in step 3b, replace the Dev/TDD section
    body with `- Skipped: <reason — must be docs/config/dep-bump only>` and the
@@ -327,19 +353,21 @@ reviewers** instead of a single pass:
 ## Failed (at any point)
 
 - Leave a short reason in the task body (append a `## Ralph failure` note).
-- The outer bash sweeps the task file to `.ralph/tasks/afk/failed/` when this
-  invocation returns without having moved it to `done/`; you do not need to move
-  it yourself on failure.
+- The outer bash sweeps the task file to
+  `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/failed/` when this invocation returns
+  without having moved it to `done/`; you do not need to move it yourself on
+  failure.
 - Exit.
 
 ## Absolute restrictions
 
 - NEVER `git push --force` or `git push -f`.
-- NEVER push directly to `{{MAIN_BRANCH}}`. Commit to `{{DEV_BRANCH}}` only; the
-  bash pushes it.
+- NEVER push directly to `{{MAIN_BRANCH}}`. Commit on the detached HEAD the loop
+  started you on and move no branch yourself — the loop advances
+  `{{DEV_BRANCH}}` to your commit after you return (step 3).
 - NEVER touch: `.env*`, `.git/`, `node_modules/`, `dist/`, `logs/`,
   `ralph.sh`, `start-ralph.sh`, `PROMPT.md`, `ralph.config.sh`,
-  `.claude/`, and the `.ralph/tasks/hitl/` lane.
+  `.claude/`, and the `{{MAIN_REPO_ROOT}}/.ralph/tasks/hitl/` lane.
 - NEVER `rm -rf` on an absolute path. Use `rm` on a specific file.
 - NEVER merge PRs directly. Folder mode opens no PRs.
 - NEVER close issues manually. Folder mode tracks completion by moving the task
@@ -347,9 +375,15 @@ reviewers** instead of a single pass:
 - NEVER emit your final message while a dispatched subagent is still
   running. See "Dispatch discipline" — the session is terminated at the
   background-wait ceiling and the whole invocation is lost.
-- NEVER edit, create, or delete files outside `{{PROJECT_ROOT}}`.
+- NEVER edit, create, or delete files outside `{{PROJECT_ROOT}}`, with ONE
+  exception: your own task file under `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/`,
+  which steps 1, 2 and 6 order you to read and to move between that lane's
+  status directories. Nothing else outside your project root, and nothing under
+  `{{MAIN_REPO_ROOT}}/.ralph/tasks/hitl/` ever.
 - NEVER run Bash commands that touch files outside `{{PROJECT_ROOT}}`
-  (e.g. `rm`, `mv`, `curl > path`).
+  (e.g. `rm`, `mv`, `curl > path`) — the same single exception applies, and only
+  as the plain `mv` of your task file within
+  `{{MAIN_REPO_ROOT}}/.ralph/tasks/afk/`.
 - If `{{TEST_CMD}}` or `{{LINT_CMD}}` breaks 3 times in a row, declare
   CLAUDE_GIVE_UP and go to "Failed".
 
