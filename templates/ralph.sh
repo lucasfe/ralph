@@ -128,12 +128,13 @@ if [ -f .env.local ]; then
 fi
 
 # ABSOLUTE, and derived exactly once (#218). github mode now spawns the agent with
-# cwd set to a per-issue git worktree, and that worktree is DELETED at the end of the
-# iteration — so a relative `logs/…` handed to the agent's stream would resolve inside
-# the worktree and the transcript would be removed along with it, taking the one record
-# of what the agent did. Anchoring every log path to $PROJECT_ROOT (the MAIN repo root,
-# which this script never leaves) is what keeps them. Same directory as before: the
-# loop's own cwd IS $PROJECT_ROOT, so `logs/x` and `$LOG_DIR/x` name one file.
+# cwd set to a per-issue git worktree, and that worktree is DELETED at the end of every
+# iteration that FINISHED its issue (#220 made the teardown outcome-aware; before it,
+# every iteration) — so a relative `logs/…` handed to the agent's stream would resolve
+# inside the worktree and the transcript would be removed along with it, taking the one
+# record of what the agent did. Anchoring every log path to $PROJECT_ROOT (the MAIN repo
+# root, which this script never leaves) is what keeps them. Same directory as before:
+# the loop's own cwd IS $PROJECT_ROOT, so `logs/x` and `$LOG_DIR/x` name one file.
 LOG_DIR="$PROJECT_ROOT/logs"
 mkdir -p "$LOG_DIR"
 
@@ -447,6 +448,61 @@ node "$RALPH_PKG_DIR/lib/run-state.js" begin \
 # No "does it have the label?" pre-check: gh no-ops on an absent label.
 clear_in_progress_label() {
   gh issue edit "$1" --remove-label in-progress >/dev/null 2>&1 || true
+}
+# ---------------------------------------------------------------------------
+
+# --- Per-issue worktree teardown, OUTCOME-AWARE (#220) ----------------------
+# Removes $PROJECT_ROOT/.ralph/worktrees/issue-$1 and git's administrative record of it,
+# through lib/worktree.js — the same module that created it, and the only place in this
+# package that RUNS a `git worktree` command at all.
+#
+# CALLED FROM ONE BRANCH ONLY: the classification below, where the issue came back
+# CLOSED or `pending-merge`. That is the first point in an iteration where the outcome is
+# known, which is why the call cannot live beside the agent run any more, and it is
+# called exactly the way clear_in_progress_label is, from that same branch — the
+# statement directly after it. Not the same set, though: that helper runs for every
+# TERMINAL state, this one only for the terminal states that mean the issue is DONE.
+#
+# WHAT THE OTHER BRANCHES BUY BY NOT CALLING IT: a `failed` issue, an agent that exited
+# non-zero, and a zero-progress spin all leave the tree standing with whatever the agent
+# left UNCOMMITTED still in it. The transcript records what the agent SAID, the tree
+# records what it DID to the code, and #218's unconditional teardown deleted the second
+# one before any human could read it. One combination goes the other way: a non-zero exit
+# does NOT keep the tree if the agent already reached a terminal-success state — the
+# classification reads the labels first and $claude_failed only in its `else` arm, so
+# `pending-merge` plus a crash on the way out still removes, leaving a PR to read.
+#
+# WHAT A KEEP IS WORTH IS TIME-LIMITED, and the deadline is the next attempt on the same
+# issue: the create path clears the path before it adds anything (directory, stale
+# registration, even a lock — lib/worktree.js carries those measurements), and it adds with
+# `worktree add -B`, which RESETS the handle to origin/$DEV_BRANCH — nothing in this helper
+# touches a branch, the next create is what rewinds one. MEASURED over two runs on git
+# 2.50.1 (Apple Git-155): run 1's `feat(issue-98): agent work` is gone from `git log
+# --format=%s issue-98` after run 2's create. So a retry costs a kept issue BOTH halves of
+# its evidence, not just the working copy. Until then the two survive together — the
+# Cleanup block at the end of this file spares a branch a worktree holds, and is measured
+# there, beside the `grep` that spares it. What accumulates meanwhile is one directory per
+# unfinished issue; deleting those is a human's decision, not this loop's.
+#
+# GITHUB ONLY, GUARDED HERE rather than at the call site: folder and jira mode never
+# create a worktree (see the create block below), so removal is a no-op for them.
+#
+# A REMOVAL RALPH COULD NOT FINISH IS A WARNING, NEVER A VERDICT. It is best-effort like
+# every other call of its kind in this file, but a bare `|| true` would also absorb the
+# one fact a human needs — that a directory they were told was gone is still on their
+# disk. Called the way THIS loop calls it — the same $PROJECT_ROOT and `issue-$num` the
+# create above already accepted, so none of the module's argument guards can be what
+# answers — lib/worktree.js exits non-zero only after git AND its own filesystem sweep
+# both failed to take the tree apart, which is the whole contract the warning rests on:
+# non-zero ⇒ the tree is still on disk. Which leg failed, with which exit code and stderr,
+# is a fact about that module, pinned by that module's tests. The return here is 0
+# regardless: the issue was resolved, and teardown gets no vote on that.
+remove_issue_worktree() {
+  [ "$TASK_SOURCE" = "github" ] || return 0
+  if ! node "$RALPH_PKG_DIR/lib/worktree.js" remove "$PROJECT_ROOT" "issue-$1"; then
+    echo "⚠️  ralph.sh: could not remove the worktree for issue #$1 — leaving .ralph/worktrees/issue-$1 in place." >&2
+  fi
+  return 0
 }
 # ---------------------------------------------------------------------------
 
@@ -766,17 +822,26 @@ while :; do
   issue_end_ms=$(date +%s000)
   issue_dur_ms=$(( issue_end_ms - issue_start_ms ))
 
-  # TEARDOWN, UNCONDITIONAL on the outcome (#218), and placed here — before the
-  # folder arm's `continue` and before every github classification branch, including
-  # the zero-progress `break` — so no path out of an iteration can leak a worktree.
-  # Outcome-aware teardown (keeping the tree of a failed issue around to inspect) is a
-  # later slice of #217; today the commits are on the `issue-$num` BRANCH, which this
-  # never deletes, so removing the tree loses nothing. The transcripts are safe for the
-  # same reason $LOG_DIR is absolute.
+  # THE WORKTREE IS NO LONGER TORN DOWN HERE (#220). It used to be, unconditionally and
+  # at this exact spot, which is what put every path out of an iteration on the same
+  # footing — and that was the bug: the tree of a FAILED issue is the only record of what
+  # the agent actually changed, as opposed to what it said, and this line deleted it
+  # before a human could look. Removal now hangs off the CLASSIFICATION further down, in
+  # the terminal-success branch only, because that is the first point in the iteration
+  # where the outcome is known; remove_issue_worktree (defined above the loop, beside
+  # clear_in_progress_label) is the whole of it. The folder arm's `continue` below
+  # therefore skips a call it never needed — that arm creates no worktree.
+  #
+  # THE PROMPT OVERRIDE, on the other hand, is unconditional ON THE OUTCOME — taken back
+  # on every path out of the iteration — and it stays here for the reason it always was:
+  # it belongs to the agent run that just ended, not to how that run was judged. The next
+  # iteration re-exports it; leaving it set would point lib/build-prompt.js's
+  # {{PROJECT_ROOT}} at another issue's tree — one that may well have just been removed —
+  # if anything downstream built a prompt. The `if` below is now SYMMETRY, not necessity:
+  # with the removal gone from this block, `unset` of a name the non-github arms never
+  # exported is a no-op that exits 0, so the guard buys nothing but a shape that matches
+  # the export it undoes (search RALPH_PROMPT_PROJECT_ROOT above). Kept for that.
   if [ "$TASK_SOURCE" = "github" ]; then
-    node "$RALPH_PKG_DIR/lib/worktree.js" remove "$PROJECT_ROOT" "issue-$num" || true
-    # The next iteration re-exports it; leaving it set would point the placeholder at a
-    # directory that no longer exists if anything downstream built a prompt.
     unset RALPH_PROMPT_PROJECT_ROOT
   fi
 
@@ -854,6 +919,10 @@ while :; do
     failures+=("$num")
   elif [ "$state" = "CLOSED" ] || echo ",$labels," | grep -q ",pending-merge,"; then
     clear_in_progress_label "$num"
+    # THE ONLY BRANCH THAT TAKES THE WORKTREE DOWN (#220): the issue is finished, so
+    # there is nothing left in the tree worth reading — the commits are on the branch.
+    # Every other branch below leaves it standing on purpose; see the helper's header.
+    remove_issue_worktree "$num"
     successes+=("$num")
   else
     # No exclusion label and still open. If the agent failed (non-zero exit) mark
@@ -899,6 +968,14 @@ echo "==> Cleanup"
 # dev branch, which the fetch above just refreshed, not when it has landed on a local
 # copy that nothing in this block updates any more. The `grep` is unchanged and still
 # skips the current branch, which `git branch` marks with `* ` rather than spaces.
+#
+# THE SAME `grep` NOW ALSO SKIPS EVERY BRANCH A KEPT WORKTREE HOLDS (#220), and that is
+# the behaviour this block wants rather than an accident it tolerates: an issue whose
+# tree was kept is an issue somebody still has to look at, and the branch is half of
+# what there is to read. MEASURED on git 2.50.1 (Apple Git-155): `git branch --merged`
+# prints `+ issue-98` for a branch checked out in another worktree, so `^\s+issue-`
+# never matches it, and `git branch -d issue-98` refuses it anyway (`error: cannot
+# delete branch 'issue-98' used by worktree at '<path>'`, exit 1 — swallowed here).
 git fetch origin "${DEV_BRANCH:-main}" 2>/dev/null || true
 git branch --merged "origin/${DEV_BRANCH:-main}" 2>/dev/null | grep -E '^\s+issue-' | xargs -r git branch -d 2>/dev/null || true
 

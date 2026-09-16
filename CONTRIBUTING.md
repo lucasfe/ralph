@@ -535,6 +535,18 @@ iteration straight to "Failed". `test/loop.worktree.test.js` pins the GitHub hal
 `lib/template-parity.test.js` pins the step heading within each pair, so the two
 pairs are free to differ here and locked within themselves.
 
+**What step 3 promises about that tree must match the loop's teardown** (#220).
+Both GitHub templates used to tell the agent the tree it is standing in "is
+removed after this invocation returns"; teardown now follows the iteration's
+outcome, so they say it is removed once the issue is finished and kept for a
+human to inspect when it is not — while the branch and its commits survive either
+way, which is the half that did not change and the half the PR is opened from.
+The direction of the error is what makes it worth pinning: an agent that believes
+the tree is doomed whatever happens has no reason to leave the evidence of a
+failure behind in it. `test/loop.worktree.test.js` asserts the old sentence's
+**absence** and the new wording's presence in both templates, so the promise
+cannot quietly drift back.
+
 The **label names** these templates spell have a guard of their own, because a
 template cannot import the module that owns them: see
 [Label names live in one module](#label-names-live-in-one-module-139). A per-file

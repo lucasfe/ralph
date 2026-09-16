@@ -31,7 +31,9 @@ import { templatePath } from '../lib/paths.js'
 //     switch or a `git worktree add` could disturb; all three are seeded and compared
 //     byte for byte, and so is `git reflog` — which is the assertion that says nothing
 //     moved HEAD rather than that it moved and came back.
-//   • A run that FAILS must be just as harmless, and must still not leak a worktree.
+//   • A run that FAILS must be just as harmless to the user's checkout — and, since #220,
+//     must KEEP its worktree instead of leaking or losing it: the tree is what a human
+//     reads the agent's real diff out of when the transcript is not enough.
 //   • Every way creating the worktree can fail — an unresolvable DEV_BRANCH, an
 //     unwritable worktrees directory, `issue-N` checked out in the user's own tree, a
 //     leftover registration from a dead run — must abort without yanking HEAD.
@@ -145,8 +147,8 @@ echo "agent exploded" >&2
 exit 7
 `
 
-// Commits one file and leaves another uncommitted, so the cost of an unconditional
-// teardown can be stated rather than guessed at.
+// Commits one file and leaves another uncommitted, so the cost of the teardown on the
+// SUCCESS path can be stated rather than guessed at.
 const AGENT_HALF_COMMITS = () => `#!/bin/bash
 ${record()}
 echo committed > committed.txt
@@ -181,6 +183,29 @@ exit 0
 const AGENT_INVENTORIES = () => `#!/bin/bash
 ${record()}
 ls -A > "${sandboxFile('agent-ls.txt')}"
+echo '{"type":"result","subtype":"success"}'
+exit 0
+`
+
+// JAMS THE TEARDOWN (#220), by leaving a mode-0500 directory inside the tree it was
+// handed: unlinking the file inside it needs write permission on the directory, so
+// nothing short of a chmod can delete it. MEASURED on git 2.50.1 (Apple Git-155) /
+// node v20.20.2, against a worktree lib/worktree.js had just created: `git worktree
+// remove --force <path>` DEREGISTERS the tree and then fails `error: failed to delete
+// '<path>': Permission denied` (255), the escalated `--force --force` answers `fatal:
+// '<path>' is not a working tree` (there is no longer a record to remove), and the
+// module's fs sweep raises `EACCES: permission denied, unlink '<path>/undeletable/x'`
+// — which its CLI prints as `worktree.js: remove failed (…)` and exits 1 on. That
+// non-zero exit is the only way for the loop to learn that a removal it asked for did
+// not happen, and it is what the warning below is about.
+const AGENT_JAMS_TEARDOWN = () => `#!/bin/bash
+${record()}
+echo "hello from the agent" > agent-file.txt
+git add agent-file.txt
+git commit -q -m "feat(issue-98): agent work"
+mkdir -p undeletable
+echo x > undeletable/x
+chmod 0500 undeletable
 echo '{"type":"result","subtype":"success"}'
 exit 0
 `
@@ -331,7 +356,7 @@ describe('a run leaves the whole working tree alone, not just HEAD (#218 QA)', (
     expect(git(['show', ':tracked-and-staged.txt'])).toBe('staged by the user\n')
   })
 
-  it('a FAILING run is just as harmless, and still removes the worktree', () => {
+  it('a FAILING run is just as harmless to the user checkout, and KEEPS its worktree (#220)', () => {
     writeStub('claude', AGENT_FAILS())
     writeGh({ state: 'OPEN' })
     const before = treeSnapshot()
@@ -344,11 +369,20 @@ describe('a run leaves the whole working tree alone, not just HEAD (#218 QA)', (
 
     const after = treeSnapshot()
     expect(after).toEqual(before)
-    // The agent's uncommitted file went with the worktree and never reached the main
-    // tree — the failure did not turn into a mess in the user's checkout.
+    // The agent's uncommitted file is in the WORKTREE and nowhere near the main tree: the
+    // failure neither turned into a mess in the user's checkout nor vanished with a
+    // teardown. Both halves matter — #218 bought the first, #220 the second, and the
+    // snapshot above is what says keeping the tree costs the first one nothing (`.ralph/`
+    // is gitignored, so a live worktree is invisible to `git status`).
     expect(existsSync(join(root, 'scratch-from-agent.txt'))).toBe(false)
-    expect(existsSync(worktreeDir())).toBe(false)
-    expect(registrations()).toEqual([`worktree ${root}`])
+    expect(readFileSync(join(worktreeDir(), 'scratch-from-agent.txt'), 'utf8')).toBe(
+      'half-finished\n',
+    )
+    // Still a registered worktree on its own branch, which is what makes it readable:
+    // `git -C .ralph/worktrees/issue-98 diff` is the point of the keep.
+    expect(registrations()).toHaveLength(2)
+    expect(registrations()).toContain(`worktree ${worktreeDir()}`)
+    expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], worktreeDir()).trim()).toBe('issue-98')
   })
 
   it('the Cleanup block moves nothing when DEV_BRANCH is unset', () => {
@@ -712,9 +746,12 @@ describe('the shape of the tree the agent wakes up in (#218 QA)', () => {
   })
 
   it('discards work the agent left UNCOMMITTED while keeping what it committed', () => {
-    // Teardown is unconditional in this slice, and `git worktree remove --force`
-    // deletes a dirty tree without asking. Pinned so the tradeoff is visible: the
-    // branch keeps the commits, the uncommitted remainder is gone with no warning.
+    // ON THE SUCCESS PATH, which since #220 is the only path that removes anything —
+    // the issue is CLOSED here — and `git worktree remove --force` deletes a dirty tree
+    // without asking. Pinned so the tradeoff is visible: the branch keeps the commits,
+    // the uncommitted remainder is gone with no warning. That is affordable exactly
+    // because the issue is finished; the same agent on a FAILED issue keeps everything
+    // (section 1's failing-run test).
     writeStub('claude', AGENT_HALF_COMMITS())
     const res = runLoop()
     expect(res.signal).toBeNull()
@@ -734,6 +771,44 @@ describe('the shape of the tree the agent wakes up in (#218 QA)', () => {
     // teardown removes, so an empty directory is the correct end state.
     expect(existsSync(join(root, '.ralph', 'worktrees'))).toBe(true)
     expect(readdirSync(join(root, '.ralph', 'worktrees'))).toEqual([])
+  })
+
+  // A REMOVAL RALPH COULD NOT FINISH IS A WARNING, NEVER A VERDICT (#220). The loop's
+  // other best-effort calls (`clear_in_progress_label`, the telemetry sidecar, the
+  // Cleanup fetch) all end in `|| true`, and teardown is no different in what it may
+  // cost the run — but `|| true` ALONE would absorb the one fact a human needs, which is
+  // that a directory they were promised was gone is still on their disk. So the helper
+  // reports it by name and returns success anyway.
+  //
+  // Skipped for root, for whom the 0500 directory the agent leaves is still writable and
+  // the removal would therefore simply succeed.
+  it.runIf(NOT_ROOT)('warns and keeps its verdict when the removal cannot be finished', () => {
+    writeStub('claude', AGENT_JAMS_TEARDOWN())
+    const jammed = join(worktreeDir(), 'undeletable')
+    try {
+      const res = runLoop()
+      expect(res.signal, `loop was killed by timeout. stdout:\n${res.stdout}`).toBeNull()
+
+      // The module said what it hit (see AGENT_JAMS_TEARDOWN for the measurements)…
+      expect(res.stderr).toMatch(/worktree\.js: remove failed/)
+      // …and the LOOP said the tree was left behind, naming it — which is the line that
+      // sends a human to the right directory.
+      expect(res.stderr).toMatch(/could not remove the worktree for issue #98/)
+      expect(res.stderr).toContain('.ralph/worktrees/issue-98')
+
+      // THE VERDICT IS UNTOUCHED: the issue came back CLOSED, so the iteration is still a
+      // success, the run still reached its own end, and the exit status is unchanged.
+      expect(res.stdout, `stderr:\n${res.stderr}`).toMatch(/1 ok, 0 failed/)
+      expect(res.stdout).toContain('==> Cleanup')
+      expect(res.status).toBe(0)
+      // The commit the agent did make is on the branch, exactly as on any success.
+      expect(git(['log', '--format=%s', 'issue-98'])).toContain('feat(issue-98): agent work')
+      // And the leftover really is on disk, so the warning is not a false alarm.
+      expect(existsSync(jammed)).toBe(true)
+    } finally {
+      // Or afterEach's recursive delete cannot finish either.
+      if (existsSync(jammed)) chmodSync(jammed, 0o700)
+    }
   })
 })
 
