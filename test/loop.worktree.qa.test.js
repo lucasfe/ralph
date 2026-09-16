@@ -188,16 +188,19 @@ exit 0
 `
 
 // JAMS THE TEARDOWN (#220), by leaving a mode-0500 directory inside the tree it was
-// handed: unlinking the file inside it needs write permission on the directory, so
-// nothing short of a chmod can delete it. MEASURED on git 2.50.1 (Apple Git-155) /
+// handed: deleting the file inside it needs write permission on the directory, so
+// nothing short of a chmod can clear it. MEASURED on git 2.50.1 (Apple Git-155) /
 // node v20.20.2, against a worktree lib/worktree.js had just created: `git worktree
 // remove --force <path>` DEREGISTERS the tree and then fails `error: failed to delete
 // '<path>': Permission denied` (255), the escalated `--force --force` answers `fatal:
-// '<path>' is not a working tree` (there is no longer a record to remove), and the
-// module's fs sweep raises `EACCES: permission denied, unlink '<path>/undeletable/x'`
-// — which its CLI prints as `worktree.js: remove failed (…)` and exits 1 on. That
-// non-zero exit is the only way for the loop to learn that a removal it asked for did
-// not happen, and it is what the warning below is about.
+// '<path>' is not a working tree` (there is no longer a record to remove), and the fs
+// sweep then fails with an EACCES the CLI prints as `worktree.js: remove failed (…)`
+// before exiting 1. The git half of that is stable; the errno SENTENCE is not, and is
+// deliberately not quoted here or asserted below — the Linux CI runner words the same
+// failure differently and does not name a syscall at all (lib/worktree.remove.qa.test.js
+// carries both shapes side by side). What travels is the exit status, which is the only
+// way for the loop to learn that a removal it asked for did not happen, and it is what
+// the warning below is about.
 const AGENT_JAMS_TEARDOWN = () => `#!/bin/bash
 ${record()}
 echo "hello from the agent" > agent-file.txt

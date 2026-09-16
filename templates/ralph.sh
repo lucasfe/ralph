@@ -494,9 +494,11 @@ clear_in_progress_label() {
 # create above already accepted, so none of the module's argument guards can be what
 # answers — lib/worktree.js exits non-zero only after git AND its own filesystem sweep
 # both failed to take the tree apart, which is the whole contract the warning rests on:
-# non-zero ⇒ the tree is still on disk. Which leg failed, with which exit code and stderr,
-# is a fact about that module, pinned by that module's tests. The return here is 0
-# regardless: the issue was resolved, and teardown gets no vote on that.
+# non-zero ⇒ the tree is still on disk. Which leg failed, and in what words, is a fact
+# about that module ON A GIVEN PLATFORM — node's errno sentence differs between macOS and
+# the Linux CI runner, down to whether it names a syscall at all — so this loop reads the
+# exit status and quotes nothing. The return here is 0 regardless: the issue was resolved,
+# and teardown gets no vote on that.
 remove_issue_worktree() {
   [ "$TASK_SOURCE" = "github" ] || return 0
   if ! node "$RALPH_PKG_DIR/lib/worktree.js" remove "$PROJECT_ROOT" "issue-$1"; then

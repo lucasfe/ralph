@@ -828,16 +828,18 @@ describe('the shapes a removal can take on the success path (#220 QA)', () => {
   it.runIf(NOT_ROOT)(
     'warns, keeps its verdict, and names the leftover when the PARENT directory is unwritable',
     () => {
-      // A different failure from the dev's mode-0500 CHILD, and it produces a different
-      // errno. MEASURED (git 2.50.1 Apple Git-155 / node v20.20.2) with
-      // `.ralph/worktrees` at mode 0500 and a worktree registered inside it:
-      // `worktree remove --force <path>` DEREGISTERS the tree and then fails `error:
-      // failed to delete '<path>': Permission denied` (255); `--force --force` answers
-      // `fatal: '<path>' is not a working tree` (128); and the module's fs sweep raises
-      // `EACCES: permission denied, rmdir '<path>'` — RMDIR, not the `unlink` the child
-      // case produces, because here every file inside is deletable and it is the
-      // directory entry itself that cannot go. Its CLI prints that as `worktree.js:
-      // remove failed (…)` and exits 1.
+      // A different jam from the dev's mode-0500 CHILD: here every file inside the tree is
+      // deletable and what cannot go is the tree's own directory entry, since removing an
+      // entry needs write permission on the directory holding it. MEASURED (git 2.50.1
+      // Apple Git-155 / node v20.20.2) with `.ralph/worktrees` at mode 0500 and a worktree
+      // registered inside it: `worktree remove --force <path>` DEREGISTERS the tree and
+      // then fails `error: failed to delete '<path>': Permission denied` (255); `--force
+      // --force` answers `fatal: '<path>' is not a working tree` (128); and the fs sweep
+      // then fails with an EACCES the CLI prints as `worktree.js: remove failed (…)`
+      // before exiting 1. Which SYSCALL that errno names is a per-platform detail — macOS
+      // says `rmdir` here and `unlink` for the child case, the Linux CI runner names
+      // neither — so the assertions below stop at the errno class, and
+      // lib/worktree.remove.qa.test.js explains why with both observed strings.
       writeStub('claude', AGENT_JAMS_THE_PARENT())
       const parent = join(root, '.ralph', 'worktrees')
       try {
