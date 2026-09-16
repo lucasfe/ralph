@@ -519,21 +519,54 @@ the commit-direct pair behind: keep that one in sync by hand. The forked
 orchestrator prose is not asserted either, so you are free to word each agent's
 delegation instructions differently — just keep the shared structure in lockstep.
 
-**Step 3 is one place that "sync by hand" must not reach** (#218). The two GitHub
-templates read `3. **Confirm the worktree**`: `templates/ralph.sh` creates a
-per-issue git worktree, cuts the `issue-N` branch itself, and spawns the agent
-inside that directory, so the agent wakes already on the branch, is told to
-create none and switch to none, and is handed the worktree as
-`{{PROJECT_ROOT}}`. The two commit-direct templates keep
-`3. **Prepare working tree**` — `git checkout {{DEV_BRANCH}} && git pull` —
-because folder and Jira runs still work in the main checkout. Do not propagate
-the worktree step across that boundary: the loop builds a worktree **only** under
-`TASK_SOURCE=github`, so a commit-direct agent told to confirm one would be
-confirming a tree nothing created, and its step-3 check would send every
-iteration straight to "Failed". `test/loop.worktree.test.js` pins the GitHub half
-(neither template may carry `Prepare branch` or `git checkout -b`), and
-`lib/template-parity.test.js` pins the step heading within each pair, so the two
-pairs are free to differ here and locked within themselves.
+**Step 3 is one place that "sync by hand" must not reach** (#218, #221). Three of
+the four templates now describe a tree the loop prepared, and each describes a
+different one, so the step is per-template by construction.
+
+- The two **GitHub** templates read `3. **Confirm the worktree**`:
+  `templates/ralph.sh` creates a per-issue worktree, cuts the `issue-N` branch
+  itself, and spawns the agent inside that directory, so the agent wakes already on
+  the branch, is told to create none and switch to none, and is handed the worktree
+  as `{{PROJECT_ROOT}}`.
+- The **folder** template keeps the heading `3. **Prepare working tree**` and no
+  longer prepares anything (#221). The loop hands it a **detached** worktree at the
+  tip of the *local* `{{DEV_BRANCH}}` — folder tasks commit onto that branch and git
+  will not check one branch out twice — so the step describes the detached `HEAD` the
+  agent wakes on and names who moves the branch afterwards (`advance`, or a park on
+  `ralph/task-N`). Its `git checkout {{DEV_BRANCH}} && git pull` is **gone**, and so
+  is every other `git checkout` and `git pull` in the file: a checkout would be
+  refused because the main tree holds the branch, and a pull would rebase the work
+  onto `origin`, silently dropping the previous task's never-pushed commit.
+- The **jira** template is the only one still holding
+  `git checkout {{DEV_BRANCH}} && git pull`, because `jira` is the only source that
+  still runs in the main checkout.
+
+So the boundary this paragraph used to guard has moved rather than gone: it is now
+`folder`-vs-`jira` and not commit-direct-vs-GitHub. Do not propagate a worktree step
+into the jira template — the loop builds a worktree under `github` (`create`, on a
+branch) and `folder` (`create-detached`) and none at all under `jira`, so a jira
+agent told to confirm one would be confirming a tree nothing created. And do not
+propagate the *GitHub* wording into the folder one either: that tree is on a branch
+of its own and this one is on no branch, which is the whole difference.
+
+`{{MAIN_REPO_ROOT}}` is folder-only in practice for the same reason. Every template
+gets the placeholder — `lib/build-prompt.js` always renders it, and in any mode
+without a worktree it renders the same path as `{{PROJECT_ROOT}}` — but the folder
+template is the one that *needs* it, because its `.ralph/tasks/` queue is gitignored
+and so lives in the main checkout and in no worktree. Every task path in that file
+is spelled `{{MAIN_REPO_ROOT}}/.ralph/tasks/…`, including the one carved out of the
+stay-inside-`{{PROJECT_ROOT}}` restrictions; a bare `.ralph/tasks/` would send the
+agent to the worktree's own empty `.ralph/` and the invocation would find no task.
+
+The pins: `test/loop.worktree.test.js` covers the GitHub half (neither GitHub
+template may carry `Prepare branch` or `git checkout -b`);
+`lib/template-parity.test.js` pins the step-3 heading within each pair, the folder
+step's detached wording, the absence of any checkout/pull from it, and the
+`{{MAIN_REPO_ROOT}}` rooting of every task path; and
+`lib/template-parity.folder.qa.test.js` grades the folder prompt's claims *about the
+bash* against `templates/ralph.sh` and `lib/worktree.js` — who moves the branch, what
+the park branch is called, what the sweep does — because a sentence like that is true
+or false depending on the other file in the pair.
 
 **What step 3 promises about that tree must match the loop's teardown** (#220).
 Both GitHub templates used to tell the agent the tree it is standing in "is

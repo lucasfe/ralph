@@ -776,10 +776,9 @@ while :; do
     continue
   fi
 
-  # --- Per-issue git worktree (#218) ---------------------------------------
-  # The issue is resolved in a DEDICATED worktree at
-  # $PROJECT_ROOT/.ralph/worktrees/issue-$num, checked out on a new `issue-$num`
-  # branch cut from origin/$DEV_BRANCH, and the agent is spawned with its cwd set
+  # --- Per-task git worktree (#218 github, #221 folder) ---------------------
+  # The task is resolved in a DEDICATED worktree under
+  # $PROJECT_ROOT/.ralph/worktrees/, and the agent is spawned with its cwd set
   # there. That is what lets the loop stop touching the user's own checkout: nothing
   # in this run creates a branch in it, and nothing switches it.
   #
@@ -789,29 +788,61 @@ while :; do
   # tested with an injected fs and git. Same shape as the folder queue, the jira queue
   # and the agent bridge above.
   #
-  # GITHUB ONLY, in this slice. folder and jira mode commit directly to $DEV_BRANCH in
-  # the main tree and open no PR, so neither has a per-task branch to isolate; both
-  # keep the exact dispatch they had before this change ($agent_cwd stays
-  # $PROJECT_ROOT, and jira's dispatch is in its own arm further up).
+  # TWO SOURCES, TWO SHAPES, and the difference is a property of the DELIVERY, which is
+  # why the verb is the only thing that varies here:
+  #   github — `create`, i.e. a new `issue-$num` branch cut from origin/$DEV_BRANCH.
+  #     The work leaves through a pull request, so it needs a branch of its own and it
+  #     wants the pushed tip as its base.
+  #   folder — `create-detached` (#221), i.e. no branch at all, at the tip of the LOCAL
+  #     $DEV_BRANCH. Folder tasks commit straight to $DEV_BRANCH, and git will not check
+  #     one branch out in two trees, so there is no branch to hand this worktree; and
+  #     this source never pushes, so the local branch is the only place the PREVIOUS
+  #     task's commit exists — basing on origin would silently drop it. The agent
+  #     commits on the detached HEAD and the `advance` call further down is what moves
+  #     $DEV_BRANCH (or parks the commit and says so).
+  # jira mode never reaches this block: its arm above ends in `continue`.
   #
   # ABORT, DON'T SKIP, when the worktree cannot be created. The realistic failure is
-  # `issue-$num` being checked out somewhere else — quite possibly in the user's own
-  # tree — and git refusing to take it. Marking the issue `failed` and moving on would
-  # label work that may be in flight; stopping says so and leaves the queue untouched.
+  # the branch being checked out somewhere else — quite possibly in the user's own
+  # tree — and git refusing to take it, or a $DEV_BRANCH that does not exist locally.
+  # Marking the task `failed` and moving on would label work that may be in flight;
+  # stopping says so and leaves the queue untouched.
   agent_cwd="$PROJECT_ROOT"
-  if [ "$TASK_SOURCE" = "github" ]; then
-    if ! issue_worktree=$(node "$RALPH_PKG_DIR/lib/worktree.js" create "$PROJECT_ROOT" "issue-$num" "${DEV_BRANCH:-main}"); then
-      echo "❌ ralph.sh: could not create a worktree for issue #$num. Aborting the loop." >&2
-      failures+=("$num")
-      break
-    fi
-    agent_cwd="$issue_worktree"
+  task_handle=""
+  task_label=""
+  task_worktree=""
+  case "$TASK_SOURCE" in
+    github)
+      task_handle="issue-$num"
+      task_label="issue #$num"
+      task_worktree=$(node "$RALPH_PKG_DIR/lib/worktree.js" create "$PROJECT_ROOT" "$task_handle" "${DEV_BRANCH:-main}") || task_worktree=""
+      ;;
+    folder)
+      task_handle="task-$num"
+      task_label="task #$num"
+      task_worktree=$(node "$RALPH_PKG_DIR/lib/worktree.js" create-detached "$PROJECT_ROOT" "$task_handle" "${DEV_BRANCH:-main}") || task_worktree=""
+      ;;
+  esac
+  if [ -n "$task_handle" ] && [ -z "$task_worktree" ]; then
+    echo "❌ ralph.sh: could not create a worktree for $task_label. Aborting the loop." >&2
+    failures+=("$num")
+    break
+  fi
+  if [ -n "$task_worktree" ]; then
+    agent_cwd="$task_worktree"
     # The {{PROJECT_ROOT}} placeholder ONLY (lib/build-prompt.js reads it). The prompt
     # builder itself keeps running here, in the main root, because it reads the
     # project's own PROMPT.md from its cwd and that file is typically untracked — a
     # fresh worktree checkout would not contain it. So the agent is told to stay inside
     # the tree it is actually in, and the project prompt is still found.
-    export RALPH_PROMPT_PROJECT_ROOT="$issue_worktree"
+    #
+    # The main root travels with it, as {{MAIN_REPO_ROOT}}, and needs no export of its
+    # own (#221): that placeholder is lib/build-prompt.js's OWN CWD, and this script cd's
+    # to $PROJECT_ROOT once at startup while `run_agent_stream` cd's into the worktree
+    # inside the agent's subshell only — the prompt builder runs outside it. Which is what
+    # lets the folder prompt reach the gitignored `.ralph/tasks/` lanes, since they exist
+    # in the main checkout and in no worktree.
+    export RALPH_PROMPT_PROJECT_ROOT="$task_worktree"
   fi
 
   # Stream the agent's JSON to jq, but keep stderr OUT of the JSON pipe: any
@@ -832,22 +863,58 @@ while :; do
   # the terminal-success branch only, because that is the first point in the iteration
   # where the outcome is known; remove_issue_worktree (defined above the loop, beside
   # clear_in_progress_label) is the whole of it. The folder arm's `continue` below
-  # therefore skips a call it never needed — that arm creates no worktree.
+  # therefore skips a call that is github-only by construction — folder-mode teardown is
+  # its own slice (#223), so a folder task's tree is left registered on every path.
   #
   # THE PROMPT OVERRIDE, on the other hand, is unconditional ON THE OUTCOME — taken back
   # on every path out of the iteration — and it stays here for the reason it always was:
   # it belongs to the agent run that just ended, not to how that run was judged. The next
   # iteration re-exports it; leaving it set would point lib/build-prompt.js's
-  # {{PROJECT_ROOT}} at another issue's tree — one that may well have just been removed —
-  # if anything downstream built a prompt. The `if` below is now SYMMETRY, not necessity:
-  # with the removal gone from this block, `unset` of a name the non-github arms never
-  # exported is a no-op that exits 0, so the guard buys nothing but a shape that matches
-  # the export it undoes (search RALPH_PROMPT_PROJECT_ROOT above). Kept for that.
-  if [ "$TASK_SOURCE" = "github" ]; then
+  # {{PROJECT_ROOT}} at another task's tree — one that may well have just been removed —
+  # if anything downstream built a prompt. The guard is now the same `$task_worktree` the
+  # export above was conditioned on, so the two cannot drift apart per source (#221 gave
+  # folder mode a worktree too); `unset` of a name that was never exported is a no-op
+  # that exits 0 either way, so the `if` buys shape rather than necessity.
+  if [ -n "$task_worktree" ]; then
     unset RALPH_PROMPT_PROJECT_ROOT
   fi
 
   if [ "$TASK_SOURCE" = "folder" ]; then
+    # --- Advance $DEV_BRANCH, or park the commit (#221) ---------------------
+    # The agent committed on the DETACHED HEAD of its worktree, so the commit object
+    # exists and no branch points at it yet. Moving $DEV_BRANCH to it is the loop's job
+    # now, and the whole decision lives in lib/worktree.js because every input to it is a
+    # git fact: is that branch checked out, in which tree, and is that tree clean. It
+    # either writes the ref, fast-forwards the main tree in place, or parks the commit on
+    # `ralph/task-$num` and says so.
+    #
+    # BEFORE THE VERDICT BELOW, and never part of it. A task's outcome is the terminal
+    # directory of its file and nothing else — a branch Ralph could not advance is not a
+    # task Ralph failed — so a non-zero exit here is a WARNING that changes no count. It
+    # is also why the module PARKS rather than throwing: it exits 0 for a park, and
+    # non-zero only for a genuinely broken invocation: an unsafe root, no worktree at the
+    # path, a HEAD it cannot read, or a $DEV_BRANCH that is not a local branch — and that
+    # last one writes `ralph/task-$num` at the commit BEFORE it refuses.
+    #
+    # ITS STDERR IS NOT REDIRECTED, on purpose: whichever line the module prints already
+    # names what it knows — the branch and the sha for a park, the park branch it wrote for
+    # the refusal above, the directory for the two that never got a sha — and swallowing
+    # them would make a park indistinguishable from an advance. WHICH IS ALSO WHY THIS
+    # WARNING SAYS SO LITTLE: it has no location of its own to add. Naming $task_worktree
+    # here would be a guess, and on the one non-zero path that does have a commit that
+    # guess is wrong — the commit is reachable as `ralph/task-$num`, which is what the
+    # module's line says.
+    #
+    # THE `-n` GUARD IS SYMMETRY, not necessity: an empty $task_worktree in this arm has
+    # already `break`ed the loop at the create check above (`task_handle` is never empty
+    # here), so it is always set by the time execution reaches this line. It is kept
+    # because the export and the unset above are written the same way against the same
+    # variable, and a reader who finds one of the three missing has to re-derive why.
+    if [ -n "$task_worktree" ]; then
+      node "$RALPH_PKG_DIR/lib/worktree.js" advance "$PROJECT_ROOT" "$task_handle" "${DEV_BRANCH:-main}" ||
+        echo "⚠️  ralph.sh: could not advance ${DEV_BRANCH:-main} for task #$num — see the worktree.js line above; task #$num's own outcome is decided separately." >&2
+    fi
+
     # Terminal directory decides the outcome: the agent moves a completed task
     # to afk/done. Anything still sitting in afk/todo or afk/in-progress is a
     # failure/no-op — bash sweeps it to afk/failed so the queue always drains

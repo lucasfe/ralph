@@ -80,16 +80,21 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "${workdir}"
   exit 0
 fi
-# #218: before dispatching, the loop asks lib/worktree.js for a per-issue worktree and
-# then runs the agent with cwd set to it. A stub that answered "worktree add" with a
+# #218/#221: before dispatching, the loop asks lib/worktree.js for a per-task worktree
+# and then runs the agent with cwd set to it. A stub that answered "worktree add" with a
 # bare exit 0 would leave the loop cd-ing into a directory that does not exist, and no
 # agent would run at all - so the fiction this stub maintains has to include the
-# directory. argv is "worktree add -B <branch> <path> <start>", so the path is $5;
-# "worktree remove --force <path>" puts it in $4. The rm is gated on the SHAPE of the
-# path, so this stub can only ever delete something that looks like a ralph worktree.
+# directory. There are now TWO add spellings and the path sits at a different index in
+# each - "worktree add -B <branch> <path> <start>" for github, "worktree add --detach
+# <path> <start>" for folder (#221) - so it is found by SHAPE instead: the one argument
+# that looks like a ralph worktree. A hardcoded $5 silently created a DIRECTORY NAMED
+# AFTER THE START REF in the detached case, and the agent then ran in a tree that was not
+# the one the loop had made. "worktree remove --force <path>" puts the path in $4. Both
+# the mkdir and the rm are gated on that shape, so this stub can only ever create or
+# delete something that looks like a ralph worktree.
 if [ "$1" = "worktree" ]; then
   case "$2" in
-    add) mkdir -p "$5" ;;
+    add) for a in "$@"; do case "$a" in */.ralph/worktrees/*) mkdir -p "$a" ;; esac; done ;;
     remove) case "$4" in */.ralph/worktrees/*) rm -rf "$4" ;; esac ;;
   esac
   exit 0

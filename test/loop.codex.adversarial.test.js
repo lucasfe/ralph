@@ -18,8 +18,9 @@ const REAL_NODE = execFileSync('node', ['-e', 'process.stdout.write(process.exec
 // (REAL jq — no jq stub; REAL node only for the agent-invocation bridge and the
 // telemetry sidecar) but hit corners the happy-path + single-failure tests miss:
 //   - the REAL codex argv boundary: exec/--json/--sandbox/approvals-off/network-on,
-//     prompt on stdin (no prompt argument), `-` stdin marker — proving the
-//     registry (NOT hard-coded bash) drives the mandated flags at the loop level
+//     the #221 writable-roots override for the main root's `.ralph/`, prompt on
+//     stdin (no prompt argument), `-` stdin marker — proving the registry (NOT
+//     hard-coded bash) drives the mandated flags at the loop level
 //   - RALPH_CODEX_MODEL passthrough into BOTH the codex argv (`-m`) AND telemetry
 //     (event.model), plus the unset case => null model, null occupancy (never guessed)
 //   - a TRUNCATED codex stream (no terminal turn.completed/turn.failed) exiting
@@ -142,16 +143,21 @@ if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
   echo "${workdir}"
   exit 0
 fi
-# #218: before dispatching, the loop asks lib/worktree.js for a per-issue worktree and
-# then runs the agent with cwd set to it. A stub that answered "worktree add" with a
+# #218/#221: before dispatching, the loop asks lib/worktree.js for a per-task worktree
+# and then runs the agent with cwd set to it. A stub that answered "worktree add" with a
 # bare exit 0 would leave the loop cd-ing into a directory that does not exist, and no
 # agent would run at all - so the fiction this stub maintains has to include the
-# directory. argv is "worktree add -B <branch> <path> <start>", so the path is $5;
-# "worktree remove --force <path>" puts it in $4. The rm is gated on the SHAPE of the
-# path, so this stub can only ever delete something that looks like a ralph worktree.
+# directory. There are now TWO add spellings and the path sits at a different index in
+# each - "worktree add -B <branch> <path> <start>" for github, "worktree add --detach
+# <path> <start>" for folder (#221) - so it is found by SHAPE instead: the one argument
+# that looks like a ralph worktree. A hardcoded $5 silently created a DIRECTORY NAMED
+# AFTER THE START REF in the detached case, and the agent then ran in a tree that was not
+# the one the loop had made. "worktree remove --force <path>" puts the path in $4. Both
+# the mkdir and the rm are gated on that shape, so this stub can only ever create or
+# delete something that looks like a ralph worktree.
 if [ "$1" = "worktree" ]; then
   case "$2" in
-    add) mkdir -p "$5" ;;
+    add) for a in "$@"; do case "$a" in */.ralph/worktrees/*) mkdir -p "$a" ;; esac; done ;;
     remove) case "$4" in */.ralph/worktrees/*) rm -rf "$4" ;; esac ;;
   esac
   exit 0
@@ -246,11 +252,25 @@ exit 0
     // Prompt-on-stdin contract: the LAST arg is the `-` stdin marker and there is
     // NO prompt string argument (the "PROMPT" body arrives via the stdin pipe, so
     // it must never appear in argv). With RALPH_CODEX_MODEL unset there is also no
-    // `-m` flag, so the argv is exactly the 8 base flags + `-` (9 tokens).
+    // `-m` flag.
     expect(argv[argv.length - 1]).toBe('-')
     expect(argv).not.toContain('PROMPT')
     expect(argv).not.toContain('-m')
-    expect(argv.length).toBe(9)
+
+    // #221: the loop now runs the agent in a per-task worktree, so codex's own
+    // sandbox has to keep the MAIN root's gitignored `.ralph/` writable — the task
+    // queue and the run state live there, outside the tree codex is cd'd into. It is
+    // composed onto the registry base as one more `-c` pair, so with no model set the
+    // argv is the 8 base flags + that pair + `-` (11 tokens).
+    const rootsIdx = argv.findIndex((a) => a.startsWith('sandbox_workspace_write.writable_roots='))
+    expect(rootsIdx, `expected a writable-roots override: ${JSON.stringify(argv)}`).toBeGreaterThan(
+      0,
+    )
+    expect(argv[rootsIdx - 1]).toBe('-c')
+    expect(
+      JSON.parse(argv[rootsIdx].replace('sandbox_workspace_write.writable_roots=', '')),
+    ).toEqual([join(workdir, '.ralph')])
+    expect(argv.length).toBe(11)
   })
 
   it('RALPH_CODEX_MODEL set: passes `-m <model>` in the codex argv AND records event.model = that model', () => {
