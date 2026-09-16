@@ -5,6 +5,23 @@ All notable changes to `@lucasfe/ralph` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.27.0](https://github.com/lucasfe/ralph/compare/v0.26.0...v0.27.0) (2026-09-16)
+
+
+### Features
+
+* resolve GitHub issues in a per-issue git worktree ([#218](https://github.com/lucasfe/ralph/issues/218)) ([#232](https://github.com/lucasfe/ralph/issues/232)) ([fe5afbd](https://github.com/lucasfe/ralph/commit/fe5afbd8d274a2e58b36bb784ec466f7e6b2181c))
+* seed a new worktree with the gitignored files a project's tests need ([#219](https://github.com/lucasfe/ralph/issues/219)) ([#234](https://github.com/lucasfe/ralph/issues/234)) ([293cca9](https://github.com/lucasfe/ralph/commit/293cca9d32c5f4f3d070d280ef321ec296b674a6))
+
+
+### Bug Fixes
+
+* install from the remote tap by bare name after pushing ([#216](https://github.com/lucasfe/ralph/issues/216)) ([#231](https://github.com/lucasfe/ralph/issues/231)) ([286823f](https://github.com/lucasfe/ralph/commit/286823f3032c12c7d613b209e94a65570f857829))
+* key the update-check cache by the channel that produced the version ([#215](https://github.com/lucasfe/ralph/issues/215)) ([#229](https://github.com/lucasfe/ralph/issues/229)) ([3d26e4b](https://github.com/lucasfe/ralph/commit/3d26e4b7feb6ce9e26eb5cb31ebe30c92ae3bb6f))
+* run a folder task in a detached worktree, then advance or park ([#221](https://github.com/lucasfe/ralph/issues/221)) ([#236](https://github.com/lucasfe/ralph/issues/236)) ([3378567](https://github.com/lucasfe/ralph/commit/33785671896068b6ea0ea2c5874c92532e7bde36))
+* spell the NUL sentinel instead of typing it ([#221](https://github.com/lucasfe/ralph/issues/221) follow-up) ([#237](https://github.com/lucasfe/ralph/issues/237)) ([f4a9410](https://github.com/lucasfe/ralph/commit/f4a9410420dfbed572d7b1883324b06ab09cda79))
+* tear the per-issue worktree down only when the issue is resolved ([#220](https://github.com/lucasfe/ralph/issues/220)) ([#235](https://github.com/lucasfe/ralph/issues/235)) ([f84d0b4](https://github.com/lucasfe/ralph/commit/f84d0b40941ca66ba99086177e6c26223dded11b))
+
 ## [0.26.0](https://github.com/lucasfe/ralph/compare/v0.25.4...v0.26.0) (2026-09-12)
 
 
