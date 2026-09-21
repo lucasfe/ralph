@@ -766,6 +766,15 @@ their delivery differs — `github` needs a branch of its own to open a PR from,
 `folder` commits onto `DEV_BRANCH` itself and so can be handed no branch at all.
 `jira` is the exception and still runs in your checkout.
 
+While a run is going you do not have to reconstruct that path to go and look at it.
+[`ralph status`](#run-state--ralphrun-statejson-and-ralph-status) prints the tree the
+task in flight is being worked in as its `worktree` row, and `ralph status --json`
+publishes the same path as `tasks.current.worktree`. Both report the path **the loop
+recorded** rather than one rebuilt from the task number, which is what makes them right
+for a `folder` task — whose tree is `task-N`, not `issue-N` — as well as for a `github`
+issue. Under `jira` there is no worktree, so there is nothing to name and neither
+surface invents one.
+
 #### `github` — a branch per issue
 
 Before the agent is invoked the loop puts that worktree at
@@ -1193,7 +1202,7 @@ that surprises people, because two of the three sources never publish anything:
 | | `github` | `folder` | `jira` |
 | --- | --- | --- | --- |
 | Work comes from | open issues on the repo's GitHub board, read with `gh` | numbered `.md` files under the gitignored `.ralph/tasks/` tree | work items on a Jira site, read with Atlassian's `acli` |
-| Eligibility is expressed as | a **fixed search query** inside the generated `ralph.sh` — `state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge` — not a config knob; the pick adds `sort:created-asc` | the **directory** itself: the lowest-numbered file in `afk/todo/` | **your JQL**, in [`JIRA_JQL`](#the-eligibility-query--jira_jql) — eligibility only, with Ralph appending the label exclusion and the ordering |
+| Eligibility is expressed as | a **fixed search query** inside the loop script Ralph ships (`templates/ralph.sh`, run from the install rather than copied into your repo) — `state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge` — not a config knob; the pick adds `sort:created-asc` | the **directory** itself: the lowest-numbered file in `afk/todo/` | **your JQL**, in [`JIRA_JQL`](#the-eligibility-query--jira_jql) — eligibility only, with Ralph appending the label exclusion and the ordering |
 | CLI and auth it needs | `gh`, authenticated (`gh auth login`) | **no source CLI at all** — `ralph doctor` skips both `gh` and `acli` | `acli`, logged in (`acli jira auth login`) |
 | Where the agent works | a **per-issue git worktree** at `.ralph/worktrees/issue-N`, on an `issue-N` branch cut from `origin/DEV_BRANCH` — the worktree is removed when the iteration resolves its issue and kept for you to inspect when it does not, the branch is kept either way, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-task)) | a **per-task git worktree** at `.ralph/worktrees/task-N`, **detached** at the tip of your **local** `DEV_BRANCH` and cut with no fetch — the agent commits on that detached `HEAD`, the loop then advances `DEV_BRANCH` to the commit or parks it on `ralph/task-N`, the tree is left standing whatever the verdict, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-task)) | **your checkout**, on `DEV_BRANCH` — the agent prepares the tree itself (`git checkout DEV_BRANCH && git pull`) |
 | **Delivery shape** | an `issue-N` **branch**, **pushed**, with a PR set to **auto-merge** (`gh pr merge … --auto`) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes**; the loop moves the branch onto it, or [parks it](#advancing-dev_branch-or-parking-the-commit) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** |
@@ -3324,7 +3333,7 @@ travels in a commit.
 
 The loop writes it at three moments, each best-effort (`|| true`): once at run
 start (`run_id`, `session`, `source`, `queue_at_start`, `started_at`), once per
-iteration (`current: { number, task_key, started_at, iteration }`), and once at the end
+iteration (`current: { number, task_key, started_at, iteration, worktree }`), and once at the end
 (`status`, `finished_at`, `ok`, `failed`). `--once` runs — the path
 `ralph cycle` drives — write the same records. An unwritable `.ralph/` changes
 nothing about a run: not its outcome, not its per-issue events, not its
@@ -3342,7 +3351,8 @@ loop nor `ralph status` names a field of its own:
 | `status` | `running` until the run ends, then the loop's own terminal status: `success`, `partial`, or `failed` — the same value the run's `RALPH_CYCLE_EVENT` reports. |
 | `started_at` | Run start (ISO 8601, UTC). |
 | `queue_at_start` | How deep the queue was when the run began — how much work it picked up. `null` when the count produced no number at all; an unknown depth is never recorded as `0`, which would be a lie. |
-| `current` | The task in flight: `{ number, task_key, started_at, iteration }`, rewritten at the top of **every** iteration in all three task sources; `null` before the first one. Deliberately left in place on a terminal record, where it names the last task the run worked on. `task_key` is the Jira key (`FOO-123`) and is `null` under `github` and `folder`, which have no key; under `jira` the `number` beside it is **derived** from that key (`123`), because every reader written against an integer since this record was added keeps working, and the human surfaces show the key. |
+| `current` | The task in flight: `{ number, task_key, started_at, iteration, worktree }`, rewritten at the top of **every** iteration in all three task sources; `null` before the first one. Deliberately left in place on a terminal record, where it names the last task the run worked on. `task_key` is the Jira key (`FOO-123`) and is `null` under `github` and `folder`, which have no key; under `jira` the `number` beside it is **derived** from that key (`123`), because every reader written against an integer since this record was added keeps working, and the human surfaces show the key. |
+| `current.worktree` | The **directory the task is being done in** — the [per-task worktree](#where-an-iteration-runs--a-worktree-per-task) the loop created for it (`<repo>/.ralph/worktrees/issue-31`), recorded **verbatim** because its only use is to be `cd`'d into. Since every task runs in a worktree of its own, nothing on disk said *which* one, and a detached run left the reader matching branch names out of `git worktree list`. **Recorded, never derived:** the loop passes the path `lib/worktree.js` printed, because a reader rebuilding `issue-<number>` would name a directory that never existed for a `folder` task (its handle is `task-<n>`) or for an iteration that aborted before a worktree was made. `null` in exactly those two cases — a `jira` iteration, which gets no worktree, and a create that failed — and `null` rather than absent on any record written by a newer loop, so a reader tests the value instead of probing for the key. A record written **before** this field existed still reads cleanly: it simply has no `worktree`, and the surfaces show nothing where the path would be. |
 | `finished_at` | Run end (ISO 8601, UTC). `null` while the run is going. |
 | `ok`, `failed` | The run's own final counts — the same numbers as its `RALPH_CYCLE_EVENT`. `null` while the run is going. |
 
@@ -3377,6 +3387,7 @@ session to attach to:
   task                 verdict     cost      time
   #031 digest section  🔄 live     –         ~4min
 
+  worktree   /Users/you/repos/ralph/.ralph/worktrees/issue-31
   queue      6 waiting
   pace       ~84 min/task
   eta        ~9h44m left → ~02:16  (±1h30m)
@@ -3395,6 +3406,7 @@ session to attach to:
   #030 pace and ETA      ✅ pass     $28.40    71min
   #031 digest section    🔄 live     –         ~40min
 
+  worktree   /Users/you/repos/ralph/.ralph/worktrees/issue-31
   queue      6 waiting
   pace       ~84 min/task · $31.4/task
   eta        ~9h08m left → ~04:40  (±1h30m)
@@ -3426,14 +3438,38 @@ narrated it either: the digest window is opened by `ralph start`, and a schedule
 `ralph digest` against it by hand (see
 [The digest section](#the-digest-section) below).
 
-An **`interrupted`** run prints the same six lines with the mode swapped and
-`restart    ralph start` in place of the attach pair — there is nothing left to
-attach to or kill, and the `in flight` line names the issue the run died on.
-**`idle`** and **`never-run`** are one line of report each, deliberately: the run
-is over, or there has not been one.
+Between the table and the `queue` row sits one more, for a **live run only**: the
+`worktree` line naming the directory the task in flight is being worked in — the
+[per-task worktree](#where-an-iteration-runs--a-worktree-per-task) the loop made for
+it, recorded by the run itself rather than guessed from the task number. It is what
+makes a detached run somewhere you can go and look (`cd` there, or read it from where
+you are with `git -C … diff`) instead of a branch name to match out of
+`git worktree list`. The row is **absent, not empty**, whenever there is no directory
+to name: an iteration that aborted before its worktree existed, a
+[`jira`](#the-jira-source-today) iteration, which gets no worktree at all, and a
+record written by a Ralph older than the row itself. `ralph status --json` publishes
+the same path as `tasks.current.worktree`.
+
+An **`interrupted`** run prints none of the above. It gets the **report card**
+instead: `outcome`, `spend` and `ran for` — what the run managed, rather than what it
+was going to — then `queue`, `started`, and `last task`, which is the row that names
+the task the run died on, with `restart    ralph start` at the foot in place of the
+attach pair, since there is nothing left to attach to or kill. No progress line, no
+table and **no `worktree` row**: those three belong to the live view, and `idle` and
+`interrupted` render the card instead. An **`idle`** run gets that same card without the
+interrupted-only pair — no `started`, no `last task` — and `start` rather than `restart`
+at the foot, since a finished run is beginning its next batch instead of resuming an
+abandoned one. **`never-run`** is the one mode with no card at all: one friendly line,
+deliberately, because there is nothing yet to report.
 
 ```
-▸ ralph — idle · last run ralph-ralph-b36ff7b1-1718700000 ended 14:02 (partial: 2 ok, 1 failed)
+▸ ralph — idle · run ralph-ralph-b36ff7b1-1718700000 (finished 14:02, 1h00m ago)
+  outcome    2 ok · 1 failed  — #031
+  spend      $74.90 total · $25.0/task avg
+  ran for    1h00m
+  queue      3 waiting
+
+  start      ralph start
 ```
 
 ```
@@ -3454,10 +3490,10 @@ from it. The
 task, and reads it for a `current` that is *present but empty* too, since neither
 of those names a task to report — and neither is counted into the denominator
 either, so six waiting and nothing being worked on reads `0/6 done` rather than
-`0/7`. And the `idle` line spends its `?` exactly where
-`queue_at_start` does: a truncated or externally-written record that never
-recorded `ok`/`failed` reads `(partial: ? ok, ? failed)` rather than a `0` that
-would claim a run failed nothing.
+`0/7`. And the report card spends its `unknown` exactly where the `queue` row
+does: a truncated or externally-written record that never recorded `ok`/`failed`
+reads `outcome    unknown` rather than a `0` that would claim a run failed
+nothing.
 
 The queue depth is **live**, and the [task source](#choosing-the-task-source)
 decides how it is counted: the `gh` issue search under `github`, the local
@@ -3469,9 +3505,19 @@ number is not a second right answer about a different board: it is a **debt**
 rather than a defensible split, and it can refuse to start a run while Jira has
 tickets waiting (see [The `jira` source today](#the-jira-source-today)). A failed count degrades to
 `queue      unknown`; it never
-fails the command, and it never reads as `0 waiting`. Only the live views pay
-for it: `idle` and `never-run` skip the count entirely — no subprocess, no
-directory scan. It is also the **denominator** the `progress` line counts against,
+fails the command, and it never reads as `0 waiting`. In the human view
+**`never-run` is the only mode that skips it** — no subprocess, no directory scan,
+and not even the config read that would decide between them, because a repo with no
+record has nothing a count could be about. `idle` and `interrupted` pay for it just
+as a live run does: the report card carries the same `queue` row, which is the one
+number on it about the **next** batch rather than about the run that just ended.
+`--json` draws the line on what its document will actually publish instead, so an
+`idle` run skips the count under that flag — the document reports
+`progress.remaining` and `progress.total` as `null` whether or not anybody counted,
+and spending a subprocess to fill in a `null` is the trade nobody wants. An
+`interrupted` document still counts, because it does report those numbers: the run
+really did leave that much of the queue. It is also the **denominator** the
+`progress` line counts against,
 and it is bought **first** — before the one other subprocess a live view may
 spend, the task-title lookup described next (`gh` under `github`, `acli` under
 `jira`) — because it is the number the view cannot do without, and the titles are
@@ -3756,7 +3802,7 @@ clock:
   "mode": "running",
   "run_id": "ralph-ralph-b36ff7b1-1718700000",
   "progress": { "completed": 2, "in_flight": 1, "remaining": 6, "total": 9 },
-  "tasks": { "current": { "number": 31, "started_at": "2026-08-25T18:52:00Z", "task_key": null } },
+  "tasks": { "current": { "number": 31, "started_at": "2026-08-25T18:52:00Z", "task_key": null, "worktree": "/Users/you/repos/ralph/.ralph/worktrees/issue-31" } },
   "pace": { "basis": "last3-in-run", "per_task_min": 84, "fastest_min": 71, "slowest_min": 97, "samples": 2 },
   "eta": { "remaining_min": 548, "finish_at": "2026-08-26T04:40:00Z", "range_min": [457, 639], "basis": "last3-in-run" },
   "spend": { "usd": 62.85, "per_task_usd": 31.425, "projected_usd": 251.4 },
@@ -3786,10 +3832,12 @@ task-by-task history is already on disk, one line per task, in
 consumer that wants the rows reads them, and where the table's own elision line
 points a human. `progress.completed` and `tasks.current` are what the document says
 about the same fact instead, and they have said it since **0.20.0**. No key has
-changed meaning or gone away in that time; what the document has done is **grow**, twice —
-[`digest`](#the-digest-section) in **0.22.0**, and now `tasks.current.task_key`, which
+changed meaning or gone away in that time; what the document has done is **grow**, three
+times — [`digest`](#the-digest-section) in **0.22.0**, then `tasks.current.task_key`, which
 names a Jira ticket the number beside it cannot and is `null` in every document a `github`
-or `folder` run prints.
+or `folder` run prints, and now `tasks.current.worktree`, which says where the task in
+flight is being done. Each was appended at the end of its object, so a consumer reading
+positionally finds every key it already knew where it already read it.
 
 | Field | Meaning |
 | --- | --- |
@@ -3797,8 +3845,9 @@ or `folder` run prints.
 | `run_id` | The [join key](#run_id--the-join-key) as a string, or `null` in `never-run`. An `idle` document still names the run that just ended, so its history in `issues.jsonl` stays reachable. |
 | `progress.completed`, `progress.in_flight` | Tasks this run has finished, and whether one is in flight (`0` or `1`). |
 | `progress.remaining`, `progress.total` | The **live** queue depth, and `completed + in_flight + remaining`. Both `null` when the count failed — "nothing left" and "we could not look" are different answers. |
-| `tasks.current` | `{ number, started_at, task_key }` for the task in flight, and `null` **exactly** when `progress.in_flight` is `0`. Those three keys and no others, at every task source. Gated on that count rather than on the record, because a terminal record deliberately keeps `current` (it names the last task the run worked on) and reading it directly would have an `idle` document claim a finished run is still working. |
+| `tasks.current` | `{ number, started_at, task_key, worktree }` for the task in flight, and `null` **exactly** when `progress.in_flight` is `0`. Those four keys and no others, at every task source. Gated on that count rather than on the record, because a terminal record deliberately keeps `current` (it names the last task the run worked on) and reading it directly would have an `idle` document claim a finished run is still working. |
 | `tasks.current.task_key` | The Jira **key** of the ticket in flight (`"FOO-123"`) under [`TASK_SOURCE="jira"`](#the-jira-source-today), and `null` at every other source — where the task has no key, rather than one that could not be read. Published **verbatim**, exactly as the record spells it, because a key is an identity and a re-spelled one addresses no ticket: the table's cell is scrubbed and truncated for a terminal, and this is not a terminal. **Unbounded in length** for the same reason, and the same rule `run_id` has always had — a 100 kB key hand-written into `.ralph/run-state.json` is published at 100 kB rather than cut into a key that names nothing. `number` beside it still carries the key's **derived** number (`FOO-123` → `123`), which is a handle a consumer may now ignore — [and should](#the-jira-source-today), since it is not unique across projects. Always **present**: a `github` or `folder` document publishes the key as `null` rather than dropping it, so `.tasks.current.task_key` resolves wherever `tasks.current` does. |
+| `tasks.current.worktree` | The **directory the task in flight is being done in** — the [per-task worktree](#where-an-iteration-runs--a-worktree-per-task) the run recorded for it, so a script watching a detached run can find the checkout as well as name the task. Published **verbatim** and **unbounded in length**, by the same rule as `task_key` and for the same reason: this is the path something is about to `cd` into, and a tidied or truncated one names a different directory or none. The terminal's `worktree` row is scrubbed of control bytes for a terminal's sake; this is not a terminal, so it carries what the record holds. `null` when there is no directory to publish — a `jira` iteration, an iteration that aborted before its worktree was made, or a record written before this field existed — and always **present**, so `.tasks.current.worktree` resolves wherever `tasks.current` does. |
 | `pace.basis`, `eta.basis` | `last3-in-run`, `all-time`, or `unknown` — which sample set the pace came from. One value from one read, published on both sections: the ETA is the number a reader distrusts, and being told it came from the last three tasks is what makes it checkable. |
 | `pace.per_task_min` | The pace as whole minutes per task — the `~84 min/task` the human line prints. |
 | `pace.fastest_min`, `pace.slowest_min` | The observed extremes of the **same** samples, published here beside the mean they were measured with, because they are a fact about tasks rather than about the finish. |
