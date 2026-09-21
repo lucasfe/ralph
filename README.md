@@ -853,8 +853,15 @@ refuses such a branch anyway. Both halves go at the same moment, though — the
 retry re-adds with `git worktree add -B`, which resets `issue-N` onto the fresh
 base exactly as above — so read a kept tree, or rescue what you need out of it,
 before the loop reaches that issue again. What accumulates meanwhile is one
-directory per unfinished issue, and nothing removes those until their issue is
-worked again.
+directory per unfinished issue — and a sweep at the start of every run keeps that
+from growing without bound: before the first iteration the loop prunes any
+worktree record whose directory was deleted by hand and removes every kept
+`issue-N` tree whose issue has since gone **closed** or carries `pending-merge`,
+leaving the ones whose issue is still open for the human who may be reading them.
+It is best-effort — a tree it cannot reach or an issue it cannot query is named on
+stderr and kept, never a reason to stop the run — so what lingers is exactly the
+still-open failures, cleared either when you close their issue or when the loop
+works it again.
 
 #### `folder` — a detached tree per task
 
@@ -900,8 +907,11 @@ repo root. What differs is these four, plus the teardown rule below them.
 and on disk, whatever its verdict, so what accumulates is one directory per task
 number ever worked. They are cheap — a worktree holds a checkout, not a repository
 — and reading one is how you see what a task actually did to the code. Removing
-them yourself is `git worktree remove .ralph/worktrees/task-N` (or a `rm -rf`
-followed by `git worktree prune`); nothing in the loop does it for you today.
+one yourself is `git worktree remove .ralph/worktrees/task-N` (or a `rm -rf`); the
+loop-start sweep runs `git worktree prune` for every source, so a directory you
+delete by hand has its stale registration reaped on the next run — but that prune
+is all the sweep does under `folder`: with no issue to consult it never takes a
+*live* tree down, so removing those is still yours to do.
 
 #### Advancing `DEV_BRANCH`, or parking the commit
 

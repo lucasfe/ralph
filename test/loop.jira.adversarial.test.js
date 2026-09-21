@@ -1808,17 +1808,24 @@ exit 0
       'worktree',
     ])
 
-    // Nobody was asked for a worktree, by either route: no lib/worktree.js invocation and no
-    // `git worktree` subcommand. This is the assertion the `case` having no jira arm exists
-    // to make — a ticket's work lands through the agent's own branch discipline, and a tree
-    // cut here would be an empty directory per iteration that nothing ever removes.
-    expect(readLog(worktreeLog())).toBe('')
+    // Nobody was asked to CREATE OR REMOVE a per-ticket worktree. This is the assertion the
+    // `case` having no jira arm exists to make — a ticket's work lands through the agent's own
+    // branch discipline, and a tree cut here would be an empty directory per iteration that
+    // nothing ever removes. The ONE lib/worktree.js invocation this arm does make is the
+    // loop-start sweep (#223), which runs once for every source before the first iteration and
+    // does no create or remove in jira mode — so the log carries exactly `sweep … jira` and
+    // nothing else, and the only `git worktree` subcommand spoken is that sweep's `prune`.
+    const worktreeCalls = readLog(worktreeLog()).split(LF).filter((l) => l !== '')
+    expect(worktreeCalls).toHaveLength(1)
+    expect(worktreeCalls[0]).toContain(`worktree.js sweep ${workdir} jira`)
+    expect(readLog(worktreeLog())).not.toMatch(/\b(create|create-detached|remove)\b/)
     expect(
       readLog(gitLog())
         .split(LF)
         .filter((line) => line.startsWith('worktree ')),
       readLog(gitLog()),
-    ).toEqual([])
+    ).toEqual(['worktree prune -v'])
+    // The sweep prunes; it never CREATES the worktrees root, so a jira run still leaves none.
     expect(existsSync(join(workdir, '.ralph', 'worktrees'))).toBe(false)
 
     // `set -u`: the hoisted block reads `$task_handle` and `$task_worktree` on a path this

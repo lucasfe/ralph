@@ -432,6 +432,23 @@ node "$RALPH_PKG_DIR/lib/run-state.js" begin \
   "$(queue_count)" || true
 # ---------------------------------------------------------------------------
 
+# --- Stray worktree sweep, ONCE at loop start (#223) ------------------------
+# #220 keeps a worktree on disk whenever an iteration does not succeed — which is
+# what makes a failure inspectable — and over weeks that is also what fills
+# .ralph/worktrees/ with checkouts of issues closed long ago. Sweep them here,
+# before the first iteration: prune any record whose directory was deleted by hand,
+# and (github only) remove the trees whose issue is CLOSED or `pending-merge`,
+# leaving the still-open ones for the human who may be reading them.
+#
+# Through lib/worktree.js, the ONE place in this package that runs a worktree
+# command at all — bash holds nothing but the call, exactly like the create and
+# remove bridges. This mirrors lib/orphan-cleanup.js's stale-label sweep:
+# best-effort, before the work starts, and never able to change a run's outcome, so
+# `|| true` — a sweep that could not finish is a warning the module already printed,
+# not a reason to abort the run.
+node "$RALPH_PKG_DIR/lib/worktree.js" sweep "$PROJECT_ROOT" "$TASK_SOURCE" || true
+# ---------------------------------------------------------------------------
+
 # --- Stale `in-progress` sweep (#40, renamed #140) --------------------------
 # A merged PR that closes its issue (`Closes #N`) runs neither of the agent's
 # label-removal paths, so `in-progress` survives on an issue this loop counts
