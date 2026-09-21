@@ -1728,3 +1728,141 @@ exit 0
     expect(e.issue_number, JSON.stringify(e)).toBe(42)
   })
 })
+
+// #222 — THE WORKTREE BLOCK NOW SITS ABOVE THE SHARED `begin-task` CALL, and the jira arm is
+// the source that block was never written for. It matches no arm of the `case`, so
+// `$task_worktree` keeps its empty default and the arm reaches `continue` without ever asking
+// lib/worktree.js for anything — which is the same structural bargain the shared `task_key`
+// has under `set -u`, one stretch of code serving three sources, and it fails the same way:
+// fatally, at the first expansion, rather than with a wrong value. Hence a RUN rather than a
+// reading of the script. What the run has to show is that jira's iteration is still recorded
+// (with `worktree` present and null, because a ticket has no directory), that no tree was
+// created and no `git worktree` was spoken, and that the loop still terminates.
+describe('ralph.sh jira arm — the hoisted worktree block leaves it alone (#222 QA)', () => {
+  const gitLog = () => join(workdir, 'git-called.log')
+  const worktreeLog = () => join(workdir, 'worktree-js-called.log')
+
+  // Same fictions as the shared `git` stub in beforeEach, plus a log: the question here is
+  // what the loop ASKED for, and a stub that only answers cannot be asked it.
+  const seedLoggingGit = () =>
+    writeStub(
+      'git',
+      `#!/bin/bash
+echo "$*" >> "${gitLog()}"
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "${workdir}"
+  exit 0
+fi
+if [ "$1" = "worktree" ]; then
+  case "$2" in
+    add) for a in "$@"; do case "$a" in */.ralph/worktrees/*) mkdir -p "$a" ;; esac; done ;;
+    remove) case "$4" in */.ralph/worktrees/*) rm -rf "$4" ;; esac ;;
+  esac
+  exit 0
+fi
+exit 0
+`,
+    )
+
+  // The seeded node stub with ONE arm added, ahead of the delegation it would otherwise take:
+  // every lib/worktree.js invocation is logged and then still run for real, so "never asked"
+  // is measured rather than assumed from the absence of a directory (a create that threw
+  // would also leave no directory).
+  const seedLoggingNode = () =>
+    writeStub(
+      'node',
+      `#!/bin/bash
+case "$*" in
+  *worktree.js*) echo "$*" >> "${worktreeLog()}"; exec "${REAL_NODE}" "$@" ;;
+  *jira-queue.js*) exec "${REAL_NODE}" "$@" ;;
+  *run-state.js*) exec "${REAL_NODE}" "$@" ;;
+  *capture-issue-event.js*) exec "${REAL_NODE}" "$@" ;;
+  *agent-invocation.js*) exec "${REAL_NODE}" "$@" ;;
+  *folder-queue.js*) exec "${REAL_NODE}" "$@" ;;
+esac
+echo "PROMPT"
+exit 0
+`,
+    )
+
+  it('records the ticket with a null worktree, and asks for no tree at all', () => {
+    seedStubs()
+    seedLoggingGit()
+    seedLoggingNode()
+    const res = runJira()
+    finished(res)
+
+    // The iteration is recorded, and every field of it is the one this source has: the key,
+    // the number lib/jira-key.js reads out of it, and a worktree that is PRESENT AND NULL —
+    // the value the `ralph status` row keys on to draw nothing. An absent key would render
+    // identically today and is a different promise, so it is asserted separately.
+    const rec = record()
+    expect(rec.current).toMatchObject({ number: 123, task_key: 'FOO-123', iteration: 1 })
+    expect(rec.current.worktree).toBe(null)
+    expect('worktree' in rec.current).toBe(true)
+    expect(Object.keys(rec.current)).toEqual([
+      'number',
+      'task_key',
+      'started_at',
+      'iteration',
+      'worktree',
+    ])
+
+    // Nobody was asked for a worktree, by either route: no lib/worktree.js invocation and no
+    // `git worktree` subcommand. This is the assertion the `case` having no jira arm exists
+    // to make — a ticket's work lands through the agent's own branch discipline, and a tree
+    // cut here would be an empty directory per iteration that nothing ever removes.
+    expect(readLog(worktreeLog())).toBe('')
+    expect(
+      readLog(gitLog())
+        .split(LF)
+        .filter((line) => line.startsWith('worktree ')),
+      readLog(gitLog()),
+    ).toEqual([])
+    expect(existsSync(join(workdir, '.ralph', 'worktrees'))).toBe(false)
+
+    // `set -u`: the hoisted block reads `$task_handle` and `$task_worktree` on a path this
+    // arm takes, so an initialisation left behind in the `case` would kill the run here.
+    expect(res.stderr).not.toContain('unbound variable')
+    expect(res.stderr).not.toContain('task_worktree')
+    // The ticket was still claimed, still worked, and still swept — the arm ran its whole
+    // course after the hoist rather than dying somewhere inside it. `failed` rather than
+    // `in-progress` is the end state because the default claude stub completes nothing, so
+    // #130's sweep is what wrote the board last, and reaching that write means the iteration
+    // got past the dispatch and into its outcome branch.
+    expect(existsSync(claimedFlag())).toBe(true)
+    expect(agentCalls()).toHaveLength(1)
+    expect(boardLabels()).toBe('frontend,p2,failed')
+  })
+
+  it('runs the jira agent in the MAIN root, with no worktree override in its environment', () => {
+    // The other half of "no tree": the two variables the create block would have set on its
+    // way past. `agent_cwd` stays $PROJECT_ROOT (the jira dispatch passes no cwd at all, so
+    // run_agent_for_issue's own `${2:-$PROJECT_ROOT}` supplies it) and
+    // RALPH_PROMPT_PROJECT_ROOT is never exported — so
+    // lib/build-prompt.js renders {{PROJECT_ROOT}} as the checkout the human is in. A leaked
+    // export would point the prompt at another source's tree, and `<unset>` is asserted rather
+    // than "not the worktree path" because an empty export is still an export.
+    seedStubs()
+    seedLoggingGit()
+    seedLoggingNode()
+    writeStub(
+      'claude',
+      `#!/bin/bash
+cat > /dev/null
+{
+  echo "PWD=$PWD"
+  echo "PROMPT_ROOT=\${RALPH_PROMPT_PROJECT_ROOT-<unset>}"
+} >> "${claudeLog()}"
+exit 0
+`,
+    )
+
+    const res = runJira()
+    finished(res)
+    const log = readLog(claudeLog())
+    expect(log, log).toContain(`PWD=${workdir}`)
+    expect(log, log).toContain('PROMPT_ROOT=<unset>')
+    expect(log).not.toContain('/.ralph/worktrees/')
+  })
+})

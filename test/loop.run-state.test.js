@@ -222,6 +222,11 @@ describe('ralph.sh run-state — github mode (#55)', () => {
     expect(rec.current.number).toBe(1)
     expect(rec.current.iteration).toBe(3)
     expect(Number.isFinite(Date.parse(rec.current.started_at))).toBe(true)
+    // #222 — and WHICH DIRECTORY that task ran in, so a detached run can be found without
+    // `git worktree list` and a guess at the branch name. The value is the path
+    // lib/worktree.js printed for this source's handle (`issue-<n>`), passed along by the
+    // same one call: ralph.sh spells no layout and no field name of its own.
+    expect(rec.current.worktree).toBe(join(workdir, '.ralph', 'worktrees', 'issue-1'))
     // One run id across every observability surface of this run.
     expect(readIssueEvents().map((e) => e.run_id)).toEqual([rec.run_id, rec.run_id, rec.run_id])
   })
@@ -299,6 +304,10 @@ exit 0
     expect(rec.failed).toBe(0)
     expect(rec.current.number).toBe(2)
     expect(rec.current.iteration).toBe(2)
+    // #222 — the folder source's handle is `task-<n>`, and that difference is exactly why
+    // the path is RECORDED rather than derived by whoever reads the record: a reader
+    // rebuilding `issue-<number>` from the number would name a directory that never existed.
+    expect(rec.current.worktree).toBe(join(workdir, '.ralph', 'worktrees', 'task-2'))
 
     const ghLog = join(workdir, 'gh-called.log')
     expect(
@@ -332,6 +341,81 @@ describe('ralph.sh run-state — --once mode, the `ralph cycle` path (#55)', () 
 
     // Unchanged: the cycle event stays the automated path's own emission.
     expect(readCycleEvents()).toEqual([])
+  })
+})
+
+// #222 — the in-flight WORKTREE reaches the record. The field, its emptiness rules and both
+// `ralph status` surfaces are pinned in the library suites; what only a real bash run can
+// show is the WIRING, and there are two halves to it:
+//
+//   THE PATH TRAVELS, AND NOTHING ELSE DOES. `lib/worktree.js` prints the directory it
+//   created and `$task_worktree` already holds it, so the loop passes that variable to the
+//   `begin-task` call it already makes — one more positional argument, no new verb, no field
+//   name in bash, and no second writer of the record. The two happy-path tests above assert
+//   the arrival for both sources (`issue-<n>` and `task-<n>`).
+//
+//   THE CALL STAYS SINGULAR. `begin-task` re-stamps `current.started_at`, which is what
+//   `ralph status` subtracts to say how long the task has been running — so a second call
+//   per iteration would silently reset the clock every time. #222 moved the worktree block
+//   ABOVE the one call instead of adding a call after it, and the abort test below is what
+//   holds that order in place: the task the run died on is still recorded, with no worktree.
+describe('ralph.sh run-state — the in-flight worktree (#222)', () => {
+  it('records the task with NO worktree when one could not be created, and aborts', () => {
+    seedGithubHappyPath(3)
+    // The realistic failure this abort exists for: no base commit to cut the branch from
+    // (an empty repo, a DEV_BRANCH that exists on neither the remote nor on disk). Every
+    // `rev-parse --verify` refuses, so lib/worktree.js throws, `|| task_worktree=""` empties
+    // the variable, and the loop stops rather than marking work failed it never attempted.
+    writeStub(
+      'git',
+      `#!/bin/bash
+if [ "$1" = "rev-parse" ] && [ "$2" = "--show-toplevel" ]; then
+  echo "${workdir}"
+  exit 0
+fi
+if [ "$1" = "rev-parse" ] && [ "$2" = "--verify" ]; then exit 1; fi
+exit 0
+`,
+    )
+
+    const res = runLoop()
+    expect(res.signal, `loop hung. stdout:\n${res.stdout}`).toBeNull()
+    expect(res.status, `stderr:\n${res.stderr}`).toBe(0)
+    expect(res.stderr).toContain('could not create a worktree')
+
+    const rec = readRunStateFile()
+    expect(rec, `no run-state written. stderr:\n${res.stderr}`).not.toBe(null)
+    // The iteration is recorded BEFORE the abort check, which is the point: `ralph status`
+    // and the post-mortem both read `current.number` to name the task a dead run was on, and
+    // an abort that recorded nothing would leave a run that failed on nothing in particular.
+    expect(rec.current.number).toBe(3)
+    expect(rec.current.iteration).toBe(1)
+    // ...and the field is present and null rather than absent or a guess at the path that
+    // was never created — the row `ralph status` then draws is no row at all.
+    expect(rec.current.worktree).toBe(null)
+    expect('worktree' in rec.current).toBe(true)
+    expect(rec.status).toBe('failed')
+  })
+
+  it('makes ONE begin-task call, whose last argument is the worktree variable', () => {
+    // Asserted against the script TEXT because the regression is invisible at runtime: a
+    // second `begin-task` would write a perfectly good record, having thrown away the
+    // task's start time. Same reason the jira suite pins "the ONE shared call".
+    const script = readFileSync(RALPH_TEMPLATE, 'utf8')
+    const calls = script.match(/^\s*node .*run-state\.js" begin-task .*$/gm) ?? []
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toContain('begin-task "$PROJECT_ROOT" "$num" "$iter" "$task_key" "$task_worktree"')
+    // Three sidecar invocations in the whole loop, in this order, and no fourth: the record
+    // is written once at run start, once per iteration, and once at the end. #222 needed no
+    // new verb either — the shape of the record is lib/run-state.js's alone.
+    expect([...script.matchAll(/run-state\.js" ([a-z-]+)/g)].map((m) => m[1])).toEqual([
+      'begin',
+      'begin-task',
+      'end',
+    ])
+    // And bash spells no key of the record anywhere — it passes values positionally and
+    // learns nothing it would have to be edited to keep in step.
+    expect(script).not.toContain('"worktree"')
   })
 })
 
