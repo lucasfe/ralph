@@ -758,22 +758,23 @@ activation flag.
 
 ### Where an iteration runs — a worktree per task
 
-Under [`github`](#choosing-the-task-source) and [`folder`](#choosing-the-task-source)
-an iteration does **not** run in your checkout: the loop puts the agent in a
-dedicated **git worktree** under the gitignored `.ralph/worktrees/` directory and
-leaves your own tree alone. The two sources shape that tree differently, because
-their delivery differs — `github` needs a branch of its own to open a PR from,
-`folder` commits onto `DEV_BRANCH` itself and so can be handed no branch at all.
-`jira` is the exception and still runs in your checkout.
+Under **every** task source — [`github`](#choosing-the-task-source),
+[`folder`](#choosing-the-task-source) and [`jira`](#choosing-the-task-source) — an
+iteration does **not** run in your checkout: the loop puts the agent in a dedicated
+**git worktree** under the gitignored `.ralph/worktrees/` directory and leaves your
+own tree alone. The sources shape that tree differently, because their delivery
+differs — `github` needs a branch of its own to open a PR from, while `folder` and
+`jira` both commit onto `DEV_BRANCH` itself and so are handed a **detached** tree with
+no branch at all.
 
 While a run is going you do not have to reconstruct that path to go and look at it.
 [`ralph status`](#run-state--ralphrun-statejson-and-ralph-status) prints the tree the
 task in flight is being worked in as its `worktree` row, and `ralph status --json`
 publishes the same path as `tasks.current.worktree`. Both report the path **the loop
 recorded** rather than one rebuilt from the task number, which is what makes them right
-for a `folder` task — whose tree is `task-N`, not `issue-N` — as well as for a `github`
-issue. Under `jira` there is no worktree, so there is nothing to name and neither
-surface invents one.
+for a `folder` task — whose tree is `task-N`, not `issue-N` — and for a `jira` ticket,
+whose tree is keyed by the ticket (`task-<key>`) rather than a number, as well as for a
+`github` issue.
 
 #### `github` — a branch per issue
 
@@ -913,11 +914,31 @@ delete by hand has its stale registration reaped on the next run — but that pr
 is all the sweep does under `folder`: with no issue to consult it never takes a
 *live* tree down, so removing those is still yours to do.
 
+#### `jira` — a detached tree per ticket
+
+A Jira ticket commits **straight onto `DEV_BRANCH`** as well — no feature branch,
+nothing pushed — so it gets the same tree `folder` does: the loop adds
+`.ralph/worktrees/task-<key>` **detached** at the tip of the **local** `DEV_BRANCH`,
+cut with no fetch, and the agent works and commits there on a detached `HEAD`. The
+only differences from `folder` are two. First, the handle is keyed by the **ticket**
+rather than a number — `task-FOO-123`, with any character a path cannot hold folded to
+`_` — so the park branch it may end up on is `ralph/task-<key>` to match. Second,
+there is no local task queue: the board *is* the queue, so there is no `.ralph/tasks/`
+tree to root against the main checkout — only the per-ticket log lands there
+(`logs/ralph-issue-<key>.log`, written in the main repo root, not in the worktree).
+Everything else is folder's — the same leftover-clearing before the add, the same
+[seed list](#configuration-reference) copied in before the agent starts, the same
+[branch-move-or-park](#advancing-dev_branch-or-parking-the-commit) after it returns,
+and the same teardown: **nothing takes a jira worktree down** either, so one directory
+per ticket ever worked is left standing for you to read, and the loop-start sweep only
+`git worktree prune`s the ones you deleted by hand.
+
 #### Advancing `DEV_BRANCH`, or parking the commit
 
-The agent commits on a detached `HEAD`, so after it returns something has to move
-`DEV_BRANCH` — and the one thing that must not happen while it does is a write
-into a tree a human is working in. So the loop decides between three outcomes, from
+This step governs **both** commit-direct sources — `folder` and `jira` — since both
+hand the agent a detached tree and neither pushes. The agent commits on a detached
+`HEAD`, so after it returns something has to move `DEV_BRANCH` — and the one thing that
+must not happen while it does is a write into a tree a human is working in. So the loop decides between three outcomes, from
 git facts only: whether `DEV_BRANCH` is checked out at all, in *which* tree, and
 whether that tree is clean.
 
@@ -934,7 +955,8 @@ whether that tree is clean.
   are already sitting on means; it performs no checkout and no branch switch, so
   your `HEAD` still names `DEV_BRANCH` afterwards.
 - **Parked.** `DEV_BRANCH` is **not written**. The commit is given a branch of its
-  own with `git branch -f ralph/task-N <sha>`, and a warning on stderr names both:
+  own with `git branch -f ralph/task-N <sha>` (`ralph/task-<key>` under `jira`), and a
+  warning on stderr names both:
   `⚠️  worktree: could not advance <DEV_BRANCH> (<reason>) — commit <sha> is parked
   on ralph/task-N`. Your tree is untouched. Merge or cherry-pick it when you are
   ready, and delete the branch after.
@@ -953,10 +975,10 @@ that warning is one of six:
 | `ff-refused` | `git merge --ff-only` refused in a tree that had read as clean. |
 
 **A park is not a task failure, and never changes a verdict.** A folder task's
-outcome is the terminal directory of its task file and nothing else, and where the
-agent left that file is already settled by the time any of this runs — a branch
-Ralph could not advance is not a task Ralph failed, the same rule the Jira
-transition follows. So a park exits `0`, the task still counts as it counted, and
+outcome is the terminal directory of its task file, and a Jira ticket's is the label
+the loop reads back off its board — the branch state is neither. A branch Ralph could
+not advance is not a task Ralph failed, and the Jira transition follows the same
+rule. So a park exits `0`, the task still counts as it counted, and
 the run's summary is unaffected. Ralph's own warnings are the only trace.
 **It does not run the other way either**: the branch is moved before the verdict is
 read, so a task the loop then records as `failed` still has whatever it committed
@@ -1178,7 +1200,12 @@ Ralph draws its work from one **task source** per project, recorded as
   **key and nothing else** to the agent, which reads the work item with `acli` itself
   and commits
   straight to `DEV_BRANCH` — no feature branch, no PR, no auto-merge, and nothing
-  pushes, the same delivery shape `folder` mode has. Each iteration works one ticket;
+  pushes, the same delivery shape `folder` mode has. The work happens in its **own
+  detached git worktree** here too, exactly as under `folder` — cut at the tip of your
+  local `DEV_BRANCH` with no fetch, the agent committing on the detached `HEAD`, and
+  the loop then moving `DEV_BRANCH` to that commit or parking it on `ralph/task-<key>`
+  after the agent returns, your own checkout never switched. Each iteration works one
+  ticket;
   the claim is what the composed query excludes, so the queue drains and the loop
   exits `Queue empty`. **Once the commit exists, the ticket is closed out**: it is
   labelled `done` — the label the composed query also excludes, so a resolved ticket
@@ -1214,8 +1241,8 @@ that surprises people, because two of the three sources never publish anything:
 | Work comes from | open issues on the repo's GitHub board, read with `gh` | numbered `.md` files under the gitignored `.ralph/tasks/` tree | work items on a Jira site, read with Atlassian's `acli` |
 | Eligibility is expressed as | a **fixed search query** inside the loop script Ralph ships (`templates/ralph.sh`, run from the install rather than copied into your repo) — `state:open -label:in-progress -label:failed -label:do-not-ralph -label:pending-merge` — not a config knob; the pick adds `sort:created-asc` | the **directory** itself: the lowest-numbered file in `afk/todo/` | **your JQL**, in [`JIRA_JQL`](#the-eligibility-query--jira_jql) — eligibility only, with Ralph appending the label exclusion and the ordering |
 | CLI and auth it needs | `gh`, authenticated (`gh auth login`) | **no source CLI at all** — `ralph doctor` skips both `gh` and `acli` | `acli`, logged in (`acli jira auth login`) |
-| Where the agent works | a **per-issue git worktree** at `.ralph/worktrees/issue-N`, on an `issue-N` branch cut from `origin/DEV_BRANCH` — the worktree is removed when the iteration resolves its issue and kept for you to inspect when it does not, the branch is kept either way, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-task)) | a **per-task git worktree** at `.ralph/worktrees/task-N`, **detached** at the tip of your **local** `DEV_BRANCH` and cut with no fetch — the agent commits on that detached `HEAD`, the loop then advances `DEV_BRANCH` to the commit or parks it on `ralph/task-N`, the tree is left standing whatever the verdict, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-task)) | **your checkout**, on `DEV_BRANCH` — the agent prepares the tree itself (`git checkout DEV_BRANCH && git pull`) |
-| **Delivery shape** | an `issue-N` **branch**, **pushed**, with a PR set to **auto-merge** (`gh pr merge … --auto`) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes**; the loop moves the branch onto it, or [parks it](#advancing-dev_branch-or-parking-the-commit) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes** |
+| Where the agent works | a **per-issue git worktree** at `.ralph/worktrees/issue-N`, on an `issue-N` branch cut from `origin/DEV_BRANCH` — the worktree is removed when the iteration resolves its issue and kept for you to inspect when it does not, the branch is kept either way, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-task)) | a **per-task git worktree** at `.ralph/worktrees/task-N`, **detached** at the tip of your **local** `DEV_BRANCH` and cut with no fetch — the agent commits on that detached `HEAD`, the loop then advances `DEV_BRANCH` to the commit or parks it on `ralph/task-N`, the tree is left standing whatever the verdict, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-task)) | a **per-ticket git worktree** at `.ralph/worktrees/task-<key>`, **detached** at the tip of your **local** `DEV_BRANCH` and cut with no fetch — the agent commits on that detached `HEAD`, the loop then advances `DEV_BRANCH` to the commit or parks it on `ralph/task-<key>`, the tree is left standing whatever the verdict, and your own checkout is never switched ([details](#where-an-iteration-runs--a-worktree-per-task)) |
+| **Delivery shape** | an `issue-N` **branch**, **pushed**, with a PR set to **auto-merge** (`gh pr merge … --auto`) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes**; the loop moves the branch onto it, or [parks it](#advancing-dev_branch-or-parking-the-commit) | one commit **straight onto `DEV_BRANCH`** — no branch, no PR, **and nothing pushes**; the loop moves the branch onto it, or [parks it](#advancing-dev_branch-or-parking-the-commit) |
 | Ralph claims work by | the **agent** adding the `in-progress` label to the issue | the **agent** moving the file `afk/todo → afk/in-progress` | the **loop** adding the `in-progress` label to the ticket |
 | Completion is recorded as | the issue reaching `CLOSED` (usually via `Closes #N` on the merge) or carrying `pending-merge` | the file arriving in `afk/done/` | the `done` label, with `in-progress` removed, a comment carrying the commit SHA, and a transition to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where the project's workflow accepts one |
 | Failure is recorded as | the `failed` label | the loop moving the file to `afk/failed/` | the loop adding the `failed` label and removing `in-progress` |
@@ -2504,7 +2531,7 @@ already written this way when you upgrade.
 | `TASK_SOURCE`         | `github`                             | Where Ralph draws work from: `github` (default, resolves open GitHub issues via `gh` and opens PRs), `folder` (local `.ralph/tasks/` tree, commits straight to `DEV_BRANCH`, no PR, no `gh`) or `jira`, which today **works a ticket and records on the board what became of it**: the queue depth, the ticket and the claim all come from your Jira project by running [`JIRA_JQL`](#the-eligibility-query--jira_jql) through Atlassian's `acli` — each iteration selects the oldest eligible ticket, records it, labels it `in-progress`, and hands the key to the agent, which reads the work item itself and commits straight to `DEV_BRANCH` with no branch, no PR and no push, then labels the ticket `done`, takes `in-progress` back off, comments the commit SHA, and transitions the ticket to [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status) where that knob names a status the project's workflow accepts. A ticket the agent did **not** finish is swept by the loop rather than by the agent — after the dispatch returns it reads the ticket's labels back off the board and gives anything that is not `done` the `failed` label with `in-progress` removed, warning on stderr — so a killed, crashed or idle invocation can never leave the loop spinning on the same ticket. The iteration **is** recorded: the loop appends one per-ticket event to `.ralph/metrics/issues.jsonl` carrying the ticket key as `task_key` beside the numeric `issue_number` derived from it, so `ralph status`'s completed count and `ralph cycle`'s `N ok, N failed` account for a Jira run like any other — best-effort, so a telemetry failure costs the run its record and never its outcome. The loop runs no `gh` command, telemetry included. `ralph cycle` asks for the credential this source actually spends: under `jira` its preflight aborts unless `acli jira auth status` exits `0`, and it no longer gates on `gh auth` at all. `ralph start` has not moved with the loop: it still demands an authenticated `gh` and still counts GitHub issues to decide whether to launch, so its number can differ from `ralph status`'s and it can refuse to start over an empty GitHub queue. [`ralph doctor`](#the-jira-source-today) also asks for `acli` instead of `gh` here and reports whether that CLI is logged in (reported, never enforced — it cannot fail the diagnostic, though `ralph cycle`'s preflight runs the same probe and does refuse to start). Values are case-insensitive and trimmed; unset, empty or unrecognized falls back to `github`. **That holds for the commands, not for the loop:** `ralph start`, `status`, `cycle` and `doctor` lowercase and trim this value, while the loop's own dispatch compares it exactly — so `TASK_SOURCE=JIRA` has the commands reading Jira while the loop works GitHub. A known divergence, older than the `jira` source (`FOLDER` behaves the same way), pinned in the test suite and left for its own fix; write the value in lower case. Set by `ralph init --source <name>` or by init's interactive picker, which offers all three names and takes `github` on a blank or unrecognized answer; choosing `jira` there also asks for [`JIRA_JQL`](#the-eligibility-query--jira_jql) and [`JIRA_DONE_STATUS`](#recording-a-ticket-as-done--jira_done_status). This file is read **first** and the environment second — the loop *sources* it with `set -a`, so a committed value beats an exported one, and all four commands that read the knob agree about that. **They part on an empty assignment.** For `ralph start` a `TASK_SOURCE=""` line is a value like any other and means `github`, which is what the loop's own `${TASK_SOURCE:-github}` makes of the blank it sourced — so the `source` row, the `gh auth status` check and the queue that gets counted all follow the file. `ralph status`, `ralph cycle` and `ralph doctor` still read **past** an empty line into the environment, so a shell that exports `folder` or `jira` has those three reporting it — and `doctor` checking that source's deps — over a run that will do `github`. A named follow-up rather than a design; write the value or leave the line out. See [Choosing the task source](#choosing-the-task-source). |
 | `JIRA_JQL`            | `""` (not configured; a `jira` init writes a working query) | The Jira **eligibility** query, read only under `TASK_SOURCE="jira"` and ignored otherwise: which work items are candidates for Ralph, and nothing about labels or ordering. One query answers both questions the source asks — how deep the queue is, and which ticket is next — so a count and a selection can never disagree about what is eligible. **Ralph appends its own half and you cannot turn that off** — your clause is wrapped in parentheses (so an `OR` in it keeps its meaning against the `AND` that follows), then `AND (labels NOT IN (in-progress, done, failed, do-not-ralph) OR labels IS EMPTY)`, then the ordering. Three of those four labels are Ralph's own writes — `in-progress` when it claims a ticket, `done` when the agent records one as complete, `failed` when the loop sweeps one the agent did not finish — so claiming is what makes the next pass skip work in flight, completing is what makes the queue drain rather than hand a resolved ticket out again, and the sweep is what makes it drain even when the agent recorded nothing at all. `do-not-ralph` is the one label here Ralph never writes: that one is yours, for a ticket you want the loop to leave alone. A trailing `ORDER BY` of yours is **relocated, not refused** — Jira requires it last, so it is cut off, the exclusion is inserted, and your ordering goes back verbatim at the end; write none and you get `ORDER BY created ASC`, the analog of `github` mode's `sort:created-asc`. Empty means **not configured**, deliberately not "everything": Ralph's half alone would select every work item on the Jira site, so a blank value counts nothing, spawns no `acli jira workitem` call at all, selects nothing (a loop started with it prints `Queue empty, exiting.` on its first pass), and leaves `ralph status` reporting `queue      unknown` while `ralph cycle` exits saying the queue is empty. `ralph cycle` does still spawn **one** `acli` under this source whatever this line holds — its preflight's `acli jira auth status`, which runs before the query is looked at — so a blank query on a logged-out session reports the session rather than an empty queue. Config-**only**, with no environment fallback beside it, unlike `TASK_SOURCE`: an eligibility query is a property of the repository, and the assignment is always present in the file (`init` writes it on every path, empty for `github`/`folder`), so `set -a` exports whatever it holds — a blank included — into every child the loop spawns. A value containing a `#` needs **single** quotes — `JIRA_JQL='summary ~ "#123"'` — because the file is text-parsed rather than sourced and a `#` after a closing double quote is taken for a comment; the truncated query is then rejected by Jira, which costs you the count. `ralph init` chooses the quote character on the line it writes for you — single where the value needs them, double where it does not — so this is a rule for **hand edits**. `ralph doctor` never reads this line. See [The eligibility query](#the-eligibility-query--jira_jql). |
 | `JIRA_DONE_STATUS`    | `""` (do not transition)             | The status Ralph asks Jira to move a ticket to once the work is committed, read only under `TASK_SOURCE="jira"` and ignored otherwise — the third of the three writes a completion makes, beside the `done` label and the comment carrying the commit SHA. **The template ships no default, because no name is right everywhere** (a `jira` init asks for one, offering `Done`, which is a visible answer rather than a shipped default)**:** status names come from your project's own workflow (`Done` on one board, `Resolved`, `Closed`, `Complete` or `Ready for Release` on the next), so write yours exactly as that workflow spells it, capitalisation included — `JIRA_DONE_STATUS="Done"`. **Empty or unset means "do not transition"**, and is not an error: Ralph skips the move, warns once on stderr, and still labels and comments. **A refused transition costs you a board move and never the run** — a workflow can decline the move for reasons Ralph can neither see nor satisfy (no transition to that status from where the ticket sits, a required field, a validator), and when it does Ralph warns on stderr naming the ticket and the status, then finishes the job anyway: it still labels the ticket `done`, still comments the SHA, and still counts the ticket as resolved. What you are left with is one ticket to move by hand, and the warning says which. **The label is what actually drains the queue**, which is why the transition is allowed to fail: Jira labels are freeform and no workflow rule can veto one, and `done` is in the exclusion Ralph appends to [`JIRA_JQL`](#the-eligibility-query--jira_jql), so a completed ticket stops being eligible whatever the board's status column says. A `done` label that could **not** be written is the one failure that fails a completion — it is the only outcome that leaves a resolved ticket in the queue — and Ralph says so, both on stderr and in the exit code. **No `ralph` command reads this line**: not `doctor`, not `status`, not `cycle`. Its only transport is the loop *sourcing* `ralph.config.sh` with `set -a`, which exports the assignment into the agent's environment, where `lib/jira-queue.js complete` reads it. See [Recording a ticket as done](#recording-a-ticket-as-done--jira_done_status). |
-| `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. Under `github` and `folder` the iteration starts in a [fresh worktree](#where-an-iteration-runs--a-worktree-per-task) that holds no `node_modules` — the [seed list](#configuration-reference) never puts one there — so this does a cold install every time rather than finding an installed tree. |
+| `INSTALL_CMD`         | autodetected (e.g. `npm ci`)         | Command Ralph runs at the start of each iteration. Empty = ask the agent. Under `github`, `folder` and `jira` the iteration starts in a [fresh worktree](#where-an-iteration-runs--a-worktree-per-task) that holds no `node_modules` — the [seed list](#configuration-reference) never puts one there — so this does a cold install every time rather than finding an installed tree. |
 | `TEST_CMD`            | autodetected (e.g. `npm test`)       | Test command run before opening a PR. Empty = skip.                    |
 | `LINT_CMD`            | autodetected (e.g. `npm run lint`)   | Lint command run before opening a PR. Empty = skip.                    |
 | `MAIN_BRANCH`         | from `origin/HEAD`                   | The protected branch (PRs ultimately land here).                       |

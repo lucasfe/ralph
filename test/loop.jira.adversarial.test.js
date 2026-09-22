@@ -1729,18 +1729,19 @@ exit 0
   })
 })
 
-// #222 — THE WORKTREE BLOCK NOW SITS ABOVE THE SHARED `begin-task` CALL, and the jira arm is
-// the source that block was never written for. It matches no arm of the `case`, so
-// `$task_worktree` keeps its empty default and the arm reaches `continue` without ever asking
-// lib/worktree.js for anything — which is the same structural bargain the shared `task_key`
-// has under `set -u`, one stretch of code serving three sources, and it fails the same way:
-// fatally, at the first expansion, rather than with a wrong value. Hence a RUN rather than a
-// reading of the script. What the run has to show is that jira's iteration is still recorded
-// (with `worktree` present and null, because a ticket has no directory), that no tree was
-// created and no `git worktree` was spoken, and that the loop still terminates.
-describe('ralph.sh jira arm — the hoisted worktree block leaves it alone (#222 QA)', () => {
+// #222/#224 — THE WORKTREE BLOCK NOW SITS ABOVE THE SHARED `begin-task` CALL, and #224 gave
+// the jira arm a case in it: a DETACHED worktree at the local $DEV_BRANCH tip, exactly like
+// folder mode (#221). This suite is the shell-wiring proof — the git-behaviour of the advance
+// and the park lives in test/loop.worktree.jira.test.js, against a REAL repository. Here the
+// git stub only maintains the fiction that a worktree directory appears, so what these two
+// tests can honestly show is: the iteration is recorded WITH its worktree path, the loop asks
+// lib/worktree.js to `create-detached` and then `advance` it, the agent runs INSIDE it with the
+// {{PROJECT_ROOT}} override exported, and (the `set -u` shape the shared `task_key` also has)
+// the run still terminates rather than dying at the first expansion of a shared variable.
+describe('ralph.sh jira arm — the hoisted worktree block cuts a detached tree (#222/#224 QA)', () => {
   const gitLog = () => join(workdir, 'git-called.log')
   const worktreeLog = () => join(workdir, 'worktree-js-called.log')
+  const worktreeDir = () => join(workdir, '.ralph', 'worktrees', 'task-FOO-123')
 
   // Same fictions as the shared `git` stub in beforeEach, plus a log: the question here is
   // what the loop ASKED for, and a stub that only answers cannot be asked it.
@@ -1785,20 +1786,19 @@ exit 0
 `,
     )
 
-  it('records the ticket with a null worktree, and asks for no tree at all', () => {
+  it('records the ticket WITH its worktree path, and cuts a detached tree then advances it', () => {
     seedStubs()
     seedLoggingGit()
     seedLoggingNode()
     const res = runJira()
     finished(res)
 
-    // The iteration is recorded, and every field of it is the one this source has: the key,
-    // the number lib/jira-key.js reads out of it, and a worktree that is PRESENT AND NULL —
-    // the value the `ralph status` row keys on to draw nothing. An absent key would render
-    // identically today and is a different promise, so it is asserted separately.
+    // The iteration is recorded, and the worktree field now carries the path lib/worktree.js
+    // printed for this ticket's `task-<safe-key>` handle — the value the `ralph status` row
+    // draws. FOO-123 sanitises to itself, so the handle is `task-FOO-123`.
     const rec = record()
     expect(rec.current).toMatchObject({ number: 123, task_key: 'FOO-123', iteration: 1 })
-    expect(rec.current.worktree).toBe(null)
+    expect(rec.current.worktree).toBe(worktreeDir())
     expect('worktree' in rec.current).toBe(true)
     expect(Object.keys(rec.current)).toEqual([
       'number',
@@ -1808,48 +1808,44 @@ exit 0
       'worktree',
     ])
 
-    // Nobody was asked to CREATE OR REMOVE a per-ticket worktree. This is the assertion the
-    // `case` having no jira arm exists to make — a ticket's work lands through the agent's own
-    // branch discipline, and a tree cut here would be an empty directory per iteration that
-    // nothing ever removes. The ONE lib/worktree.js invocation this arm does make is the
-    // loop-start sweep (#223), which runs once for every source before the first iteration and
-    // does no create or remove in jira mode — so the log carries exactly `sweep … jira` and
-    // nothing else, and the only `git worktree` subcommand spoken is that sweep's `prune`.
+    // THREE lib/worktree.js invocations, in order: the loop-start sweep (#223), then #224's
+    // per-ticket `create-detached`, then the post-agent `advance`. No `remove` — a ticket's
+    // tree, like a folder task's, is not torn down by this loop.
     const worktreeCalls = readLog(worktreeLog()).split(LF).filter((l) => l !== '')
-    expect(worktreeCalls).toHaveLength(1)
+    expect(worktreeCalls, readLog(worktreeLog())).toHaveLength(3)
     expect(worktreeCalls[0]).toContain(`worktree.js sweep ${workdir} jira`)
-    expect(readLog(worktreeLog())).not.toMatch(/\b(create|create-detached|remove)\b/)
+    expect(worktreeCalls[1]).toContain(`worktree.js create-detached ${workdir} task-FOO-123`)
+    expect(worktreeCalls[2]).toContain(`worktree.js advance ${workdir} task-FOO-123`)
+    expect(readLog(worktreeLog())).not.toMatch(/\bremove\b/)
+    // The create asked git for a DETACHED add, and the tree's directory now exists.
     expect(
       readLog(gitLog())
         .split(LF)
-        .filter((line) => line.startsWith('worktree ')),
+        .some((line) => line.startsWith('worktree add --detach ') && line.includes('task-FOO-123')),
       readLog(gitLog()),
-    ).toEqual(['worktree prune -v'])
-    // The sweep prunes; it never CREATES the worktrees root, so a jira run still leaves none.
-    expect(existsSync(join(workdir, '.ralph', 'worktrees'))).toBe(false)
+    ).toBe(true)
+    expect(existsSync(worktreeDir())).toBe(true)
 
     // `set -u`: the hoisted block reads `$task_handle` and `$task_worktree` on a path this
     // arm takes, so an initialisation left behind in the `case` would kill the run here.
     expect(res.stderr).not.toContain('unbound variable')
     expect(res.stderr).not.toContain('task_worktree')
     // The ticket was still claimed, still worked, and still swept — the arm ran its whole
-    // course after the hoist rather than dying somewhere inside it. `failed` rather than
-    // `in-progress` is the end state because the default claude stub completes nothing, so
-    // #130's sweep is what wrote the board last, and reaching that write means the iteration
-    // got past the dispatch and into its outcome branch.
+    // course rather than dying somewhere inside it. `failed` rather than `in-progress` is the
+    // end state because the default claude stub completes nothing, so #130's sweep is what
+    // wrote the board last, and reaching that write means the iteration got past the dispatch
+    // and its advance and into its outcome branch.
     expect(existsSync(claimedFlag())).toBe(true)
     expect(agentCalls()).toHaveLength(1)
     expect(boardLabels()).toBe('frontend,p2,failed')
   })
 
-  it('runs the jira agent in the MAIN root, with no worktree override in its environment', () => {
-    // The other half of "no tree": the two variables the create block would have set on its
-    // way past. `agent_cwd` stays $PROJECT_ROOT (the jira dispatch passes no cwd at all, so
-    // run_agent_for_issue's own `${2:-$PROJECT_ROOT}` supplies it) and
-    // RALPH_PROMPT_PROJECT_ROOT is never exported — so
-    // lib/build-prompt.js renders {{PROJECT_ROOT}} as the checkout the human is in. A leaked
-    // export would point the prompt at another source's tree, and `<unset>` is asserted rather
-    // than "not the worktree path" because an empty export is still an export.
+  it('runs the jira agent IN the worktree, with the {{PROJECT_ROOT}} override exported', () => {
+    // #224: the create block sets `agent_cwd="$task_worktree"` and exports
+    // RALPH_PROMPT_PROJECT_ROOT, and the jira dispatch now passes `$agent_cwd` to
+    // run_agent_for_issue — so the agent wakes inside its detached tree and
+    // lib/build-prompt.js renders {{PROJECT_ROOT}} as that tree. Both are read out of the
+    // agent's own process rather than inferred from the script.
     seedStubs()
     seedLoggingGit()
     seedLoggingNode()
@@ -1868,8 +1864,7 @@ exit 0
     const res = runJira()
     finished(res)
     const log = readLog(claudeLog())
-    expect(log, log).toContain(`PWD=${workdir}`)
-    expect(log, log).toContain('PROMPT_ROOT=<unset>')
-    expect(log).not.toContain('/.ralph/worktrees/')
+    expect(log, log).toContain(`PWD=${worktreeDir()}`)
+    expect(log, log).toContain(`PROMPT_ROOT=${worktreeDir()}`)
   })
 })

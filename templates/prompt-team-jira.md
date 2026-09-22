@@ -91,9 +91,21 @@ So, without exception:
    visibly owned on the board. Add NO label here, remove none, and do not re-claim
    it. This step exists to tell you it is done, not to ask you to do it.
 
-3. **Prepare working tree**: `git checkout {{DEV_BRANCH}} && git pull`. Jira
-   mode commits **directly to `{{DEV_BRANCH}}`** — there is NO feature branch,
-   NO pull request, and NO auto-merge. Do all work on `{{DEV_BRANCH}}`.
+3. **Prepare working tree**: the loop already prepared it. It created a dedicated
+   git worktree for this ticket at the tip of the local `{{DEV_BRANCH}}`, left it
+   **detached** (Jira mode commits straight to `{{DEV_BRANCH}}`, and git will not
+   check one branch out in two trees), and started you inside it — so
+   `{{PROJECT_ROOT}}` above is that worktree rather than the main checkout, and
+   `git rev-parse --abbrev-ref HEAD` answers the literal `HEAD`. Commit on that
+   detached HEAD. **Create no branch and switch to none**, and do not check
+   `{{DEV_BRANCH}}` out or pull it: this source never pushes, so a pull can only
+   merge in remote content that no ticket here produced, and checking the branch
+   out takes it out of the loop's hands. Because nothing is pushed, each ticket
+   builds on the previous commit already on the local branch. Once you return, the
+   loop advances `{{DEV_BRANCH}}` to your commit for you — or, when it cannot do
+   that without disturbing a human's working tree, it instead parks your commit on
+   a `ralph/task-<key>` branch and says so. There is still NO feature branch, NO
+   pull request, and NO auto-merge.
 
 3b. **Triage and scale the team**: before dispatching, classify the ticket and
    scale the team to fit it. Read the ticket and the files it implies, then pick
@@ -282,7 +294,9 @@ reviewers** instead of a single pass:
    if they still fail, go to "Failed".
 
 6. **Commit to `{{DEV_BRANCH}}`**: `git add <specific files> && git commit -m
-   "fix: <description> ({{RALPH_TASK_KEY}})"`. Stage ONLY code/tests — both the
+   "fix: <description> ({{RALPH_TASK_KEY}})"`, on the detached HEAD you woke on
+   (step 3) — the loop is what moves `{{DEV_BRANCH}}` to this commit once you
+   return. Stage ONLY code/tests — both the
    new/updated tests and the implementation in the same commit so the TDD pair is
    reviewable together. **The message must name `{{RALPH_TASK_KEY}}`**: that key in
    the subject and the step-7 comment below are the two links between this commit and
@@ -319,8 +333,10 @@ reviewers** instead of a single pass:
 
    Each section carries one role's output — Dev/TDD from step 4, QA scenarios
    from step 4b, Review verdict from step 4c, Docs updated from step 4d. Retain
-   a **single per-ticket log** (`logs/ralph-issue-{{RALPH_TASK_KEY}}.log`) for the
-   whole team run; there are **no per-role logs**.
+   a **single per-ticket log**
+   (`{{MAIN_REPO_ROOT}}/logs/ralph-issue-{{RALPH_TASK_KEY}}.log` — the loop writes it
+   in the main checkout, not in the worktree you are in) for the whole team run;
+   there are **no per-role logs**.
 
    If TDD was skipped per the triage in step 3b, replace the Dev/TDD section
    body with `- Skipped: <reason — must be docs/config/dep-bump only>` and the
@@ -402,8 +418,12 @@ reviewers** instead of a single pass:
    that outlives this invocation. The body must carry, in prose you write:
 
    - the **commit SHA** — take it from `git rev-parse --short HEAD`, never from memory;
-   - the **branch** it is on, `{{DEV_BRANCH}}`, and that the commit is **local and
-     unpushed** on the machine that ran Ralph;
+   - **where the commit lives**: you committed on the detached HEAD the loop started
+     you on (step 3), so once you return the loop either advances `{{DEV_BRANCH}}` to
+     your commit or — when it cannot without disturbing a human's tree — parks it on a
+     `ralph/task-<key>` branch and says which. Report the branch your commit is
+     actually reachable from rather than assuming `{{DEV_BRANCH}}`, and that it is
+     **local and unpushed** on the machine that ran Ralph;
    - the **test and lint result** from step 5 (`{{TEST_CMD}}` and `{{LINT_CMD}}`,
      naming what was skipped if either was empty);
    - one line on what changed, for a reader who will not have the diff in front of
@@ -440,9 +460,10 @@ reviewers** instead of a single pass:
 ## Absolute restrictions
 
 - NEVER `git push --force` or `git push -f`.
-- NEVER push, at all. Commit to `{{DEV_BRANCH}}` and stop — the commit stays local
-  (step 6). That includes `{{MAIN_BRANCH}}`, which nothing in Jira mode ever
-  touches.
+- NEVER push, at all. Commit on the detached HEAD the loop started you on and stop —
+  the commit stays local (step 6), and the loop advances `{{DEV_BRANCH}}` to it after
+  you return (step 3). That includes `{{MAIN_BRANCH}}`, which nothing in Jira mode
+  ever touches.
 - NEVER touch: `.env*`, `.git/`, `node_modules/`, `dist/`, `logs/`,
   `ralph.sh`, `start-ralph.sh`, `PROMPT.md`, `ralph.config.sh`,
   `.claude/`, and any ticket labelled `do-not-ralph` — that label is the Jira
