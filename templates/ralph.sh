@@ -501,8 +501,10 @@ clear_in_progress_label() {
 # there, beside the `grep` that spares it. What accumulates meanwhile is one directory per
 # unfinished issue; deleting those is a human's decision, not this loop's.
 #
-# GITHUB ONLY, GUARDED HERE rather than at the call site: folder and jira mode never
-# create a worktree (see the create block below), so removal is a no-op for them.
+# GITHUB ONLY, GUARDED HERE rather than at the call site: folder and jira DO create a
+# worktree now (#221, #224), but neither is torn down here — each commits straight to
+# $DEV_BRANCH and its own advance-or-park moves the branch, so there is no terminal-success
+# removal to do, and both arms `continue` before this classification is ever reached anyway.
 #
 # A REMOVAL RALPH COULD NOT FINISH IS A WARNING, NEVER A VERDICT. It is best-effort like
 # every other call of its kind in this file, but a bare `|| true` would also absorb the
@@ -569,6 +571,21 @@ while :; do
     # No numeric handle from bash: lib/run-state.js derives one from the key, and
     # `''` is the record's documented "unknown" for every value bash cannot supply.
     num=""
+    # A FILESYSTEM-SAFE HANDLE FOR THE WORKTREE AND THE LOG PATHS. `$task_key` comes out of
+    # acli's own JSON and `usableJiraKey` deliberately passes through a key its grammar does
+    # not recognise (Jira names its own tickets), so a `/` in it would name paths that do not
+    # exist — `logs/ralph-issue-FOO/1.log`, and a `task-FOO/1` worktree handle lib/worktree.js
+    # would REFUSE (its SAFE_HANDLE forbids a separator). Every character outside
+    # `[A-Za-z0-9._-]` becomes `_`, a no-op for `FOO-123`: the ordinary case keeps the handle
+    # `task-FOO-123`, the park branch `ralph/task-FOO-123`, and the log
+    # `logs/ralph-issue-FOO-123.log` — the exact names the prompt quotes and the tests pin.
+    #
+    # COMPUTED HERE, in the selection arm, because the worktree-create block below runs BEFORE
+    # the jira arm and needs it too (#224). NOT $num, which is deliberately empty in this mode:
+    # a `task-` handle or a log built from it would collapse every ticket onto one path. The
+    # handle names files and a worktree; the ticket is named by its KEY on every surface a
+    # human or the board reads.
+    task_log_handle="${task_key//[^A-Za-z0-9._-]/_}"
     echo "==> Iteration for $task_key ($count remaining) [agent: ${RALPH_RESOLVED_AGENT:-claude}]"
   elif [ "$TASK_SOURCE" = "folder" ]; then
     # Folder mode: select the lowest-numbered task in afk/todo (id + path). The
@@ -599,7 +616,7 @@ while :; do
   # tested with an injected fs and git. Same shape as the folder queue, the jira queue
   # and the agent bridge above.
   #
-  # TWO SOURCES, TWO SHAPES, and the difference is a property of the DELIVERY, which is
+  # THREE SOURCES, TWO SHAPES, and the difference is a property of the DELIVERY, which is
   # why the verb is the only thing that varies here:
   #   github — `create`, i.e. a new `issue-$num` branch cut from origin/$DEV_BRANCH.
   #     The work leaves through a pull request, so it needs a branch of its own and it
@@ -611,8 +628,13 @@ while :; do
   #     task's commit exists — basing on origin would silently drop it. The agent
   #     commits on the detached HEAD and the `advance` call further down is what moves
   #     $DEV_BRANCH (or parks the commit and says so).
-  # jira mode never reaches the dispatch below — its arm ends in `continue` — and it
-  # matches no arm of the `case`, so it leaves every variable here at its empty default.
+  #   jira   — `create-detached` too (#224), for exactly folder's reasons: a ticket also
+  #     commits straight to $DEV_BRANCH with no branch and no push, so the tree is cut
+  #     DETACHED at the LOCAL $DEV_BRANCH tip with no fetch, and each ticket builds on the
+  #     last commit. Its handle is `task-<safe-key>` (the sanitised key from the jira
+  #     selection arm), so the park branch is `ralph/task-<safe-key>`. The jira arm below
+  #     ends in `continue`, so it runs its OWN unset+advance-or-park before returning rather
+  #     than reaching the shared blocks the folder arm uses.
   #
   # ABOVE THE RUN-STATE CALL (#222), where it used to sit below: the record now carries
   # the worktree, and a value passed positionally has to exist before the call that
@@ -631,6 +653,11 @@ while :; do
     folder)
       task_handle="task-$num"
       task_label="task #$num"
+      task_worktree=$(node "$RALPH_PKG_DIR/lib/worktree.js" create-detached "$PROJECT_ROOT" "$task_handle" "${DEV_BRANCH:-main}") || task_worktree=""
+      ;;
+    jira)
+      task_handle="task-$task_log_handle"
+      task_label="ticket $task_key"
       task_worktree=$(node "$RALPH_PKG_DIR/lib/worktree.js" create-detached "$PROJECT_ROOT" "$task_handle" "${DEV_BRANCH:-main}") || task_worktree=""
       ;;
   esac
@@ -769,25 +796,9 @@ while :; do
     # two chances to disagree.
     export RALPH_TASK_KEY="$task_key"
 
-    # A FILESYSTEM-SAFE HANDLE FOR THE LOG PATHS, and ONLY for those. `$task_key` comes
-    # out of acli's own JSON and `usableJiraKey` deliberately passes through a key its
-    # grammar does not recognise (Jira names its own tickets), so a `/` in it reached
-    # `run_agent_for_issue` and named `logs/ralph-issue-FOO/1.log` — a directory that
-    # does not exist. This file runs under `set -u` ONLY, no `set -e`, so the failed
-    # redirection stopped nothing: the agent was still spawned and still billed, and the
-    # transcript that would explain what it did went nowhere, leaving bash's own
-    # redirection error as the only clue. Every character outside `[A-Za-z0-9._-]`
-    # becomes `_`, which is a no-op for `FOO-123` — the ordinary case keeps the exact
-    # path `logs/ralph-issue-FOO-123.log` that the prompt quotes and that the tests pin.
-    #
-    # THE HANDLE IS NOT THE KEY and is used nowhere else: not in the acli argv, not in
-    # the export above, not in the iteration line, not in the run record. A ticket is
-    # named by its key on every surface a human or the board reads; this is a filename.
-    #
-    # NOT $num, either. $num is deliberately empty in this mode (see the selection arm),
-    # so passing it would collapse every ticket onto `logs/ralph-issue-.log`. One log
-    # per task, no per-role logs — the same rule the other two sources follow.
-    task_log_handle="${task_key//[^A-Za-z0-9._-]/_}"
+    # $task_log_handle — the filesystem-safe handle for the worktree and the log paths — was
+    # computed in the selection arm above, because the worktree-create block runs before this
+    # arm and needs it too (#224). It is what names `logs/ralph-issue-<handle>.*` below.
 
     # TIMED, and this arm has to do its own timing (#131). The `issue_start_ms` /
     # `issue_end_ms` pair that serves the other two sources sits AFTER this block's
@@ -800,9 +811,30 @@ while :; do
     # reads as "no wall clock to fall back on" (a Claude run's own reported duration wins
     # anyway — the fallback exists for Codex, whose stream reports none).
     issue_start_ms=$(date +%s000)
-    run_agent_for_issue "$task_log_handle"
+    run_agent_for_issue "$task_log_handle" "$agent_cwd"
     issue_end_ms=$(date +%s000)
     issue_dur_ms=$(( issue_end_ms - issue_start_ms ))
+
+    # UNSET THE PROMPT OVERRIDE, THEN ADVANCE $DEV_BRANCH OR PARK THE COMMIT (#224). Both here
+    # rather than in the shared blocks below, because this arm `continue`s before ever reaching
+    # them (the folder arm takes the same two steps: the shared `unset` at the top of the folder
+    # teardown, and the `advance` call in the folder block). The agent committed on the DETACHED
+    # HEAD of its worktree, so the commit object exists and no branch points at it yet; moving
+    # $DEV_BRANCH to it — or parking it on `ralph/task-<safe-key>` and saying so — is the loop's
+    # job, and lib/worktree.js owns the whole decision because every input to it is a git fact.
+    #
+    # BEFORE THE OUTCOME READ BELOW, and never part of it: a ticket's verdict is what the board
+    # reports, and a branch Ralph could not advance is not a ticket Ralph failed — so `advance`
+    # PARKS rather than throwing, exits 0 for a park, and the `||` warning changes no count. Its
+    # stderr is not redirected, for the folder block's reason: the module's own line already
+    # names the branch and the sha, and this loop has no location of its own to add. The `-n`
+    # guard is symmetry with the export above (a create that failed already `break`ed the loop),
+    # not necessity.
+    if [ -n "$task_worktree" ]; then
+      unset RALPH_PROMPT_PROJECT_ROOT
+      node "$RALPH_PKG_DIR/lib/worktree.js" advance "$PROJECT_ROOT" "$task_handle" "${DEV_BRANCH:-main}" ||
+        echo "⚠️  ralph.sh: could not advance ${DEV_BRANCH:-main} for $task_key — see the worktree.js line above; $task_key's own outcome is decided separately." >&2
+    fi
 
     # THE OUTCOME, READ OFF THE BOARD (#130) — jira mode's forward-progress guarantee,
     # and the structural twin of the folder arm's sweep below.
